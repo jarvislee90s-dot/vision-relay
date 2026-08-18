@@ -3,15 +3,15 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vision-proxy"
+name = "vision-relay"
 dynamic = ["version"]
-description = "vision-proxy: a local HTTP protocol proxy that gives text-only models vision — intercepts images in Anthropic / Responses / Chat requests, transcribes them via a VLM, and forwards text to the real upstream."
+description = "vision-relay: a transparent HTTP proxy at the harness boundary that gives text-only models vision - intercepts images in Anthropic / Responses / Chat requests, transcribes them via a VLM, and relays the text to the real upstream text model."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "jarvislee90s-dot" }]
-keywords = ["proxy", "vision", "vlm", "anthropic", "responses", "chat", "agent"]
+keywords = ["proxy", "vision", "vlm", "anthropic", "responses", "chat", "agent", "relay"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -28,11 +28,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jarvislee90s-dot/vision-proxy"
-Repository = "https://github.com/jarvislee90s-dot/vision-proxy"
+Homepage = "https://github.com/jarvislee90s-dot/vision-relay"
+Repository = "https://github.com/jarvislee90s-dot/vision-relay"
 
 [project.scripts]
-vision-proxy = "qwen_mm_plugins_proxy.__main__:main"
+vision-relay = "qwen_mm_plugins_proxy.__main__:main"
+qwen-mm-plugins-proxy = "qwen_mm_plugins_proxy.__main__:main"   # backward-compat alias
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

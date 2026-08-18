@@ -1,10 +1,10 @@
 # Contributing
 
-Thanks for contributing to vision-proxy. Keep changes focused on a concrete problem.
+Thanks for contributing to vision-relay. Keep changes focused on a concrete problem.
 
 ## Development setup
 
-vision-proxy supports Python 3.10 and newer. From a checkout, install the runtime and test deps:
+vision-relay supports Python 3.10 and newer. From a checkout, install the runtime and test deps:
 
 ```bash
 python3 -m venv .venv

@@ -15,7 +15,7 @@ LOG_FILE = "proxy.log"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="qwen-mm-plugins-proxy")
+    parser = argparse.ArgumentParser(prog="vision-relay")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("start")
     sub.add_parser("stop")

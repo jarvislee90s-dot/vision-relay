@@ -1,35 +1,49 @@
-# vision-proxy
+# vision-relay
 
 **English** · [中文](README.zh.md)
 
-A local HTTP protocol proxy that gives **text-only models vision**. It intercepts images in
-Anthropic / Responses / Chat requests, transcribes them via a vision-language model (VLM), and
-forwards the **text** to the real upstream text model. The upstream only ever sees text, so a
-text-only model can "read" images.
+A **transparent HTTP proxy at the agent-harness boundary** that gives **text-only models vision**.
+It sits in front of your harness base_url, intercepts images in Anthropic / Responses / Chat requests,
+transcribes them via a vision-language model (VLM), and **relays the text** to the real upstream text model.
+The upstream only ever sees text — so a text-only model can "read" images, without any skill, plugin, or tool. 
 
-This is the standalone, single-capability project extracted from [Qwen-MM-Plugins](https://github.com/QwenLM/Qwen-MM-Plugins)
-(its `proxy` capability). It runs as a resident service — not a Skill + MCP server.
+This is the standalone project extracted from [Qwen-MM-Plugins](https://github.com/QwenLM/Qwen-MM-Plugins)
+(its `proxy` capability), running as a **resident HTTP service**, not a Skill + MCP server.
+
+## Why a proxy, not a Skill?
+
+There are two common ways to give a text-only model vision, and they look alike but are architecturally different:
+
+| | Skill / Tool (model-invoked) | Pure transparent proxy | **vision-relay** (this project) |
+|---|---|---|---|
+| How it works | Ship a skill/tool into the harness; the model must *remember* to call it | Intercept base_url, but only capture / translate protocol | Intercept **the whole request stream** at base_url AND rewrite its content |
+| Who decides to use it | The model (it may forget) | Non-discriminating | **You, once, at config time** |
+| Image handling | Model passes image to the tool | Only observes, does nothing | **Images are transcribed to text and injected** before forwarding |
+| Transparency | Opaque to the model, requires prompts | Transparent, but no value added | **Fully transparent + value added** (model is unaware, images become text) |
+| Upstream | Text model sees whatever the tool returns | Text model sees raw (possibly image-bearing) stream | **Text model only ever sees text** |
+
+Existing open-source projects you might find (`visual-proxy`, `codex-vision-proxy`, `vision-bridge-mcp`, `cc-inspector`, `anthroproxy`) mostly fall into the **left** (Skill/tool) or **middle** (pure proxy) columns.
+**vision-relay combines both: transparent interception AND image transcription** — the combination is rare in open source.
 
 ## How it works
 
 ```
-Agent harness (Claude Code / Codex / Qwen Code)
-        |
-        | base_url -> 127.0.0.1:8787
+   [ Agent harness ]      Claude Code / Codex / Qwen Code
+        |  base_url -> 127.0.0.1:8787
         v
-   [ vision-proxy ]
-      /          \
-  images        text only
-    /                \
-   v                  v
- [ VLM ]        [ upstream text model ]
-  (description)   (chat/responses/anthropic)
+   [ vision-relay ]
+      /        \
+  images       text-only
+    /            \
+   v              v
+  [ VLM ]    [ upstream text model ]     relay: chat / responses / anthropic
+  (transcribe)
 ```
 
 ## Install
 
 ```bash
-pip install vision-proxy
+pip install vision-relay
 ```
 
 Or from a checkout:
@@ -37,43 +51,26 @@ Or from a checkout:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[proxy]'
+python -m pip install -e .
+python -m pip install pytest httpx
 ```
 
 ## Quick start
 
-**What the proxy supports**
+### What vision-relay supports
 
-- **Inbound node types**: `responses`, `chat`, and Anthropic (`/v1/messages`). Detection is
-  fully automatic — there is no config for it. The proxy matches the request **path** first
-  (`/v1/messages` → Anthropic, `/v1/responses` → Responses, `/v1/chat/completions` → Chat)
-  and falls back to the **body structure** when the path is not recognized (an `input` field →
-  Responses, a `messages` list → Anthropic, otherwise Chat). A request that matches neither is
-  rejected with a 400.
+- **Inbound node types**: `responses`, `chat`, and Anthropic (`/v1/messages`). Detection is fully automatic — no config. The proxy matches the **path** first (`/v1/messages` -> Anthropic, `/v1/responses` -> Responses, `/v1/chat/completions` -> Chat) and falls back to the **body structure** (`input` -> Responses, `messages` -> Anthropic, otherwise Chat). Requests matching neither are rejected with a 400.
+- **Model types**: both vision-capable VLM models (images pass through untouched) and text-only models (images are transcribed) are supported, decided by the `model_capabilities` map in config.
+- **Model identification**: on every `start` the proxy scans the harness config files (Claude Code / Codex / Qwen Code), groups discovered models by harness, and interactively asks you to confirm only unseen models (default: text-only, the safe choice). Reuse silently afterwards; run `vision-relay models` to review/edit.
 
-- **Model types**: both **vision-capable VLM models** (images pass through untouched) and
-  **text-only models** (images are transcribed) are supported. The `model_capabilities` map in
-  the config decides which is which.
+### What you need to prepare
 
-- **How the upstream model is identified**: the model-name → vision/text mapping lives in the
-  proxy config. On every `start` the proxy scans the harness config files (Claude Code / Codex /
-  Qwen Code), groups the discovered models by harness, and interactively asks you to confirm only
-  models it has not seen before (default: text-only, the safe choice). Already-confirmed models
-  are reused silently; run `qwen-mm-plugins-proxy models` to review or edit the map.
+1. an API key for a vision-capable VLM (mimo / qwen-vl / Doubao / ...) — `vlm.api_key`;
+2. upstream endpoints for **both** the text model (`relays[].base_url`) and the VLM (`vlm.base_url`): either side can be OpenAI-compatible (chat) or Anthropic-format, and the text side additionally supports Responses. Set via `relays[].protocol` / `vlm.format`; Volcengine / DeepSeek etc. all work.
 
-**You need to prepare**
+### Three steps
 
-1. an API key for a vision-capable VLM (mimo / qwen-vl / Doubao / ...), used in `vlm.api_key`;
-
-2. the upstream endpoints for **both** the text model (`relays[].base_url`) and the VLM
-   (`vlm.base_url`): either side can be an OpenAI-compatible (chat) or Anthropic-format endpoint,
-   and the text side additionally supports the Responses format. Which one is in use is set by
-   `relays[].protocol` / `vlm.format`; Volcengine / DeepSeek etc. all work as long as the
-   endpoint speaks one of those formats.
-
-**Three steps**
-
-1. Edit `~/.qwen-mm-plugins/proxy.json` (create it if missing) with the template below (put in your own keys):
+1. Edit `~/.qwen-mm-plugins/proxy.json` (create if missing) with the template below (put in your own keys):
 
 ```json
 {
@@ -90,32 +87,24 @@ python -m pip install -e '.[proxy]'
 }
 ```
 
-2. Start: `qwen-mm-plugins-proxy start` (the first run interactively asks you to confirm which
-   models support images; afterwards start/stop auto-wire and restore without prompting).
+2. Start: `vision-relay start` (first run interactively asks which models support images; afterwards start/stop auto-wire and restore without prompting).
 
-3. Verify: paste an image in Claude Code / Codex / Qwen Code and ask "what is this", then
-   `qwen-mm-plugins-proxy logs` shows `injected:1` on success.
+3. Verify: paste an image in Claude Code / Codex / Qwen Code and ask "what is this", then `vision-relay logs` shows `injected:1` on success.
 
-**Config rewrites happen only on `start` / `stop`**: the proxy backs up and rewrites the three
-harness base_urls when it starts, and restores them when it stops. While it is running it never
-watches or rewrites any config file. Your changes take effect on the next `start` (or a restart).
+Config rewrites happen only on `start` / `stop` (backup + rewrite the three harness base_urls, restore on stop). While running it never watches or rewrites any config file; edits take effect on the next `start`.
 
-**Commands**: `start` / `stop` / `status` / `logs` / `check` / `models` (edit model capability) /
-`models-scan` / `test-image`.
+**Commands**: `start` / `stop` / `status` / `logs` / `check` / `models` (edit model capability) / `models-scan` / `test-image`.
 
 ## Configuration
 
-Shared configuration lives in `~/.qwen-mm-plugins/config` (fallback for env vars) and the proxy
-settings in `~/.qwen-mm-plugins/proxy.json`. Env overrides: `QWEN_MM_PROXY_BIND_PORT`,
-`QWEN_MM_PROXY_VLM_MODEL`, `QWEN_MM_PROXY_VLM_BASE_URL`, `QWEN_MM_PROXY_VLM_API_KEY`,
-`QWEN_MM_PROXY_VLM_FORMAT`.
+Shared config lives in `~/.qwen-mm-plugins/config` (fallback for env vars); proxy settings in `~/.qwen-mm-plugins/proxy.json`. Env overrides: `QWEN_MM_PROXY_BIND_PORT`, `QWEN_MM_PROXY_VLM_MODEL`, `QWEN_MM_PROXY_VLM_BASE_URL`, `QWEN_MM_PROXY_VLM_API_KEY`, `QWEN_MM_PROXY_VLM_FORMAT`.
 
 ## Development
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[proxy]'
+python -m pip install -e .
 python -m pip install pytest httpx
 python -m pytest -q
 ruff check .

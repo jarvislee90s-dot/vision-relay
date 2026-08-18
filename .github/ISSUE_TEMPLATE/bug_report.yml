@@ -1,11 +1,11 @@
 name: Bug report
-description: Report a reproducible problem in vision-proxy
+description: Report a reproducible problem in vision-relay
 title: "[Bug] "
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve vision-proxy. For security vulnerabilities, follow the [security policy](SECURITY.md) instead of opening a public issue.
+        Thanks for helping improve vision-relay. For security vulnerabilities, follow the [security policy](SECURITY.md) instead of opening a public issue.
 
   - type: input
     id: harness
