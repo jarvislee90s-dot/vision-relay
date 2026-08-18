@@ -1,0 +1,14 @@
+# Ruff config for vision-proxy
+# Lint focuses on real problems (pyflakes F = unused imports/vars/dead code);
+# E501 is ignored because some protocol field names / URLs are intentionally long.
+
+target-version = "py310"
+line-length = 120
+src = ["src", "qwen_mm_plugins_proxy"]
+
+[lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[lint.isort]
+known-first-party = ["qwen_mm_plugins_proxy", "proxy_env"]

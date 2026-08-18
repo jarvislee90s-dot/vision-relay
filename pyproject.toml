@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vision-proxy"
+dynamic = ["version"]
+description = "vision-proxy: a local HTTP protocol proxy that gives text-only models vision — intercepts images in Anthropic / Responses / Chat requests, transcribes them via a VLM, and forwards text to the real upstream."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "jarvislee90s-dot" }]
+keywords = ["proxy", "vision", "vlm", "anthropic", "responses", "chat", "agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "httpx",
+]
+
+[project.urls]
+Homepage = "https://github.com/jarvislee90s-dot/vision-proxy"
+Repository = "https://github.com/jarvislee90s-dot/vision-proxy"
+
+[project.scripts]
+vision-proxy = "qwen_mm_plugins_proxy.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools]
+py-modules = ["proxy_env"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["qwen_mm_plugins_proxy*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "qwen_mm_plugins_proxy.__version__" }
