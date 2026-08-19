@@ -195,12 +195,13 @@ def test_legacy_env_vars_still_override_with_warning(tmp_path: Path, monkeypatch
     assert "deprecated" in capsys.readouterr().err
 
 
-def test_new_env_vars_win_over_legacy(tmp_path: Path, monkeypatch):
+def test_new_env_vars_win_over_legacy(tmp_path: Path, monkeypatch, capsys):
     monkeypatch.setenv("VISION_RELAY_BIND_PORT", "9200")
     monkeypatch.setenv("QWEN_MM_PROXY_BIND_PORT", "9100")
     cfg_path = tmp_path / "proxy.json"
     cfg_path.write_text(json.dumps({"server": {"bind_port": 9000}}))
     assert load_config(str(cfg_path)).bind_port == 9200
+    assert "deprecated" not in capsys.readouterr().err  # 新名命中时不打 deprecation 提示
 
 
 def test_load_config_reads_legacy_dir_and_save_migrates(tmp_path: Path, monkeypatch, capsys):
@@ -217,4 +218,7 @@ def test_load_config_reads_legacy_dir_and_save_migrates(tmp_path: Path, monkeypa
     assert cfg.bind_port == 9300
     assert "legacy" in capsys.readouterr().err.lower()
     save_config(cfg)
-    assert (new_dir / "proxy.json").exists()
+    # 读旧写新：新目录落盘且内容一致，旧目录未被写入/产生临时文件
+    saved = json.loads((new_dir / "proxy.json").read_text(encoding="utf-8"))
+    assert saved["server"]["bind_port"] == 9300
+    assert not (old_dir / "proxy.json.tmp").exists()

@@ -101,7 +101,7 @@ Shared config lives in `~/.vision-relay/config` (fallback for env vars); proxy s
 
 ### Upgrading from qwen-mm-plugins-proxy
 
-vision-relay is the standalone successor of the `qwen-mm-plugins-proxy` capability. On first start it reads an existing `~/.qwen-mm-plugins/proxy.json` automatically and migrates it to `~/.vision-relay/` on next save; legacy `QWEN_MM_PROXY_*` env vars and `.qwen-mm-proxy.bak` wiring backups are still recognized (with a deprecation warning).
+vision-relay is the standalone successor of the `qwen-mm-plugins-proxy` capability. On first start it reads an existing `~/.qwen-mm-plugins/proxy.json` automatically and migrates it to `~/.vision-relay/` on next save; legacy `QWEN_MM_PROXY_*` env vars and `.qwen-mm-proxy.bak` wiring backups are still recognized (with a deprecation warning). If you still export the legacy `QWEN_MM_CONFIG_DIR`, it is honored as the active state directory for both reads and writes (no split-brain); the automatic migration applies to the default paths.
 
 ## Development
 

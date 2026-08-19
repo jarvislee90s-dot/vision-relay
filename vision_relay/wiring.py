@@ -146,7 +146,8 @@ def wiring_restore(cfg) -> list[str]:
         if bak is None:
             continue
         cur = read_base_url(p, h)
-        if cur is not None and not cur.startswith(proxy_url):
+        # 精确匹配（或带路径前缀）才视为本代理：startswith(proxy_url) 会把 :87870 误判为 :8787。
+        if cur is not None and cur != proxy_url and not cur.startswith(proxy_url + "/"):
             restored.append(f"{name}: 当前 base_url={cur!r} 非本代理，未还原(保留备份)")
             continue
         try:
@@ -213,7 +214,7 @@ def wiring_report(cfg) -> list[dict]:
                 "harness": name,
                 "path": p,
                 "base_url": cur,
-                "wired": bool(cur and cur.startswith(proxy_url)),
+                "wired": bool(cur and (cur == proxy_url or cur.startswith(proxy_url + "/"))),
                 "has_backup": _find_bak(p) is not None,
             }
         )

@@ -197,7 +197,7 @@ def load_config(path: str | None = None) -> ProxyConfig:
             if os.path.exists(legacy):
                 path = legacy
                 print(
-                    f"note: using legacy config {legacy}; it will move to {_default_config_path()} on next save",
+                    f"note: using legacy config {legacy}; it will be copied to {_default_config_path()} on next save (legacy file retained)",
                     file=sys.stderr,
                 )
     try:

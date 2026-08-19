@@ -97,7 +97,7 @@ python -m pip install pytest httpx
 
 ### 从 qwen-mm-plugins-proxy 升级
 
-vision-relay 是 `qwen-mm-plugins-proxy` 能力的独立继任者。首次启动会自动读取已有的 `~/.qwen-mm-plugins/proxy.json`,并在下次保存时迁移到 `~/.vision-relay/`;旧 `QWEN_MM_PROXY_*` 环境变量与 `.qwen-mm-proxy.bak` 接线备份仍被识别(带 deprecation 提示)。
+vision-relay 是 `qwen-mm-plugins-proxy` 能力的独立继任者。首次启动会自动读取已有的 `~/.qwen-mm-plugins/proxy.json`,并在下次保存时迁移到 `~/.vision-relay/`;旧 `QWEN_MM_PROXY_*` 环境变量与 `.qwen-mm-proxy.bak` 接线备份仍被识别(带 deprecation 提示)。若你仍导出旧 `QWEN_MM_CONFIG_DIR`,它会被当作当前状态目录(读写一致,避免双脑);自动迁移只针对默认路径。
 
 ## 开发
 
