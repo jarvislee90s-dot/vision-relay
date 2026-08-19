@@ -1,4 +1,4 @@
-# vision-proxy - 独立项目设计规格 (Standalone Design Spec)
+# vision-relay - 独立项目设计规格 (Standalone Design Spec)
 
 **日期**: 2026-08-19  **状态**: Draft / 待评审
 **上游来源**: Qwen-MM-Plugins 的 proxy capability（分支 vision-proxy）
@@ -21,7 +21,7 @@ proxy 是 Qwen-MM-Plugins 中一个边界清晰、近乎纯新增的能力：它
 
 ## 2. 项目定位
 
-- 名称: vision-proxy（PyPI 包名）/ 可执行名 qwen-mm-plugins-proxy（保留，避免破坏上游文档）
+- 名称: vision-relay（PyPI 包名 / 仓库名 / 可执行名；旧别名 qwen-mm-plugins-proxy 已移除——从未发布，无人依赖）
 - 形态: 本地驻留 HTTP 代理服务（非 Skill + MCP server）
 - 职责: 拦截图片 -> VLM 转述 -> 转发文本给上游文本模型
 - Python: >=3.10，运行时依赖仅 httpx
@@ -77,9 +77,9 @@ proxy 是 Qwen-MM-Plugins 中一个边界清晰、近乎纯新增的能力：它
 
 ## 5. 发布与生命周期
 
-- 版本: 由 qwen_mm_plugins_proxy.__version__（当前 0.1.0）驱动（dynamic = version）
-- 打包: pyproject.toml 声明 py-modules = proxy_env，包发现 include = qwen_mm_plugins_proxy*
-- console script: qwen-mm-plugins-proxy = qwen_mm_plugins_proxy.__main__:main
+- 版本: 由 vision_relay.__version__（当前 0.1.0）驱动（dynamic = version）
+- 打包: pyproject.toml 声明 py-modules = proxy_env，包发现 include = vision_relay*
+- console script: vision-relay = vision_relay.__main__:main
 - CI: 离线测试（pytest + httpx）+ ruff lint + bash 语法检查 + Windows checkout（适配后的 ci.yml）
 
 ## 6. 测试
@@ -90,16 +90,16 @@ proxy 是 Qwen-MM-Plugins 中一个边界清晰、近乎纯新增的能力：它
 
 ## 7. Roadmap
 
-- [ ] 独立 git 仓库 + 首个 commit（当前任务）
+- [x] 独立 git 仓库 + 首个 commit（已完成）
 - [ ] 发布到 PyPI（vision-proxy / qwen-mm-plugins-proxy）
 - [ ] GitHub Actions 绿色 CI + 分支保护
 - [ ] 截图/演示 + 更完整的用户文档（含 troubleshooting）
 
-## 8. 待决策 / Open Questions
+## 8. 待决策 / Open Questions（2026-08-19 全部已决策）
 
-- 包名最终用 vision-proxy 还是 qwen-mm-plugins-proxy？
-- console script 名是否保留 qwen-mm-plugins-proxy 以兼容上游文档？
-- 是否要同时为中文本地化维护 README.zh.md？
+- 包名最终用 vision-proxy 还是 qwen-mm-plugins-proxy？→ **vision-relay**（品牌切换定案；执行见 `2026-08-19-vision-relay-rebrand-docs-port-design.md`）。
+- console script 名是否保留 qwen-mm-plugins-proxy 以兼容上游文档？→ **不保留**（从未发布，无人依赖）。
+- 是否要同时为中文本地化维护 README.zh.md？→ **是**（双语言 README 已就位）。
 
 ## 附: 迁移清单（已验证）
 
