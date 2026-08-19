@@ -199,6 +199,32 @@ def test_onboarding_grouped_output_has_header():
     assert "[claude]" in buf.getvalue() and "~/.claude/settings.json" in buf.getvalue()
 
 
+# ── 按键映射（w/s、方向键、大小写、空格/回车/q → 语义键）───────────────
+def test_map_key_canonical():
+    assert onboarding._map_key("w") == "up"
+    assert onboarding._map_key("s") == "down"
+    assert onboarding._map_key(" ") == "space"
+    assert onboarding._map_key("q") == "q"
+    assert onboarding._map_key("\r") == "enter"
+    assert onboarding._map_key("\n") == "enter"
+    assert onboarding._map_key("x") == "enter"  # 未知键按回车处理（保守）
+
+
+def test_map_key_handles_uppercase():
+    # raw 模式下用户可能按 Shift（大写）——大小写都应归一为语义键
+    assert onboarding._map_key("W") == "up"
+    assert onboarding._map_key("S") == "down"
+    assert onboarding._map_key("Q") == "q"
+
+
+def test_unix_arrow_sequence_mapping():
+    # 方向键转义序列末位 -> 语义键（Unix raw 模式一发多字节：ESC [ A/B/C/D）
+    assert onboarding._UNIX_ARROW["A"] == "up"
+    assert onboarding._UNIX_ARROW["B"] == "down"
+    assert onboarding._UNIX_ARROW["C"] == "right"
+    assert onboarding._UNIX_ARROW["D"] == "left"
+
+
 def test_onboarding_run_writes_confirmed(tmp_path, monkeypatch):
     monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     tmp_path.mkdir(exist_ok=True)

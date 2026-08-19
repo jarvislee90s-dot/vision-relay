@@ -108,10 +108,31 @@ def _default_cap(model: str) -> str:
     return "text_only"
 
 
+def _map_key(k: str) -> str:
+    """把单个按键字符规范化为语义键（w/s 与方向键、空格、回车、q 统一走这里）。"""
+    if k in ("\r", "\n"):
+        return "enter"
+    if k == " ":
+        return "space"
+    low = k.lower()
+    if low == "q":
+        return "q"
+    if low == "w":
+        return "up"
+    if low == "s":
+        return "down"
+    return "enter"
+
+
+# 方向键转义序列末位字母 -> 语义键（Unix 终端 raw 模式下方向键发多字节序列）
+_UNIX_ARROW = {"A": "up", "B": "down", "C": "right", "D": "left"}
+
+
 def _read_key_from_tty():
     try:
         import msvcrt
     except ImportError:
+        import select
         import termios
         import tty
 
@@ -119,29 +140,34 @@ def _read_key_from_tty():
         old = termios.tcgetattr(fd)
         try:
             tty.setraw(fd)
-            return sys.stdin.read(1)
+            c = sys.stdin.read(1)
+            if c == "\x1b":  # ESC 开头：可能是方向键（ESC [ A/B/C/D）
+                # 短超时探测后续字节：紧跟 `[`+字母则是方向键；否则视为单独 ESC。
+                ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if ready:
+                    c2 = sys.stdin.read(1)
+                    if c2 == "[":
+                        c3 = sys.stdin.read(1)
+                        return _UNIX_ARROW.get(c3, "esc")
+                    return "esc"
+                return "esc"
+            return _map_key(c)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
     else:
         k = msvcrt.getwch()
-        if k in ("\x00", "\xe0"):
+        if k in ("\x00", "\xe0"):  # Windows 扩展键：方向键
             k2 = msvcrt.getwch()
             if k2 == "H":
                 return "up"
             if k2 == "P":
                 return "down"
+            if k2 == "K":
+                return "left"
+            if k2 == "M":
+                return "right"
             return "enter"
-        if k in ("\r", "\n"):
-            return "enter"
-        if k == " ":
-            return "space"
-        if k.lower() == "q":
-            return "q"
-        if k in ("w",):
-            return "up"
-        if k in ("s",):
-            return "down"
-        return "enter"
+        return _map_key(k)
 
 
 def confirm_models(groups, key_source=None, out=None) -> dict | None:
@@ -161,7 +187,7 @@ def confirm_models(groups, key_source=None, out=None) -> dict | None:
     while True:
         out.write("\n" + "=" * 62 + "\n")
         out.write("首次启用路由：请确认各模型看图能力（默认纯文本，最安全）。\n")
-        out.write("上/下(w/s) 选择　空格 切支持图片　回车 完成　q 取消\n")
+        out.write("上/下(w/s 或方向键) 选择　空格 切支持图片　回车 完成　q 取消\n")
         out.write("-" * 62 + "\n")
         for i, (g, ent) in enumerate(items):
             if g is not last_group:
