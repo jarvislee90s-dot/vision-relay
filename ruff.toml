@@ -12,3 +12,8 @@ ignore = ["E501"]
 
 [lint.isort]
 known-first-party = ["vision_relay"]
+
+# ruff >= 0.16 formats embedded Python code blocks in .md files; docs must stay
+# verbatim (historical records), so format never touches docs/ or research/.
+[format]
+exclude = ["docs/**", "research/**"]
