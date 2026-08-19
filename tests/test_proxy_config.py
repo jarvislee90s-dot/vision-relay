@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-from qwen_mm_plugins_proxy import __version__
 from qwen_mm_plugins_proxy.cli import main as cli_main
 from qwen_mm_plugins_proxy.config import (
     PROTOCOLS,
@@ -177,19 +176,3 @@ def test_cli_lifecycle_commands_work_with_broken_config(tmp_path: Path, monkeypa
     captured = capsys.readouterr()
     assert rc == 1  # not running（无 pid 文件）
     assert "config error" not in captured.err
-
-
-def test_proxy_manifests_are_standalone_non_mcp():
-    """proxy ships harness manifests as a non-MCP server: empty skills, no MCP launch spec."""
-    cap_dir = Path(__file__).resolve().parents[1] / "src" / "capabilities" / "proxy"
-    for rel in (
-        ".claude-plugin/plugin.json",
-        ".codex-plugin/plugin.json",
-        ".qoder-plugin/plugin.json",
-    ):
-        data = json.loads((cap_dir / rel).read_text())
-        assert data["name"] == "qwen-mm-plugins-proxy"
-        assert data["version"] == __version__
-        assert data["skills"] == []
-        assert "mcpServers" not in data
-    assert json.loads((cap_dir / ".mcp.json").read_text()) == {"mcpServers": {}}

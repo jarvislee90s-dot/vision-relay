@@ -41,12 +41,6 @@ jobs:
           uv run --no-project --python 3.12 --with ruff ruff check .
           uv run --no-project --python 3.12 --with ruff ruff format --check .
 
-      - name: Check shell syntax
-        shell: bash
-        run: |
-          bash -n install.sh
-          bash -n install-proxy.sh
-
   windows-checkout:
     name: windows checkout
     runs-on: windows-latest

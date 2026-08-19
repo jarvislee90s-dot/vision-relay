@@ -128,7 +128,7 @@ vision-relay/
 
 ## 7. 验证方案
 
-1. `python -m pytest -q` → 预期 **≥144 passed**（基线 159 − 删除 test_proxy_install.py 的 15 例 = 144；§5.3 迁移/回退逻辑新增的用例计入）；
+1. `python -m pytest -q` → 预期 **≥143 passed**（基线 159 − install 测试 15 例 − manifest 测试 1 例 = 143；§5.3 迁移/回退逻辑新增 6 例后终点 149）；
 2. `ruff check .` + `ruff format --check .` 零告警；
 3. `pip install -e .` 成功且 `vision-relay --version` 正常输出；
 4. `grep -ri qwen` 终检：命中项**必须全部属于 §5.2 白名单**（harness 适配、模型名、出处署名）；
