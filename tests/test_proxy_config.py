@@ -15,6 +15,7 @@ from vision_relay.config import (
     RelayConfig,
     default_config,
     load_config,
+    save_config,
 )
 
 
@@ -177,3 +178,43 @@ def test_cli_lifecycle_commands_work_with_broken_config(tmp_path: Path, monkeypa
     captured = capsys.readouterr()
     assert rc == 1  # not running（无 pid 文件）
     assert "config error" not in captured.err
+
+
+# ── 独立化兼容层：读旧写新 ────────────────────────────────────────────
+def test_legacy_env_vars_still_override_with_warning(tmp_path: Path, monkeypatch, capsys):
+    """旧 QWEN_MM_PROXY_* 环境变量回退读取（一次性 deprecation 提示）。"""
+    from vision_relay import env_util
+
+    monkeypatch.setattr(env_util, "_warned", set())
+    monkeypatch.delenv("VISION_RELAY_BIND_PORT", raising=False)
+    monkeypatch.setenv("QWEN_MM_PROXY_BIND_PORT", "9100")
+    cfg_path = tmp_path / "proxy.json"
+    cfg_path.write_text(json.dumps({"server": {"bind_port": 9000}}))
+    cfg = load_config(str(cfg_path))
+    assert cfg.bind_port == 9100
+    assert "deprecated" in capsys.readouterr().err
+
+
+def test_new_env_vars_win_over_legacy(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("VISION_RELAY_BIND_PORT", "9200")
+    monkeypatch.setenv("QWEN_MM_PROXY_BIND_PORT", "9100")
+    cfg_path = tmp_path / "proxy.json"
+    cfg_path.write_text(json.dumps({"server": {"bind_port": 9000}}))
+    assert load_config(str(cfg_path)).bind_port == 9200
+
+
+def test_load_config_reads_legacy_dir_and_save_migrates(tmp_path: Path, monkeypatch, capsys):
+    """读旧写新：新目录无 proxy.json 时回退读旧目录；save_config 落盘到新目录。"""
+    from vision_relay import env_util
+
+    new_dir, old_dir = tmp_path / "new", tmp_path / "old"
+    new_dir.mkdir()
+    old_dir.mkdir()
+    (old_dir / "proxy.json").write_text(json.dumps({"server": {"bind_port": 9300}}), encoding="utf-8")
+    monkeypatch.setattr(env_util, "config_dir", lambda: str(new_dir))
+    monkeypatch.setattr(env_util, "legacy_config_dir", lambda: str(old_dir))
+    cfg = load_config()
+    assert cfg.bind_port == 9300
+    assert "legacy" in capsys.readouterr().err.lower()
+    save_config(cfg)
+    assert (new_dir / "proxy.json").exists()

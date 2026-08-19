@@ -290,3 +290,37 @@ def test_edit_all_rewrites(tmp_path, monkeypatch):
     assert onboarding.edit_all(cfg, key_source=lambda: "enter", out=io.StringIO()) is True
     assert isinstance(cfg.model_capabilities.get("relay"), dict)
     assert "a" in cfg.model_capabilities["relay"]
+
+
+# ── 独立化兼容层：旧后缀备份还原 ──────────────────────────────────────
+def test_wiring_restore_accepts_legacy_bak(tmp_path, monkeypatch):
+    """旧版 .qwen-mm-proxy.bak 备份也能被还原（升级前接的线，升级后 stop 仍能收尾）。"""
+    home = _mk_home(tmp_path)
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+    claude_dir = home / ".claude"
+    claude_dir.mkdir()
+    f = claude_dir / "settings.json"
+    f.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"}}), encoding="utf-8")
+    legacy_bak = claude_dir / "settings.json.qwen-mm-proxy.bak"
+    legacy_bak.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://real.example"}}), encoding="utf-8")
+    cfg = ProxyConfig(bind_port=8787, routing=RoutingConfig(harnesses=["claude"]))
+    msg = wiring.wiring_restore(cfg)
+    assert any("claude: restored" in m for m in msg)
+    assert json.loads(f.read_text(encoding="utf-8"))["env"]["ANTHROPIC_BASE_URL"] == "https://real.example"
+    assert not legacy_bak.exists()
+
+
+def test_wiring_backup_does_not_shadow_legacy_bak(tmp_path, monkeypatch):
+    """已有旧后缀备份时 start 不再新建新后缀备份（防止把指向代理的当前值存成新备份）。"""
+    home = _mk_home(tmp_path)
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+    claude_dir = home / ".claude"
+    claude_dir.mkdir()
+    f = claude_dir / "settings.json"
+    f.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"}}), encoding="utf-8")
+    (claude_dir / "settings.json.qwen-mm-proxy.bak").write_text(
+        json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://real.example"}}), encoding="utf-8"
+    )
+    cfg = ProxyConfig(bind_port=8787, routing=RoutingConfig(harnesses=["claude"]))
+    wiring.wiring_backup_and_rewrite(cfg)
+    assert not (claude_dir / "settings.json.vision-relay.bak").exists()

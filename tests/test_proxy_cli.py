@@ -199,3 +199,13 @@ def test_cmd_test_image_vlm_error(tmp_path):
 
         mock_client.describe.side_effect = VLMError("TIMEOUT", "timed out")
         assert cmd_test_image(args, cfg) == 1
+
+
+def test_version_flag(capsys):
+    from vision_relay import __version__
+    from vision_relay.cli import parse_args
+
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--version"])
+    assert exc.value.code == 0
+    assert __version__ in capsys.readouterr().out

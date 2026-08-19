@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 
 from .env_util import get_env
@@ -141,20 +142,20 @@ def default_config() -> ProxyConfig:
 
 
 def _apply_env(cfg: ProxyConfig) -> ProxyConfig:
-    """Env overrides (VISION_RELAY_*), applied at load time via vision_relay.env_util.get_env."""
-    if v := get_env("VISION_RELAY_BIND_PORT"):
+    """Env overrides (VISION_RELAY_*; legacy QWEN_MM_PROXY_* still honored, with a warning)."""
+    if v := get_env("VISION_RELAY_BIND_PORT", legacy="QWEN_MM_PROXY_BIND_PORT"):
         cfg.bind_port = int(v)
-    if v := get_env("VISION_RELAY_VLM_MODEL"):
+    if v := get_env("VISION_RELAY_VLM_MODEL", legacy="QWEN_MM_PROXY_VLM_MODEL"):
         cfg.vlm.model = v
-    if v := get_env("VISION_RELAY_VLM_BASE_URL"):
+    if v := get_env("VISION_RELAY_VLM_BASE_URL", legacy="QWEN_MM_PROXY_VLM_BASE_URL"):
         cfg.vlm.base_url = v
     # API key 用 is not None 而非真值判断：环境变量显式设为空串也必须清掉配置里的 key。
     # 否则 walrus 写法会把空串 '' 当 falsy 跳过，导致 T7 这类"拔 VLM key 测 fail-open"永远失效
     # （proxy.json 里的 key 原样保留，VLM 照常被调用）。
-    vlm_key = get_env("VISION_RELAY_VLM_API_KEY")
+    vlm_key = get_env("VISION_RELAY_VLM_API_KEY", legacy="QWEN_MM_PROXY_VLM_API_KEY")
     if vlm_key is not None:
         cfg.vlm.api_key = vlm_key
-    if v := get_env("VISION_RELAY_VLM_FORMAT"):
+    if v := get_env("VISION_RELAY_VLM_FORMAT", legacy="QWEN_MM_PROXY_VLM_FORMAT"):
         if v in VLM_FORMATS:
             cfg.vlm.format = v
     return cfg
@@ -176,11 +177,29 @@ def save_config(cfg: ProxyConfig, path: str | None = None) -> str:
     return path
 
 
+def _default_config_path() -> str:
+    from .env_util import config_dir
+
+    return os.path.join(config_dir(), "proxy.json")
+
+
+def _legacy_config_path() -> str:
+    from .env_util import legacy_config_dir
+
+    return os.path.join(legacy_config_dir(), "proxy.json")
+
+
 def load_config(path: str | None = None) -> ProxyConfig:
     if path is None:
-        from .env_util import config_dir
-
-        path = os.path.join(config_dir(), "proxy.json")
+        path = _default_config_path()
+        if not os.path.exists(path):
+            legacy = _legacy_config_path()
+            if os.path.exists(legacy):
+                path = legacy
+                print(
+                    f"note: using legacy config {legacy}; it will move to {_default_config_path()} on next save",
+                    file=sys.stderr,
+                )
     try:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from .config import RelayConfig, save_config
 
 BAK_SUFFIX = ".vision-relay.bak"
+LEGACY_BAK_SUFFIX = ".qwen-mm-proxy.bak"
 # 测试可 monkeypatch 此值以隔离（不触碰真实 ~）。
 HOME = os.path.expanduser("~")
 
@@ -34,8 +35,14 @@ def _path(home: str, harness: str) -> str:
     return os.path.join(home, *rel) if isinstance(rel, tuple) else os.path.join(home, rel)
 
 
-def _bak_path(p: str) -> str:
-    return p + BAK_SUFFIX
+def _find_bak(p: str) -> str | None:
+    new = p + BAK_SUFFIX
+    if os.path.exists(new):
+        return new
+    old = p + LEGACY_BAK_SUFFIX
+    if os.path.exists(old):
+        return old
+    return None
 
 
 def read_base_url(path: str, h: _Harness) -> str | None:
@@ -114,13 +121,12 @@ def wiring_backup_and_rewrite(cfg) -> list[str]:
         if not os.path.exists(p):
             changed.append(f"{name}: no config file, skipped")
             continue
-        bak = _bak_path(p)
-        if not os.path.exists(bak):
+        if _find_bak(p) is None:  # 已有备份（含旧后缀）不覆盖，防止把代理地址存成"原始值"
             try:
                 os.makedirs(os.path.dirname(p), exist_ok=True)
                 import shutil
 
-                shutil.copyfile(p, bak)
+                shutil.copyfile(p, p + BAK_SUFFIX)
             except OSError:
                 pass
         ok = write_base_url(p, h, proxy_url)
@@ -136,8 +142,8 @@ def wiring_restore(cfg) -> list[str]:
     for name in cfg.routing.harnesses:
         h = HARNESS_CFG[name]
         p = _path(home, name)
-        bak = _bak_path(p)
-        if not os.path.exists(bak):
+        bak = _find_bak(p)
+        if bak is None:
             continue
         cur = read_base_url(p, h)
         if cur is not None and not cur.startswith(proxy_url):
@@ -208,7 +214,7 @@ def wiring_report(cfg) -> list[dict]:
                 "path": p,
                 "base_url": cur,
                 "wired": bool(cur and cur.startswith(proxy_url)),
-                "has_backup": os.path.exists(_bak_path(p)),
+                "has_backup": _find_bak(p) is not None,
             }
         )
     return out
