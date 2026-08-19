@@ -4,9 +4,10 @@ import json
 
 import httpx
 import pytest
-from qwen_mm_plugins_proxy.config import VLMConfig
-from qwen_mm_plugins_proxy.ir import ImageBlock
-from qwen_mm_plugins_proxy.vlm import VLMClient, VLMError, probe_ollama
+
+from vision_relay.config import VLMConfig
+from vision_relay.ir import ImageBlock
+from vision_relay.vlm import VLMClient, VLMError, probe_ollama
 
 
 def _client_with(transport) -> VLMClient:
@@ -42,7 +43,7 @@ def test_probe_ollama_finds_vision_model(monkeypatch):
         return httpx.Response(200, json={"models": [{"name": "qwen3-vl:4b"}, {"name": "llama3"}]})
 
     monkeypatch.setattr(
-        "qwen_mm_plugins_proxy.vlm.httpx.Client",
+        "vision_relay.vlm.httpx.Client",
         lambda *a, **k: real_client(transport=httpx.MockTransport(handler)),
     )
     assert probe_ollama() == "qwen3-vl:4b"
@@ -101,7 +102,7 @@ def test_auto_local_ollama_uses_local_when_no_key(monkeypatch):
     cfg = VLMConfig(model="qwen-vl-max", base_url="https://dashscope.example/v1", api_key="", auto_local_ollama=True)
     client = VLMClient(cfg)
     client._http = httpx.Client(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr("qwen_mm_plugins_proxy.vlm.probe_ollama", lambda *a, **k: "qwen3-vl")
+    monkeypatch.setattr("vision_relay.vlm.probe_ollama", lambda *a, **k: "qwen3-vl")
     assert client.describe(ImageBlock(url="data:image/png;base64,QUJD")) == "本地识图"
     # 应当走本地 /v1/chat/completions，而非云端 dashscope
     assert handler_requests == ["/v1/chat/completions"]
@@ -117,7 +118,7 @@ def test_auto_local_ollama_skips_when_key_set(monkeypatch):
     cfg = VLMConfig(model="qwen-vl-max", base_url="https://dashscope.example/v1", api_key="k", auto_local_ollama=True)
     client = VLMClient(cfg)
     client._http = httpx.Client(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr("qwen_mm_plugins_proxy.vlm.probe_ollama", lambda *a, **k: probed.append(1) or "qwen3-vl")
+    monkeypatch.setattr("vision_relay.vlm.probe_ollama", lambda *a, **k: probed.append(1) or "qwen3-vl")
     assert client.describe(ImageBlock(url="data:image/png;base64,QUJD")) == "云端"
     assert probed == []  # 有 key 不探测
 

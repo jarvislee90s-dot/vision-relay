@@ -66,7 +66,7 @@ python -m pip install pytest httpx
 
 ### 三步开工
 
-1. 编辑 `~/.qwen-mm-plugins/proxy.json`(不存在则创建),按下方模板填入你自己的 key:
+1. 编辑 `~/.vision-relay/proxy.json`(不存在则创建),按下方模板填入你自己的 key:
 
 ```json
 {
@@ -93,7 +93,7 @@ python -m pip install pytest httpx
 
 ## 配置
 
-共享配置在 `~/.qwen-mm-plugins/config`(作为环境变量的回退);代理设置 在 `~/.qwen-mm-plugins/proxy.json`。环境变量覆盖:`QWEN_MM_PROXY_BIND_PORT`、`QWEN_MM_PROXY_VLM_MODEL`、`QWEN_MM_PROXY_VLM_BASE_URL`、`QWEN_MM_PROXY_VLM_API_KEY`、`QWEN_MM_PROXY_VLM_FORMAT`。
+共享配置在 `~/.vision-relay/config`(作为环境变量的回退);代理设置 在 `~/.vision-relay/proxy.json`。环境变量覆盖:`VISION_RELAY_BIND_PORT`、`VISION_RELAY_VLM_MODEL`、`VISION_RELAY_VLM_BASE_URL`、`VISION_RELAY_VLM_API_KEY`、`VISION_RELAY_VLM_FORMAT`。
 
 ## 开发
 

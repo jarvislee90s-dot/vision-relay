@@ -1,7 +1,7 @@
-"""Proxy configuration: JSON file (~/.qwen-mm-plugins/proxy.json, 0600) + env overrides.
+"""Proxy configuration: JSON file (~/.vision-relay/proxy.json, 0600) + env overrides.
 
 Spec says proxy.toml; the repo floor is Python 3.10 (no guaranteed tomllib), so we use JSON
-(see plan Global Constraints). Read via shared.env.get_env for env overrides.
+(see plan Global Constraints). Read via vision_relay.env_util.get_env for env overrides.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from proxy_env import get_env
+from .env_util import get_env
 
 VLM_FORMATS = ("chat", "anthropic")
 
@@ -141,20 +141,20 @@ def default_config() -> ProxyConfig:
 
 
 def _apply_env(cfg: ProxyConfig) -> ProxyConfig:
-    """Env overrides (QWEN_MM_PROXY_*), applied at load time via shared.env.get_env."""
-    if v := get_env("QWEN_MM_PROXY_BIND_PORT"):
+    """Env overrides (VISION_RELAY_*), applied at load time via vision_relay.env_util.get_env."""
+    if v := get_env("VISION_RELAY_BIND_PORT"):
         cfg.bind_port = int(v)
-    if v := get_env("QWEN_MM_PROXY_VLM_MODEL"):
+    if v := get_env("VISION_RELAY_VLM_MODEL"):
         cfg.vlm.model = v
-    if v := get_env("QWEN_MM_PROXY_VLM_BASE_URL"):
+    if v := get_env("VISION_RELAY_VLM_BASE_URL"):
         cfg.vlm.base_url = v
     # API key 用 is not None 而非真值判断：环境变量显式设为空串也必须清掉配置里的 key。
     # 否则 walrus 写法会把空串 '' 当 falsy 跳过，导致 T7 这类"拔 VLM key 测 fail-open"永远失效
     # （proxy.json 里的 key 原样保留，VLM 照常被调用）。
-    vlm_key = get_env("QWEN_MM_PROXY_VLM_API_KEY")
+    vlm_key = get_env("VISION_RELAY_VLM_API_KEY")
     if vlm_key is not None:
         cfg.vlm.api_key = vlm_key
-    if v := get_env("QWEN_MM_PROXY_VLM_FORMAT"):
+    if v := get_env("VISION_RELAY_VLM_FORMAT"):
         if v in VLM_FORMATS:
             cfg.vlm.format = v
     return cfg
@@ -163,7 +163,7 @@ def _apply_env(cfg: ProxyConfig) -> ProxyConfig:
 def save_config(cfg: ProxyConfig, path: str | None = None) -> str:
     """把 cfg 原子写回 proxy.json（0600）。onboarding/生命周期写入用它持久化。"""
     if path is None:
-        from proxy_env import config_dir
+        from .env_util import config_dir
 
         path = os.path.join(config_dir(), "proxy.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -178,7 +178,7 @@ def save_config(cfg: ProxyConfig, path: str | None = None) -> str:
 
 def load_config(path: str | None = None) -> ProxyConfig:
     if path is None:
-        from proxy_env import config_dir
+        from .env_util import config_dir
 
         path = os.path.join(config_dir(), "proxy.json")
     try:

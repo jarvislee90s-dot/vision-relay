@@ -1,4 +1,4 @@
-"""JSON-lines logging to ~/.qwen-mm-plugins/logs/proxy.log (spec §8.4)."""
+"""JSON-lines logging to ~/.vision-relay/logs/proxy.log (spec §8.4)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from proxy_env import config_dir
+from .env_util import config_dir
 
 
 def log_json(entry: dict) -> None:

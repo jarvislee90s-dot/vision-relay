@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from qwen_mm_plugins_proxy.stream import (
+from vision_relay.stream import (
     stream_same_protocol,
     translate_anthropic_to_chat,
     translate_chat_to_anthropic,

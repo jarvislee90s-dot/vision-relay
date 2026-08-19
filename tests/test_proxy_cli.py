@@ -5,7 +5,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from qwen_mm_plugins_proxy.cli import parse_args
+
+from vision_relay.cli import parse_args
 
 # ── parse_args tests ────────────────────────────────────────────────────────
 
@@ -53,36 +54,36 @@ def test_unknown_command_exits_nonzero():
 
 
 def test_cmd_status_not_running(tmp_path):
-    from qwen_mm_plugins_proxy.cli import cmd_status
+    from vision_relay.cli import cmd_status
 
-    with patch("qwen_mm_plugins_proxy.cli._pid_path", return_value=str(tmp_path / "proxy.pid")):
+    with patch("vision_relay.cli._pid_path", return_value=str(tmp_path / "proxy.pid")):
         assert cmd_status() == 1
 
 
 def test_cmd_stop_not_running(tmp_path):
-    from qwen_mm_plugins_proxy.cli import cmd_stop
+    from vision_relay.cli import cmd_stop
 
-    with patch("qwen_mm_plugins_proxy.cli._pid_path", return_value=str(tmp_path / "proxy.pid")):
+    with patch("vision_relay.cli._pid_path", return_value=str(tmp_path / "proxy.pid")):
         assert cmd_stop() == 1
 
 
 def test_cmd_status_running(tmp_path):
-    from qwen_mm_plugins_proxy.cli import cmd_status
+    from vision_relay.cli import cmd_status
 
     pid_file = tmp_path / "proxy.pid"
     pid_file.write_text("999999999")
     # Process 999999999 does not exist -> ProcessLookupError -> "not running"
-    with patch("qwen_mm_plugins_proxy.cli._pid_path", return_value=str(pid_file)):
+    with patch("vision_relay.cli._pid_path", return_value=str(pid_file)):
         assert cmd_status() == 1
 
 
 def test_cmd_stop_stale_pid(tmp_path):
-    from qwen_mm_plugins_proxy.cli import cmd_stop
+    from vision_relay.cli import cmd_stop
 
     pid_file = tmp_path / "proxy.pid"
     pid_file.write_text("999999999")
     # kill of nonexistent pid -> ProcessLookupError -> "not running"
-    with patch("qwen_mm_plugins_proxy.cli._pid_path", return_value=str(pid_file)):
+    with patch("vision_relay.cli._pid_path", return_value=str(pid_file)):
         assert cmd_stop() == 1
 
 
@@ -90,18 +91,18 @@ def test_cmd_stop_stale_pid(tmp_path):
 
 
 def test_cmd_logs_no_log(tmp_path):
-    from qwen_mm_plugins_proxy.cli import cmd_logs
+    from vision_relay.cli import cmd_logs
 
-    with patch("qwen_mm_plugins_proxy.cli._log_path", return_value=str(tmp_path / "nonexistent.log")):
+    with patch("vision_relay.cli._log_path", return_value=str(tmp_path / "nonexistent.log")):
         assert cmd_logs() == 1
 
 
 def test_cmd_logs_reads_tail(tmp_path):
-    from qwen_mm_plugins_proxy.cli import cmd_logs
+    from vision_relay.cli import cmd_logs
 
     log_file = tmp_path / "proxy.log"
     log_file.write_text("line1\nline2\nline3\n")
-    with patch("qwen_mm_plugins_proxy.cli._log_path", return_value=str(log_file)):
+    with patch("vision_relay.cli._log_path", return_value=str(log_file)):
         assert cmd_logs() == 0
 
 
@@ -109,8 +110,8 @@ def test_cmd_logs_reads_tail(tmp_path):
 
 
 def test_cmd_check_warns_no_relays():
-    from qwen_mm_plugins_proxy.cli import cmd_check
-    from qwen_mm_plugins_proxy.config import ProxyConfig
+    from vision_relay.cli import cmd_check
+    from vision_relay.config import ProxyConfig
 
     cfg = ProxyConfig()
     # No relays -> problem reported, exit 1
@@ -121,8 +122,8 @@ def test_cmd_check_warns_no_relays():
 
 
 def test_cmd_check_port_in_use():
-    from qwen_mm_plugins_proxy.cli import cmd_check
-    from qwen_mm_plugins_proxy.config import ProxyConfig
+    from vision_relay.cli import cmd_check
+    from vision_relay.config import ProxyConfig
 
     cfg = ProxyConfig()
     with patch("socket.socket") as mock_sock:
@@ -134,13 +135,13 @@ def test_cmd_check_port_in_use():
 
 
 def test_cmd_start_already_running(tmp_path):
-    from qwen_mm_plugins_proxy.cli import cmd_start
-    from qwen_mm_plugins_proxy.config import ProxyConfig
+    from vision_relay.cli import cmd_start
+    from vision_relay.config import ProxyConfig
 
     pid_file = tmp_path / "proxy.pid"
     pid_file.write_text("42")
     cfg = ProxyConfig()
-    with patch("qwen_mm_plugins_proxy.cli._pid_path", return_value=str(pid_file)):
+    with patch("vision_relay.cli._pid_path", return_value=str(pid_file)):
         assert cmd_start(cfg) == 1
 
 
@@ -148,33 +149,33 @@ def test_cmd_start_already_running(tmp_path):
 
 
 def test_main_dispatch_status(tmp_path):
-    from qwen_mm_plugins_proxy.cli import main
+    from vision_relay.cli import main
 
-    with patch("qwen_mm_plugins_proxy.cli._pid_path", return_value=str(tmp_path / "proxy.pid")):
-        with patch("qwen_mm_plugins_proxy.config.load_config") as mock_cfg:
-            from qwen_mm_plugins_proxy.config import ProxyConfig
+    with patch("vision_relay.cli._pid_path", return_value=str(tmp_path / "proxy.pid")):
+        with patch("vision_relay.config.load_config") as mock_cfg:
+            from vision_relay.config import ProxyConfig
 
             mock_cfg.return_value = ProxyConfig()
             assert main(["status"]) == 1  # no process running
 
 
 def test_main_dispatch_stop(tmp_path):
-    from qwen_mm_plugins_proxy.cli import main
+    from vision_relay.cli import main
 
-    with patch("qwen_mm_plugins_proxy.cli._pid_path", return_value=str(tmp_path / "proxy.pid")):
-        with patch("qwen_mm_plugins_proxy.config.load_config") as mock_cfg:
-            from qwen_mm_plugins_proxy.config import ProxyConfig
+    with patch("vision_relay.cli._pid_path", return_value=str(tmp_path / "proxy.pid")):
+        with patch("vision_relay.config.load_config") as mock_cfg:
+            from vision_relay.config import ProxyConfig
 
             mock_cfg.return_value = ProxyConfig()
             assert main(["stop"]) == 1  # no process running
 
 
 def test_main_dispatch_logs(tmp_path):
-    from qwen_mm_plugins_proxy.cli import main
+    from vision_relay.cli import main
 
-    with patch("qwen_mm_plugins_proxy.cli._log_path", return_value=str(tmp_path / "nonexistent.log")):
-        with patch("qwen_mm_plugins_proxy.config.load_config") as mock_cfg:
-            from qwen_mm_plugins_proxy.config import ProxyConfig
+    with patch("vision_relay.cli._log_path", return_value=str(tmp_path / "nonexistent.log")):
+        with patch("vision_relay.config.load_config") as mock_cfg:
+            from vision_relay.config import ProxyConfig
 
             mock_cfg.return_value = ProxyConfig()
             assert main(["logs"]) == 1
@@ -185,16 +186,16 @@ def test_main_dispatch_logs(tmp_path):
 
 def test_cmd_test_image_vlm_error(tmp_path):
     """I6: VLM errors should be caught and reported cleanly, not traceback."""
-    from qwen_mm_plugins_proxy.cli import cmd_test_image
-    from qwen_mm_plugins_proxy.config import ProxyConfig
+    from vision_relay.cli import cmd_test_image
+    from vision_relay.config import ProxyConfig
 
     img_file = tmp_path / "test.png"
     img_file.write_bytes(b"\x89PNG")
     cfg = ProxyConfig()
     args = parse_args(["test-image", str(img_file)])
-    with patch("qwen_mm_plugins_proxy.vlm.VLMClient") as mock_cls:
+    with patch("vision_relay.vlm.VLMClient") as mock_cls:
         mock_client = mock_cls.return_value
-        from qwen_mm_plugins_proxy.vlm import VLMError
+        from vision_relay.vlm import VLMError
 
         mock_client.describe.side_effect = VLMError("TIMEOUT", "timed out")
         assert cmd_test_image(args, cfg) == 1

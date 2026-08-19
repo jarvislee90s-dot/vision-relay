@@ -1,4 +1,5 @@
 """Slim standalone conftest for the proxy capability (only what proxy tests need)."""
+
 import json
 import threading
 
@@ -23,7 +24,9 @@ class RecordingUpstream:
             def do_POST(self):
                 length = int(self.headers.get("content-length", 0))
                 up.received.append(json.loads(self.rfile.read(length)))
-                payload = json.dumps({"choices": [{"message": {"content": up.content}}]}, ensure_ascii=False).encode("utf-8")
+                payload = json.dumps({"choices": [{"message": {"content": up.content}}]}, ensure_ascii=False).encode(
+                    "utf-8"
+                )
                 self.send_response(200)
                 self.send_header("content-type", "application/json")
                 self.send_header("content-length", str(len(payload)))

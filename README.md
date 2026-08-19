@@ -70,7 +70,7 @@ python -m pip install pytest httpx
 
 ### Three steps
 
-1. Edit `~/.qwen-mm-plugins/proxy.json` (create if missing) with the template below (put in your own keys):
+1. Edit `~/.vision-relay/proxy.json` (create if missing) with the template below (put in your own keys):
 
 ```json
 {
@@ -97,7 +97,7 @@ Config rewrites happen only on `start` / `stop` (backup + rewrite the three harn
 
 ## Configuration
 
-Shared config lives in `~/.qwen-mm-plugins/config` (fallback for env vars); proxy settings in `~/.qwen-mm-plugins/proxy.json`. Env overrides: `QWEN_MM_PROXY_BIND_PORT`, `QWEN_MM_PROXY_VLM_MODEL`, `QWEN_MM_PROXY_VLM_BASE_URL`, `QWEN_MM_PROXY_VLM_API_KEY`, `QWEN_MM_PROXY_VLM_FORMAT`.
+Shared config lives in `~/.vision-relay/config` (fallback for env vars); proxy settings in `~/.vision-relay/proxy.json`. Env overrides: `VISION_RELAY_BIND_PORT`, `VISION_RELAY_VLM_MODEL`, `VISION_RELAY_VLM_BASE_URL`, `VISION_RELAY_VLM_API_KEY`, `VISION_RELAY_VLM_FORMAT`.
 
 ## Development
 

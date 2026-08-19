@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
-from qwen_mm_plugins_proxy.cli import main as cli_main
-from qwen_mm_plugins_proxy.config import (
+
+from vision_relay.cli import main as cli_main
+from vision_relay.config import (
     PROTOCOLS,
     ConfigError,
     ProxyConfig,
@@ -36,7 +37,7 @@ def test_load_config_reads_json_and_env(tmp_path: Path, monkeypatch):
             }
         )
     )
-    monkeypatch.setenv("QWEN_MM_PROXY_BIND_PORT", "9100")  # env > file
+    monkeypatch.setenv("VISION_RELAY_BIND_PORT", "9100")  # env > file
     cfg = load_config(str(cfg_path))
     assert cfg.bind_port == 9100
     assert cfg.vlm.model == "qwen-vl-max"
@@ -46,7 +47,7 @@ def test_empty_env_vlm_api_key_clears_config_key(tmp_path: Path, monkeypatch):
     """T7：环境变量显式设为空串必须清掉 proxy.json 里的 VLM key（而非被 falsy 吞掉）。"""
     cfg_path = tmp_path / "proxy.json"
     cfg_path.write_text(json.dumps({"vlm": {"model": "qwen-vl-max", "api_key": "super-secret"}}))
-    monkeypatch.setenv("QWEN_MM_PROXY_VLM_API_KEY", "")
+    monkeypatch.setenv("VISION_RELAY_VLM_API_KEY", "")
     cfg = load_config(str(cfg_path))
     assert cfg.vlm.model == "qwen-vl-max"  # 其他字段不受影响
     assert cfg.vlm.api_key == ""  # key 被显式清空
@@ -56,7 +57,7 @@ def test_unset_env_vlm_api_key_keeps_config_key(tmp_path: Path, monkeypatch):
     """仅当环境变量没设时才保留配置里的 key（空串 vs 未设置二者语义不同）。"""
     cfg_path = tmp_path / "proxy.json"
     cfg_path.write_text(json.dumps({"vlm": {"api_key": "super-secret"}}))
-    monkeypatch.delenv("QWEN_MM_PROXY_VLM_API_KEY", raising=False)
+    monkeypatch.delenv("VISION_RELAY_VLM_API_KEY", raising=False)
     cfg = load_config(str(cfg_path))
     assert cfg.vlm.api_key == "super-secret"
 
@@ -112,7 +113,7 @@ def test_protocol_enum_matches_runtime_inbound_protocols():
     """锁死 config.PROTOCOLS 与 server 入站路径/解析器集合的同步不变量。
     单边新增协议（config 加了枚举但 ir/server 没加，或反之）会让请求级 relay
     回退因 __post_init__ 强校验抛 ConfigError 打成 502 fail-open。"""
-    from qwen_mm_plugins_proxy.server import _PARSERS, _PROTO_BY_PATH
+    from vision_relay.server import _PARSERS, _PROTO_BY_PATH
 
     assert set(PROTOCOLS) == set(_PARSERS) == set(_PROTO_BY_PATH.values())
 
@@ -158,7 +159,7 @@ def test_relay_non_object_entry_raises():
 
 
 def test_cli_returns_2_on_config_error(tmp_path: Path, monkeypatch, capsys):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
     cfg_path = tmp_path / "proxy.json"
     cfg_path.write_text(json.dumps({"relays": [{**VALID_RELAY, "protocol": "bogus"}]}))
     rc = cli_main(["check"])
@@ -170,7 +171,7 @@ def test_cli_returns_2_on_config_error(tmp_path: Path, monkeypatch, capsys):
 
 def test_cli_lifecycle_commands_work_with_broken_config(tmp_path: Path, monkeypatch, capsys):
     """stop/status/logs 不依赖配置：损坏的 proxy.json 不能锁死生命周期命令。"""
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
     (tmp_path / "proxy.json").write_text("{ broken", encoding="utf-8")
     rc = cli_main(["status"])
     captured = capsys.readouterr()

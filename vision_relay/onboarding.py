@@ -258,7 +258,7 @@ def run_onboarding(cfg, key_source=None, out=None) -> bool:
 
 
 def edit_all(cfg, key_source=None, out=None) -> bool:
-    """显式入口：重新完整确认所有扫描到的模型(含已有)，供随时改配置。qwen-mm-plugins-proxy models。"""
+    """显式入口：重新完整确认所有扫描到的模型(含已有)，供随时改配置。vision-relay models。"""
     groups = scan_model_groups(cfg)
     out = out or sys.stdout
     result = _confirm_groups(groups, key_source, out)

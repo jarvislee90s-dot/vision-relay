@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from .config import RelayConfig, save_config
 
-BAK_SUFFIX = ".qwen-mm-proxy.bak"
+BAK_SUFFIX = ".vision-relay.bak"
 # 测试可 monkeypatch 此值以隔离（不触碰真实 ~）。
 HOME = os.path.expanduser("~")
 

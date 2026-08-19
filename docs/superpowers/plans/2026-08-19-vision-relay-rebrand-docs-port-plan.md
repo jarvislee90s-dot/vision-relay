@@ -349,6 +349,7 @@ VISION_RELAY_CONFIG_DIR / VISION_RELAY_CONFIG point at ~/.vision-relay and
 ~/.vision-relay/config. (Legacy Qwen-MM-Plugins era names are handled by the
 compat layer; see the final version of this module.)
 """
+
 from __future__ import annotations
 
 import os
@@ -368,7 +369,7 @@ def _parse_config(text: str) -> dict[str, str]:
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, val = line.partition("=")
@@ -658,6 +659,7 @@ VISION_RELAY_CONFIG_DIR / VISION_RELAY_CONFIG point at ~/.vision-relay and
 still honored with a one-time deprecation warning, so existing setups keep
 working while migrating.
 """
+
 from __future__ import annotations
 
 import os
@@ -702,7 +704,7 @@ def _parse_config(text: str) -> dict[str, str]:
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, val = line.partition("=")

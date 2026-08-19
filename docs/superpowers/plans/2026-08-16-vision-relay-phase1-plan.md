@@ -69,10 +69,14 @@ def test_default_config_defaults():
 
 def test_load_config_reads_json_and_env(tmp_path: Path, monkeypatch):
     cfg_path = tmp_path / "proxy.json"
-    cfg_path.write_text(json.dumps({
-        "server": {"bind_port": 9000},
-        "vlm": {"model": "qwen-vl-max"},
-    }))
+    cfg_path.write_text(
+        json.dumps(
+            {
+                "server": {"bind_port": 9000},
+                "vlm": {"model": "qwen-vl-max"},
+            }
+        )
+    )
     monkeypatch.setenv("QWEN_MM_PROXY_BIND_PORT", "9100")  # env > file
     cfg = load_config(str(cfg_path))
     assert cfg.bind_port == 9100
@@ -393,6 +397,7 @@ from dataclasses import dataclass, field
 @dataclass
 class ImageBlock:
     """Normalized image: either url (OpenAI forms) or base64+media_type (Anthropic)."""
+
     url: str | None = None
     media_type: str | None = None
     base64: str | None = None
@@ -438,8 +443,9 @@ def detect_protocol(path: str, body: dict) -> str:
     if "input" in body:
         return "responses"
     if "messages" in body:
-        if "system" in body or any(m.get("role") == "assistant" and "content" in m and isinstance(m["content"], list)
-                                   for m in body["messages"]):
+        if "system" in body or any(
+            m.get("role") == "assistant" and "content" in m and isinstance(m["content"], list) for m in body["messages"]
+        ):
             return "anthropic"
         return "chat"
     raise ValueError(f"cannot detect protocol for path={path!r}")
@@ -488,10 +494,13 @@ ANTHROPIC_BODY = {
     "model": "deepseek-v4-pro",
     "system": "you are helpful",
     "messages": [
-        {"role": "user", "content": [
-            {"type": "text", "text": "看图"},
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
-        ]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看图"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
+            ],
+        },
     ],
     "max_tokens": 1024,
 }
@@ -510,10 +519,13 @@ def test_parse_responses_image_and_tool_result():
     body = {
         "model": "deepseek-v4-pro",
         "input": [
-            {"role": "user", "content": [
-                {"type": "input_text", "text": "hi"},
-                {"type": "input_image", "image_url": "https://x/y.png"},
-            ]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "hi"},
+                    {"type": "input_image", "image_url": "https://x/y.png"},
+                ],
+            },
             {"type": "function_call_output", "call_id": "c1", "output": "data:image/png;base64,QUJD"},
         ],
     }
@@ -527,10 +539,13 @@ def test_parse_chat_image_url():
     body = {
         "model": "glm-4.5v",
         "messages": [
-            {"role": "user", "content": [
-                {"type": "text", "text": "x"},
-                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,QUJD"}},
-            ]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "x"},
+                    {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,QUJD"}},
+                ],
+            },
         ],
     }
     ir = parse_chat(body)
@@ -564,7 +579,9 @@ def extract_data_urls(text: str) -> list[str]:
 
 def _image_block(source: dict) -> ContentBlock:
     if source.get("type") == "base64":
-        return ContentBlock(type="image", image=ImageBlock(media_type=source.get("media_type"), base64=source.get("data")))
+        return ContentBlock(
+            type="image", image=ImageBlock(media_type=source.get("media_type"), base64=source.get("data"))
+        )
     return ContentBlock(type="image", image=ImageBlock(url=source.get("url")))
 
 
@@ -583,8 +600,11 @@ def _content_blocks(blocks: list) -> list[ContentBlock]:
             url = b["image_url"].get("url") if isinstance(b.get("image_url"), dict) else b.get("image_url")
             out.append(ContentBlock(type="image", image=ImageBlock(url=url)))
         elif kind == "tool_use":
-            out.append(ContentBlock(type="tool_use", tool_use_id=b.get("id"), tool_name=b.get("name"),
-                                    tool_input=b.get("input")))
+            out.append(
+                ContentBlock(
+                    type="tool_use", tool_use_id=b.get("id"), tool_name=b.get("name"), tool_input=b.get("input")
+                )
+            )
         elif kind == "tool_result":
             content = b.get("content")
             if isinstance(content, str):
@@ -593,11 +613,22 @@ def _content_blocks(blocks: list) -> list[ContentBlock]:
                 for url in extract_data_urls(text):
                     out.append(ContentBlock(type="image", image=ImageBlock(url=url)))
             else:
-                out.append(ContentBlock(type="tool_result", tool_use_id=b.get("tool_use_id"),
-                                        tool_result_content=_content_blocks(content or [])))
+                out.append(
+                    ContentBlock(
+                        type="tool_result",
+                        tool_use_id=b.get("tool_use_id"),
+                        tool_result_content=_content_blocks(content or []),
+                    )
+                )
         elif kind == "function_call":
-            out.append(ContentBlock(type="tool_use", tool_use_id=b.get("call_id"), tool_name=b.get("name"),
-                                    tool_input=json.loads(b.get("arguments") or "{}")))
+            out.append(
+                ContentBlock(
+                    type="tool_use",
+                    tool_use_id=b.get("call_id"),
+                    tool_name=b.get("name"),
+                    tool_input=json.loads(b.get("arguments") or "{}"),
+                )
+            )
         elif kind == "function_call_output":
             output = b.get("output")
             out.append(ContentBlock(type="text", text=str(output)))
@@ -640,8 +671,13 @@ def parse_responses(body: dict) -> IRRequest:
             messages.append(_message("assistant", item.get("content", [])))
         elif item.get("type") in ("function_call", "function_call_output"):
             messages.append(_message("tool", [item]))
-    return IRRequest(model=body.get("model", ""), messages=messages, tools=body.get("tools"),
-                     stream=bool(body.get("stream")), max_tokens=body.get("max_output_tokens"))
+    return IRRequest(
+        model=body.get("model", ""),
+        messages=messages,
+        tools=body.get("tools"),
+        stream=bool(body.get("stream")),
+        max_tokens=body.get("max_output_tokens"),
+    )
 
 
 def parse_chat(body: dict) -> IRRequest:
@@ -649,9 +685,15 @@ def parse_chat(body: dict) -> IRRequest:
     system = None
     if messages and messages[0].role == "system":
         system = messages.pop(0).content[0].text
-    return IRRequest(model=body.get("model", ""), messages=messages, system=system,
-                     tools=body.get("tools"), stream=bool(body.get("stream")),
-                     max_tokens=body.get("max_tokens"), temperature=body.get("temperature"))
+    return IRRequest(
+        model=body.get("model", ""),
+        messages=messages,
+        system=system,
+        tools=body.get("tools"),
+        stream=bool(body.get("stream")),
+        max_tokens=body.get("max_tokens"),
+        temperature=body.get("temperature"),
+    )
 ```
 
 - [ ] **Step 4: 运行确认通过**
@@ -687,11 +729,17 @@ from qwen_mm_plugins_proxy.ir import serialize_anthropic, serialize_chat, serial
 
 def test_parse_serialize_anthropic_roundtrip():
     body = {
-        "model": "deepseek-v4-pro", "system": "s",
-        "messages": [{"role": "user", "content": [
-            {"type": "text", "text": "hi"},
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
-        ]}],
+        "model": "deepseek-v4-pro",
+        "system": "s",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "hi"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
+                ],
+            }
+        ],
     }
     ir = parse_anthropic(body)
     out = serialize_anthropic(ir)
@@ -701,13 +749,19 @@ def test_parse_serialize_anthropic_roundtrip():
 
 
 def test_serialize_chat_preserves_image_and_tools():
-    ir = parse_chat({
-        "model": "qwen", "messages": [
-            {"role": "system", "content": "s"},
-            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}]},
-        ],
-        "tools": [{"type": "function", "function": {"name": "f"}}],
-    })
+    ir = parse_chat(
+        {
+            "model": "qwen",
+            "messages": [
+                {"role": "system", "content": "s"},
+                {
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}],
+                },
+            ],
+            "tools": [{"type": "function", "function": {"name": "f"}}],
+        }
+    )
     out = serialize_chat(ir)
     assert out["messages"][0]["role"] == "system"
     assert out["messages"][1]["content"][0]["type"] == "image_url"
@@ -715,9 +769,14 @@ def test_serialize_chat_preserves_image_and_tools():
 
 
 def test_serialize_responses_keeps_input_list():
-    ir = parse_responses({"model": "m", "input": [
-        {"role": "user", "content": [{"type": "input_text", "text": "x"}]},
-    ]})
+    ir = parse_responses(
+        {
+            "model": "m",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "x"}]},
+            ],
+        }
+    )
     out = serialize_responses(ir)
     assert out["input"][0]["role"] == "user"
 ```
@@ -750,17 +809,27 @@ def _block_to_proto(block: ContentBlock, protocol: str) -> dict:
         return {"type": "image_url", "image_url": {"url": img.url or f"data:{img.media_type};base64,{img.base64}"}}
     if block.type == "tool_use":
         if protocol == "responses":
-            return {"type": "function_call", "call_id": block.tool_use_id, "name": block.tool_name,
-                    "arguments": json.dumps(block.tool_input or {})}
+            return {
+                "type": "function_call",
+                "call_id": block.tool_use_id,
+                "name": block.tool_name,
+                "arguments": json.dumps(block.tool_input or {}),
+            }
         return {"type": "tool_use", "id": block.tool_use_id, "name": block.tool_name, "input": block.tool_input or {}}
     if block.type == "tool_result":
         content = [_block_to_proto(b, protocol) for b in (block.tool_result_content or [])]
         if protocol == "responses":
-            return {"type": "function_call_output", "call_id": block.tool_use_id,
-                    "output": _blocks_to_text(block.tool_result_content or [])}
+            return {
+                "type": "function_call_output",
+                "call_id": block.tool_use_id,
+                "output": _blocks_to_text(block.tool_result_content or []),
+            }
         if protocol == "chat":
-            return {"role": "tool", "tool_call_id": block.tool_use_id,
-                    "content": _blocks_to_text(block.tool_result_content or [])}
+            return {
+                "role": "tool",
+                "tool_call_id": block.tool_use_id,
+                "content": _blocks_to_text(block.tool_result_content or []),
+            }
         return {"type": "tool_result", "tool_use_id": block.tool_use_id, "content": content}
     return {"type": "text", "text": ""}
 
@@ -776,14 +845,23 @@ def _message_to_proto(msg: Message, protocol: str) -> dict:
         return {"role": msg.role, "content": [_block_to_proto(b, protocol) for b in msg.content]}
     # chat
     if msg.role == "assistant":
-        tool_calls = [{"id": b.tool_use_id, "type": "function",
-                       "function": {"name": b.tool_name, "arguments": json.dumps(b.tool_input or {})}}
-                      for b in msg.content if b.type == "tool_use"]
+        tool_calls = [
+            {
+                "id": b.tool_use_id,
+                "type": "function",
+                "function": {"name": b.tool_name, "arguments": json.dumps(b.tool_input or {})},
+            }
+            for b in msg.content
+            if b.type == "tool_use"
+        ]
         text = "".join(b.text or "" for b in msg.content if b.type == "text")
         return {"role": "assistant", "content": text, "tool_calls": tool_calls or None}
     if msg.role == "tool":
-        return {"role": "tool", "tool_call_id": (msg.content[0].tool_use_id if msg.content else None),
-                "content": _blocks_to_text(msg.content)}
+        return {
+            "role": "tool",
+            "tool_call_id": (msg.content[0].tool_use_id if msg.content else None),
+            "content": _blocks_to_text(msg.content),
+        }
     return {"role": "user", "content": [_block_to_proto(b, protocol) for b in msg.content]}
 
 
@@ -903,7 +981,7 @@ from collections.abc import Iterable
 def _data_payload(line: str) -> dict | None:
     if not line.startswith("data: "):
         return None
-    payload = line[len("data: "):].strip()
+    payload = line[len("data: ") :].strip()
     if payload in ("[DONE]", ""):
         return None
     try:
@@ -943,10 +1021,13 @@ def translate_chat_to_anthropic(lines: Iterable[str]) -> Iterable[str]:
         delta = choices[0].get("delta", {}) if choices else {}
         text = delta.get("content")
         if text:
-            yield "data: " + json.dumps({
-                "type": "content_block_delta", "index": 0,
-                "delta": {"type": "text_delta", "text": text},
-            })
+            yield "data: " + json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": text},
+                }
+            )
     yield 'data: {"type":"message_stop"}'
 ```
 
@@ -1022,7 +1103,9 @@ def test_probe_ollama_finds_vision_model(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"models": [{"name": "qwen3-vl:4b"}, {"name": "llama3"}]})
 
-    monkeypatch.setattr("qwen_mm_plugins_proxy.vlm.httpx.Client", lambda *a, **k: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(
+        "qwen_mm_plugins_proxy.vlm.httpx.Client", lambda *a, **k: httpx.Client(transport=httpx.MockTransport(handler))
+    )
     assert probe_ollama() == "qwen3-vl:4b"
 ```
 
@@ -1114,11 +1197,22 @@ class VLMClient:
         body = {
             "model": self.cfg.model,
             "max_tokens": self.cfg.max_tokens,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image", "source": {"type": "base64", "media_type": image.media_type or "image/png",
-                                              "data": image.base64 or ""}},
-            ]}],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type or "image/png",
+                                "data": image.base64 or "",
+                            },
+                        },
+                    ],
+                }
+            ],
         }
         headers = {"x-api-key": self.cfg.api_key, "anthropic-version": "2023-06-01"} if self.cfg.api_key else {}
         resp = self._http.post(url, json=body, headers=headers)
@@ -1329,13 +1423,20 @@ class FakeVLM:
 
 
 def _ir_with_image(model="deepseek-v4-pro"):
-    return parse_chat({
-        "model": model,
-        "messages": [{"role": "user", "content": [
-            {"type": "text", "text": "看图"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
-        ]}],
-    })
+    return parse_chat(
+        {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "看图"},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+                    ],
+                }
+            ],
+        }
+    )
 
 
 def test_injects_description_and_removes_image_block():
@@ -1441,7 +1542,12 @@ class Pipeline:
                     result.vlm_calls += 1
                 self.cache.put(key, None, cached)
             except Exception as exc:  # noqa: BLE001 - fail-open on ANY VLM failure
-                self._replace(msg, block_idx, "[图片描述] 看不到图：视觉模型调用失败（%s），请更换多模态模型或检查 VLM 配置，不要编造内容。" % getattr(exc, "reason", type(exc).__name__))
+                self._replace(
+                    msg,
+                    block_idx,
+                    "[图片描述] 看不到图：视觉模型调用失败（%s），请更换多模态模型或检查 VLM 配置，不要编造内容。"
+                    % getattr(exc, "reason", type(exc).__name__),
+                )
                 result.fail_open = getattr(exc, "reason", "VLM_FAILED")
                 return "stripped"
         desc = f"[图片描述] {cached}"
@@ -1530,9 +1636,15 @@ from qwen_mm_plugins_proxy.capability import CapabilityTable
 from qwen_mm_plugins_proxy.config import ProxyConfig
 
 BUILTIN = {
-    "deepseek/*": "text_only", "glm/*": "text_only", "zai/*": "text_only",
-    "openai/*": "vision", "anthropic/*": "vision", "google/*": "vision",
-    "qwen-vl-*": "vision", "qwen3.5-omni-*": "vision", "kimi-k2.7-code*": "vision",
+    "deepseek/*": "text_only",
+    "glm/*": "text_only",
+    "zai/*": "text_only",
+    "openai/*": "vision",
+    "anthropic/*": "vision",
+    "google/*": "vision",
+    "qwen-vl-*": "vision",
+    "qwen3.5-omni-*": "vision",
+    "kimi-k2.7-code*": "vision",
     "openrouter/deepseek/*": "text_only",
 }
 
@@ -1614,6 +1726,7 @@ class CapabilityTable:
 ```python
 # pipeline.py 顶部替换内联 import
 from .capability import CapabilityTable
+
 # __init__ 里 self.table = CapabilityTable()
 # process 里替换判断：
 if self.table.judge(ir.model, cfg) == "vision":
@@ -1718,18 +1831,28 @@ def test_proxy_forwards_text_request_and_transcribes_image(upstream):
         relays=[RelayConfig(name="up", protocol="chat", base_url=f"http://127.0.0.1:{upstream.port}/v1")],
         vlm=__import__("qwen_mm_plugins_proxy.config", fromlist=["VLMConfig"]).VLMConfig(model="qwen-vl-max"),
     )
-    pipe = Pipeline(NoopVLM(), __import__("qwen_mm_plugins_proxy.cache", fromlist=["DescriptionCache"]).DescriptionCache())
+    pipe = Pipeline(
+        NoopVLM(), __import__("qwen_mm_plugins_proxy.cache", fromlist=["DescriptionCache"]).DescriptionCache()
+    )
     server = run_server(cfg)
     server_port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        resp = httpx.post(f"http://127.0.0.1:{server_port}/v1/chat/completions", json={
-            "model": "deepseek-v4-pro",
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": "看图"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
-            ]}],
-        })
+        resp = httpx.post(
+            f"http://127.0.0.1:{server_port}/v1/chat/completions",
+            json={
+                "model": "deepseek-v4-pro",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "看图"},
+                            {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+                        ],
+                    }
+                ],
+            },
+        )
         assert resp.status_code == 200
         assert upstream.last_body is not None
         # 上游收到的消息里图片已被替换成描述文字
@@ -1785,7 +1908,15 @@ import httpx
 from . import stream as sstream
 from .cache import DescriptionCache
 from .config import ProxyConfig, RelayConfig, load_config
-from .ir import detect_protocol, parse_anthropic, parse_chat, parse_responses, serialize_anthropic, serialize_chat, serialize_responses
+from .ir import (
+    detect_protocol,
+    parse_anthropic,
+    parse_chat,
+    parse_responses,
+    serialize_anthropic,
+    serialize_chat,
+    serialize_responses,
+)
 from .logging_util import log_json
 from .pipeline import Pipeline
 from .vlm import VLMClient
@@ -1810,12 +1941,15 @@ def _forward(cfg: RelayConfig, body: dict, stream: bool):
         else:
             headers = {"Authorization": f"Bearer {cfg.api_key}"}
     with httpx.Client(timeout=300.0) as client:
-        resp = client.post(cfg.base_url.rstrip("/") + "/v1/chat/completions"
-                           if cfg.protocol == "chat" else
-                           cfg.base_url.rstrip("/") + "/v1/messages"
-                           if cfg.protocol == "anthropic" else
-                           cfg.base_url.rstrip("/") + "/v1/responses",
-                           json=body, headers=headers)
+        resp = client.post(
+            cfg.base_url.rstrip("/") + "/v1/chat/completions"
+            if cfg.protocol == "chat"
+            else cfg.base_url.rstrip("/") + "/v1/messages"
+            if cfg.protocol == "anthropic"
+            else cfg.base_url.rstrip("/") + "/v1/responses",
+            json=body,
+            headers=headers,
+        )
         return resp.status_code, resp.text
 
 
@@ -1852,10 +1986,18 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             relay = _select_relay(self._cfg, proto)
             out_body = _SERIALIZERS[proto](result.ir)
             status, text = _forward(relay, out_body, ir.stream)
-            log_json({"event": "proxy_request", "proto": proto, "model": ir.model,
-                      "stripped": result.stripped, "injected": result.injected,
-                      "fail_open": result.fail_open, "upstream_status": status,
-                      "duration_ms": int((time.time() - started) * 1000)})
+            log_json(
+                {
+                    "event": "proxy_request",
+                    "proto": proto,
+                    "model": ir.model,
+                    "stripped": result.stripped,
+                    "injected": result.injected,
+                    "fail_open": result.fail_open,
+                    "upstream_status": status,
+                    "duration_ms": int((time.time() - started) * 1000),
+                }
+            )
             self.send_response(status)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(text)))
@@ -1867,8 +2009,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/status"):
-            payload = json.dumps({"ok": True, "relays": len(self._cfg.relays),
-                                  "vlm_model": self._cfg.vlm.model}).encode()
+            payload = json.dumps(
+                {"ok": True, "relays": len(self._cfg.relays), "vlm_model": self._cfg.vlm.model}
+            ).encode()
             self.send_response(200)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(payload)))
@@ -1953,6 +2096,7 @@ def test_parse_args_status():
 
 def test_unknown_command_exits_nonzero():
     import pytest
+
     with pytest.raises(SystemExit):
         parse_args(["frobnicate"])
 ```
@@ -2183,7 +2327,10 @@ def _bash(script: str, **env: str) -> subprocess.CompletedProcess[str]:
     merged = {**os.environ, "NO_COLOR": "1", **env}
     return subprocess.run(
         ["bash", "-c", f"source ./install.sh --help >/dev/null; {script}"],
-        cwd=ROOT, env=merged, capture_output=True, text=True,
+        cwd=ROOT,
+        env=merged,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -2345,9 +2492,10 @@ class FakeVLM:
 @pytest.fixture()
 def stack():
     up = RecordingUpstream().start()
-    cfg = ProxyConfig(relays=[RelayConfig(name="up", protocol="chat",
-                                          base_url=f"http://127.0.0.1:{up.port}/v1")],
-                      vlm=VLMConfig(model="qwen-vl-max"))
+    cfg = ProxyConfig(
+        relays=[RelayConfig(name="up", protocol="chat", base_url=f"http://127.0.0.1:{up.port}/v1")],
+        vlm=VLMConfig(model="qwen-vl-max"),
+    )
     srv = run_server(cfg)
     port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -2362,13 +2510,22 @@ def _post(port, path, body):
 
 def test_anthropic_inbound_image_replaced(stack):
     port, up = stack
-    resp = _post(port, "/v1/messages", {
-        "model": "deepseek-v4-pro",
-        "messages": [{"role": "user", "content": [
-            {"type": "text", "text": "看图"},
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "QUJD"}},
-        ]}],
-    })
+    resp = _post(
+        port,
+        "/v1/messages",
+        {
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "看图"},
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "QUJD"}},
+                    ],
+                }
+            ],
+        },
+    )
     assert resp.status_code == 200
     raw = json.dumps(up.received[-1])
     assert "integration description" in raw
@@ -2377,13 +2534,17 @@ def test_anthropic_inbound_image_replaced(stack):
 
 def test_responses_inbound_function_output_data_url_stripped(stack):
     port, up = stack
-    resp = _post(port, "/v1/responses", {
-        "model": "deepseek-v4-pro",
-        "input": [
-            {"role": "user", "content": [{"type": "input_text", "text": "check"}]},
-            {"type": "function_call_output", "call_id": "c1", "output": "data:image/png;base64,QUJD"},
-        ],
-    })
+    resp = _post(
+        port,
+        "/v1/responses",
+        {
+            "model": "deepseek-v4-pro",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "check"}]},
+                {"type": "function_call_output", "call_id": "c1", "output": "data:image/png;base64,QUJD"},
+            ],
+        },
+    )
     assert resp.status_code == 200
     raw = json.dumps(up.received[-1])
     assert "integration description" in raw
@@ -2392,13 +2553,22 @@ def test_responses_inbound_function_output_data_url_stripped(stack):
 
 def test_chat_inbound_image_url_replaced(stack):
     port, up = stack
-    resp = _post(port, "/v1/chat/completions", {
-        "model": "deepseek-v4-pro",
-        "messages": [{"role": "user", "content": [
-            {"type": "text", "text": "hi"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
-        ]}],
-    })
+    resp = _post(
+        port,
+        "/v1/chat/completions",
+        {
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "hi"},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+                    ],
+                }
+            ],
+        },
+    )
     assert resp.status_code == 200
     raw = json.dumps(up.received[-1])
     assert "integration description" in raw

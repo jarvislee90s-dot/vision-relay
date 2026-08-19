@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from qwen_mm_plugins_proxy.capability import CapabilityTable
-from qwen_mm_plugins_proxy.config import ProxyConfig
+from vision_relay.capability import CapabilityTable
+from vision_relay.config import ProxyConfig
 
 BUILTIN = {
     "deepseek/*": "text_only",

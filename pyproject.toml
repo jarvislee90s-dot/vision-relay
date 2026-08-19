@@ -32,18 +32,14 @@ Homepage = "https://github.com/jarvislee90s-dot/vision-relay"
 Repository = "https://github.com/jarvislee90s-dot/vision-relay"
 
 [project.scripts]
-vision-relay = "qwen_mm_plugins_proxy.__main__:main"
-qwen-mm-plugins-proxy = "qwen_mm_plugins_proxy.__main__:main"   # backward-compat alias
+vision-relay = "vision_relay.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[tool.setuptools]
-py-modules = ["proxy_env"]
-
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["qwen_mm_plugins_proxy*"]
+include = ["vision_relay*"]
 
 [tool.setuptools.dynamic]
-version = { attr = "qwen_mm_plugins_proxy.__version__" }
+version = { attr = "vision_relay.__version__" }

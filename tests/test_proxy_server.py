@@ -4,9 +4,10 @@ import json
 import threading
 
 import httpx
-from qwen_mm_plugins_proxy.config import ProxyConfig, RelayConfig
-from qwen_mm_plugins_proxy.pipeline import Pipeline
-from qwen_mm_plugins_proxy.server import _select_relay, _upstream_url, run_server
+
+from vision_relay.config import ProxyConfig, RelayConfig
+from vision_relay.pipeline import Pipeline
+from vision_relay.server import _select_relay, _upstream_url, run_server
 
 
 class NoopVLM:
@@ -99,11 +100,9 @@ def test_proxy_forwards_text_request_and_transcribes_image(upstream):
     cfg = ProxyConfig(
         bind_port=0,  # ephemeral: avoid colliding with the default 8787 (or another test run)
         relays=[RelayConfig(name="up", protocol="chat", base_url=f"http://127.0.0.1:{upstream.port}/v1")],
-        vlm=__import__("qwen_mm_plugins_proxy.config", fromlist=["VLMConfig"]).VLMConfig(model="qwen-vl-max"),
+        vlm=__import__("vision_relay.config", fromlist=["VLMConfig"]).VLMConfig(model="qwen-vl-max"),
     )
-    pipe = Pipeline(
-        NoopVLM(), __import__("qwen_mm_plugins_proxy.cache", fromlist=["DescriptionCache"]).DescriptionCache()
-    )
+    pipe = Pipeline(NoopVLM(), __import__("vision_relay.cache", fromlist=["DescriptionCache"]).DescriptionCache())
     server = run_server(cfg)
     server.pipeline = pipe  # inject NoopVLM pipeline (brief omits this; run_server creates a real VLMClient)
     server_port = server.server_address[1]
@@ -145,11 +144,9 @@ def test_proxy_does_not_truncate_multibyte_upstream_response(upstream):
     cfg = ProxyConfig(
         bind_port=0,
         relays=[RelayConfig(name="up", protocol="chat", base_url=f"http://127.0.0.1:{upstream.port}/v1")],
-        vlm=__import__("qwen_mm_plugins_proxy.config", fromlist=["VLMConfig"]).VLMConfig(model="qwen-vl-max"),
+        vlm=__import__("vision_relay.config", fromlist=["VLMConfig"]).VLMConfig(model="qwen-vl-max"),
     )
-    pipe = Pipeline(
-        NoopVLM(), __import__("qwen_mm_plugins_proxy.cache", fromlist=["DescriptionCache"]).DescriptionCache()
-    )
+    pipe = Pipeline(NoopVLM(), __import__("vision_relay.cache", fromlist=["DescriptionCache"]).DescriptionCache())
     server = run_server(cfg)
     server.pipeline = pipe
     server_port = server.server_address[1]
@@ -201,11 +198,9 @@ def test_proxy_two_layer_responses_preserves_model_and_strips_image(upstream):
     cfg = ProxyConfig(
         bind_port=0,
         relays=[RelayConfig(name="tool", protocol="responses", base_url=f"http://127.0.0.1:{upstream.port}")],
-        vlm=__import__("qwen_mm_plugins_proxy.config", fromlist=["VLMConfig"]).VLMConfig(model="qwen-vl-max"),
+        vlm=__import__("vision_relay.config", fromlist=["VLMConfig"]).VLMConfig(model="qwen-vl-max"),
     )
-    pipe = Pipeline(
-        NoopVLM(), __import__("qwen_mm_plugins_proxy.cache", fromlist=["DescriptionCache"]).DescriptionCache()
-    )
+    pipe = Pipeline(NoopVLM(), __import__("vision_relay.cache", fromlist=["DescriptionCache"]).DescriptionCache())
     server = run_server(cfg)
     server.pipeline = pipe
     server_port = server.server_address[1]

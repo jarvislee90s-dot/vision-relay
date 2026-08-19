@@ -3,17 +3,18 @@ from __future__ import annotations
 import base64
 
 import pytest
-from qwen_mm_plugins_proxy.cache import DescriptionCache
-from qwen_mm_plugins_proxy.config import ProxyConfig
-from qwen_mm_plugins_proxy.ir import parse_chat
-from qwen_mm_plugins_proxy.pipeline import (
+
+from vision_relay.cache import DescriptionCache
+from vision_relay.config import ProxyConfig
+from vision_relay.ir import parse_chat
+from vision_relay.pipeline import (
     VLM_BACKOFF_BASE,
     VLM_BACKOFF_JITTER,
     VLM_MAX_ATTEMPTS,
     Pipeline,
     ProcessResult,
 )
-from qwen_mm_plugins_proxy.vlm import VLMError
+from vision_relay.vlm import VLMError
 
 DATA_URL = "data:image/png;base64,QUJD"
 DATA_URL_A = "data:image/png;base64,QUJB"
@@ -320,8 +321,8 @@ class FlakyVLM:
 
 
 def _retry_target():
-    from qwen_mm_plugins_proxy.ir import ContentBlock, ImageBlock, Message
-    from qwen_mm_plugins_proxy.pipeline import _ImageTarget
+    from vision_relay.ir import ContentBlock, ImageBlock, Message
+    from vision_relay.pipeline import _ImageTarget
 
     msg = Message(
         role="user",
@@ -341,7 +342,7 @@ def test_vlm_transient_error_retries_then_succeeds():
 
 @pytest.mark.parametrize("reason", ["TRANSPORT", "TIMEOUT", "RATE_LIMIT", "HTTP"])
 def test_vlm_retryable_reasons_repeat_then_fail_open(monkeypatch, reason):
-    monkeypatch.setattr("qwen_mm_plugins_proxy.pipeline.time.sleep", lambda _s: None)
+    monkeypatch.setattr("vision_relay.pipeline.time.sleep", lambda _s: None)
     vlm = FlakyVLM(99, VLMError(reason, "boom"))
     result = ProcessResult(ir=None)
     outcome = Pipeline(vlm, DescriptionCache())._handle_one(_retry_target(), result, None)
@@ -351,7 +352,7 @@ def test_vlm_retryable_reasons_repeat_then_fail_open(monkeypatch, reason):
 
 
 def test_vlm_auth_does_not_retry(monkeypatch):
-    monkeypatch.setattr("qwen_mm_plugins_proxy.pipeline.time.sleep", lambda _s: None)
+    monkeypatch.setattr("vision_relay.pipeline.time.sleep", lambda _s: None)
     vlm = FlakyVLM(99, VLMError("AUTH", "bad key"))
     result = ProcessResult(ir=None)
     outcome = Pipeline(vlm, DescriptionCache())._handle_one(_retry_target(), result, None)
@@ -368,7 +369,7 @@ def test_backoff_bounds():
 
 def test_tool_data_url_not_counted_as_text_budget():
     """字符串内嵌 data URL 的 base64 不计入文本预算（T3/T4 场景），避免 CONTEXT_FULL。"""
-    from qwen_mm_plugins_proxy.ir import parse_responses
+    from vision_relay.ir import parse_responses
 
     big = "data:image/png;base64," + "A" * 500_000  # 巨大 data URL（T3 function_call_output）
     body = {
@@ -385,7 +386,7 @@ def test_tool_data_url_not_counted_as_text_budget():
 
 def test_text_with_images_early_strips_data_url():
     """字符串 data URL 提前剥离：text 不含 base64、含 [图片] 占位，base64 只进 image block。"""
-    from qwen_mm_plugins_proxy.ir import _text_with_images
+    from vision_relay.ir import _text_with_images
 
     blocks = _text_with_images(f"前缀 {DATA_URL} 后缀")
     assert blocks[0].type == "text"
@@ -398,7 +399,7 @@ def test_text_with_images_early_strips_data_url():
 
 def test_regular_url_not_stripped():
     """普通网址 / 文件路径不被误剥（正则只匹配 data:image/...;base64,）。"""
-    from qwen_mm_plugins_proxy.ir import _text_with_images
+    from vision_relay.ir import _text_with_images
 
     text = "看这个 https://example.com/img.png 和 " + r"C:\tmp\x.png"
     blocks = _text_with_images(text)
@@ -408,7 +409,7 @@ def test_regular_url_not_stripped():
 
 def test_assistant_message_image_collected():
     """assistant 消息里的图片块也被收集处理（Claude Code/Codex 模型主动调工具返回图）。"""
-    from qwen_mm_plugins_proxy.ir import ContentBlock, ImageBlock, IRRequest, Message
+    from vision_relay.ir import ContentBlock, ImageBlock, IRRequest, Message
 
     msg = Message(
         role="assistant",
@@ -424,7 +425,7 @@ def test_assistant_message_image_collected():
 
 def test_followup_injected_when_history_image_and_text_question():
     """spec §5.8：历史有图 + 当前轮纯文本追问 → 注入防编造提示。"""
-    from qwen_mm_plugins_proxy.ir import ContentBlock, ImageBlock, IRRequest, Message
+    from vision_relay.ir import ContentBlock, ImageBlock, IRRequest, Message
 
     history = Message(
         role="user", content=[ContentBlock(type="image", image=ImageBlock(base64="x", media_type="image/png"))]
@@ -436,7 +437,7 @@ def test_followup_injected_when_history_image_and_text_question():
 
 
 def test_followup_not_injected_no_history_image():
-    from qwen_mm_plugins_proxy.ir import ContentBlock, IRRequest, Message
+    from vision_relay.ir import ContentBlock, IRRequest, Message
 
     current = Message(role="user", content=[ContentBlock(type="text", text="你好")])
     ir = IRRequest(model="deepseek-v4-pro", messages=[current])
@@ -445,7 +446,7 @@ def test_followup_not_injected_no_history_image():
 
 
 def test_followup_not_injected_current_turn_has_image():
-    from qwen_mm_plugins_proxy.ir import ContentBlock, ImageBlock, IRRequest, Message
+    from vision_relay.ir import ContentBlock, ImageBlock, IRRequest, Message
 
     history = Message(
         role="user", content=[ContentBlock(type="image", image=ImageBlock(base64="x", media_type="image/png"))]

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import time
 
-from qwen_mm_plugins_proxy.cache import DescriptionCache, image_key
-from qwen_mm_plugins_proxy.ir import ImageBlock
+from vision_relay.cache import DescriptionCache, image_key
+from vision_relay.ir import ImageBlock
 
 
 def test_tier1_and_tier2_are_separate_keys():

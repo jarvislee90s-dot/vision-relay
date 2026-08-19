@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from qwen_mm_plugins_proxy.ir import (
+
+from vision_relay.ir import (
     detect_protocol,
     extract_data_urls,
     parse_anthropic,

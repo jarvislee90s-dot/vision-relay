@@ -1,9 +1,10 @@
-"""Standalone env/config accessor — the only shared-library dependency the proxy uses.
+"""Env/config accessor for vision-relay: env vars first, shell-style config file fallback.
 
-Replicates just the two functions the proxy needs from upstream Qwen-MM-Plugins
-`shared.env` (get_env, config_dir), so the proxy runs as an independent package
-without importing the host library.
+VISION_RELAY_CONFIG_DIR / VISION_RELAY_CONFIG point at ~/.vision-relay and
+~/.vision-relay/config. (Legacy Qwen-MM-Plugins era names are handled by the
+compat layer; see the final version of this module.)
 """
+
 from __future__ import annotations
 
 import os
@@ -15,7 +16,7 @@ def get_env(name: str, default: str | None = None) -> str | None:
 
 
 def config_dir() -> str:
-    return os.path.expanduser(os.environ.get("QWEN_MM_CONFIG_DIR") or "~/.qwen-mm-plugins")
+    return os.path.expanduser(os.environ.get("VISION_RELAY_CONFIG_DIR") or "~/.vision-relay")
 
 
 def _parse_config(text: str) -> dict[str, str]:
@@ -23,7 +24,7 @@ def _parse_config(text: str) -> dict[str, str]:
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, val = line.partition("=")
@@ -39,7 +40,7 @@ _config_cache: dict[str, str] | None = None
 
 
 def config_file() -> str:
-    override = os.environ.get("QWEN_MM_CONFIG")
+    override = os.environ.get("VISION_RELAY_CONFIG")
     return os.path.expanduser(override) if override else os.path.join(config_dir(), "config")
 
 

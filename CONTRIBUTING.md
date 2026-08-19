@@ -9,14 +9,14 @@ vision-relay supports Python 3.10 and newer. From a checkout, install the runtim
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[proxy]'
+python -m pip install -e .
 python -m pip install pytest httpx
 python -m pytest -q
 ```
 
 ## Making changes
 
-- Keep proxy protocol logic in qwen_mm_plugins_proxy/; each module has one clear job.
+- Keep proxy protocol logic in vision_relay/; each module has one clear job (see AGENTS.md for the architecture invariants).
 - Preserve existing CLI flags, protocol handling, and config keys unless the change is required to fix functionality. Explain any interface change in the PR.
 - Import optional dependencies lazily.
 - Do not commit API keys, credentials, private test media, generated artifacts, or machine-specific configuration.
@@ -30,7 +30,6 @@ Run the full offline test suite and lint before opening a PR:
 python3 -m pytest -q
 ruff format --check .
 ruff check .
-bash -n install-proxy.sh
 ```
 
 If a test needs a live VLM/upstream or hardware not available to you, state what was not run in the PR.

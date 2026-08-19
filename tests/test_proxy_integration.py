@@ -8,10 +8,11 @@ import threading
 import httpx
 import pytest
 from conftest import RecordingUpstream
-from qwen_mm_plugins_proxy.cache import DescriptionCache
-from qwen_mm_plugins_proxy.config import ProxyConfig, RelayConfig, VLMConfig
-from qwen_mm_plugins_proxy.pipeline import Pipeline
-from qwen_mm_plugins_proxy.server import run_server
+
+from vision_relay.cache import DescriptionCache
+from vision_relay.config import ProxyConfig, RelayConfig, VLMConfig
+from vision_relay.pipeline import Pipeline
+from vision_relay.server import run_server
 
 
 class FakeVLM:

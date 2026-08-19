@@ -6,10 +6,11 @@ import io
 import json
 
 import pytest
-import qwen_mm_plugins_proxy.capability as capability
-import qwen_mm_plugins_proxy.onboarding as onboarding
-import qwen_mm_plugins_proxy.wiring as wiring
-from qwen_mm_plugins_proxy.config import (
+
+import vision_relay.capability as capability
+import vision_relay.onboarding as onboarding
+import vision_relay.wiring as wiring
+from vision_relay.config import (
     ConfigError,
     ProxyConfig,
     RelayConfig,
@@ -21,7 +22,7 @@ from qwen_mm_plugins_proxy.config import (
 
 # ── config routing block ─────────────────────────────────────────────
 def test_routing_config_parse_and_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
     p = tmp_path / "proxy.json"
     p.write_text(
         json.dumps(
@@ -75,7 +76,7 @@ def _mk_home(tmp_path):
 
 def test_wiring_claude_rewrite_and_restore(tmp_path, monkeypatch):
     home = _mk_home(tmp_path)
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     claude_dir = home / ".claude"
     claude_dir.mkdir()
     f = claude_dir / "settings.json"
@@ -85,25 +86,25 @@ def test_wiring_claude_rewrite_and_restore(tmp_path, monkeypatch):
     assert any("claude" in m and "ok" in m for m in msg)
     d = json.loads(f.read_text(encoding="utf-8"))
     assert d["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8787"
-    assert (claude_dir / "settings.json.qwen-mm-proxy.bak").exists()
+    assert (claude_dir / "settings.json.vision-relay.bak").exists()
     # 还原
     msg = wiring.wiring_restore(cfg)
     assert any("claude: restored" in m for m in msg)
     d = json.loads(f.read_text(encoding="utf-8"))
     assert d["env"]["ANTHROPIC_BASE_URL"] == "https://real.example"
-    assert not (claude_dir / "settings.json.qwen-mm-proxy.bak").exists()
+    assert not (claude_dir / "settings.json.vision-relay.bak").exists()
 
 
 def test_wiring_restore_skips_non_proxy_value(tmp_path, monkeypatch):
     home = _mk_home(tmp_path)
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     claude_dir = home / ".claude"
     claude_dir.mkdir()
     f = claude_dir / "settings.json"
     f.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://real.example"}}), encoding="utf-8")
     cfg = ProxyConfig(bind_port=8787, routing=RoutingConfig(harnesses=["claude"]))
     wiring.wiring_backup_and_rewrite(cfg)
-    assert (claude_dir / "settings.json.qwen-mm-proxy.bak").exists()
+    assert (claude_dir / "settings.json.vision-relay.bak").exists()
     # 用户中途把 base_url 改走（模拟工具切换配置）
     f.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"}}), encoding="utf-8")
     msg = wiring.wiring_restore(cfg)
@@ -114,7 +115,7 @@ def test_wiring_restore_skips_non_proxy_value(tmp_path, monkeypatch):
 
 def test_wiring_missing_file_skips(tmp_path, monkeypatch):
     _mk_home(tmp_path)  # 副作用：设置 wiring.HOME
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     cfg = ProxyConfig(bind_port=8787, routing=RoutingConfig(harnesses=["claude", "qwen-code"]))
     msg = wiring.wiring_backup_and_rewrite(cfg)
     assert any("skipped" in m for m in msg)
@@ -122,7 +123,7 @@ def test_wiring_missing_file_skips(tmp_path, monkeypatch):
 
 def test_wiring_json_dotted_and_toml_rewrite(tmp_path, monkeypatch):
     home = _mk_home(tmp_path)
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     # qwen-code 现在是 ~/.qwen/settings.json 的 model.baseUrl(点号嵌套 key)
     q = home / ".qwen"
     q.mkdir(parents=True)
@@ -143,7 +144,7 @@ def test_wiring_json_dotted_and_toml_rewrite(tmp_path, monkeypatch):
 
 # ── relays activate / restore ────────────────────────────────────────
 def test_relays_activate_and_restore(tmp_path, monkeypatch):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     tmp_path.mkdir(exist_ok=True)
     cfg = ProxyConfig()
     cfg.routing.relay_templates = {
@@ -164,7 +165,7 @@ def test_relays_activate_and_restore(tmp_path, monkeypatch):
 
 
 def test_relays_activate_skips_existing_name(tmp_path, monkeypatch):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     cfg = ProxyConfig(relays=[RelayConfig(name="cc-claude", protocol="anthropic", base_url="http://a")])
     cfg.routing.relay_templates = {"cc-claude": {"protocol": "anthropic", "base_url": "http://a"}}
     wiring.relays_activate(cfg)
@@ -199,7 +200,7 @@ def test_onboarding_grouped_output_has_header():
 
 
 def test_onboarding_run_writes_confirmed(tmp_path, monkeypatch):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     tmp_path.mkdir(exist_ok=True)
     cfg = ProxyConfig()
     cfg.routing.relay_templates = {"r1": {"protocol": "chat", "base_url": "http://x", "models": ["deepseek-*"]}}
@@ -213,15 +214,15 @@ def test_onboarding_run_writes_confirmed(tmp_path, monkeypatch):
 
 
 def test_onboarding_cancel_returns_false(tmp_path, monkeypatch):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     cfg = ProxyConfig()
     cfg.routing.relay_templates = {"r1": {"protocol": "chat", "base_url": "http://x", "models": ["a"]}}
     assert onboarding.run_onboarding(cfg, key_source=lambda: "q", out=io.StringIO()) is False
 
 
 def test_scan_model_groups_partitions_by_harness(tmp_path, monkeypatch):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
-    import qwen_mm_plugins_proxy.wiring as W
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+    import vision_relay.wiring as W
 
     home = tmp_path / "home"
     home.mkdir()
@@ -258,7 +259,7 @@ def test_judge_harness_aware():
 
 
 def test_onboarding_delta_prompts_only_new(tmp_path, monkeypatch):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     cfg = ProxyConfig()
     cfg.routing.relay_templates = {"r1": {"protocol": "chat", "base_url": "http://x", "models": ["deepseek-*"]}}
     assert onboarding.run_onboarding(cfg, key_source=lambda: "enter", out=io.StringIO()) is True  # 首次全量
@@ -273,7 +274,7 @@ def test_onboarding_delta_prompts_only_new(tmp_path, monkeypatch):
 
 
 def test_onboarding_no_new_models_quiet(tmp_path, monkeypatch):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     cfg = ProxyConfig()
     cfg.routing.relay_templates = {"r1": {"protocol": "chat", "base_url": "http://x", "models": ["aa"]}}
     assert onboarding.run_onboarding(cfg, key_source=lambda: "enter", out=io.StringIO()) is True
@@ -283,7 +284,7 @@ def test_onboarding_no_new_models_quiet(tmp_path, monkeypatch):
 
 
 def test_edit_all_rewrites(tmp_path, monkeypatch):
-    monkeypatch.setenv("QWEN_MM_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
     cfg = ProxyConfig()
     cfg.routing.relay_templates = {"r1": {"protocol": "chat", "base_url": "http://x", "models": ["a"]}}
     assert onboarding.edit_all(cfg, key_source=lambda: "enter", out=io.StringIO()) is True

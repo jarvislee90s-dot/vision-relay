@@ -8,7 +8,7 @@ import signal
 import socket
 import sys
 
-from proxy_env import config_dir
+from .env_util import config_dir
 
 PID_FILE = "proxy.pid"
 LOG_FILE = "proxy.log"
@@ -55,7 +55,7 @@ def cmd_start(cfg) -> int:
         if not run_onboarding(cfg):
             print("未完成模型看图能力确认，未启动代理。", file=sys.stderr)
             print(
-                "请用交互终端重跑 qwen-mm-plugins-proxy start，或 qwen-mm-plugins-proxy models-scan 复核。",
+                "请用交互终端重跑 vision-relay start，或 vision-relay models-scan 复核。",
                 file=sys.stderr,
             )
             return 1
@@ -69,7 +69,7 @@ def cmd_start(cfg) -> int:
     from .server import run_server
 
     server = run_server(cfg)
-    print(f"qwen-mm-plugins-proxy listening on {cfg.bind_host}:{cfg.bind_port} (data) / {cfg.ui_port} (control)")
+    print(f"vision-relay listening on {cfg.bind_host}:{cfg.bind_port} (data) / {cfg.ui_port} (control)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -262,14 +262,14 @@ def cmd_check(cfg) -> int:
 
         for row in wiring_report(cfg):
             state = "OK" if row["wired"] else ("偏离(" + (row["base_url"] or "无") + ")")
-            hint = "" if row["wired"] else " → 请重跑 qwen-mm-plugins-proxy start 重新接线"
+            hint = "" if row["wired"] else " → 请重跑 vision-relay start 重新接线"
             print(f"  {row['harness']}: base_url={row['base_url'] or '(无)'} [{state}]{hint}")
             if not row["wired"] and row["base_url"] and row.get("has_backup"):
                 problems.append(f"harness {row['harness']} base_url 未指向本代理（工具可能切换了配置，请重跑 start）")
     except Exception:  # noqa: BLE001 - 接线报错是尽力而为
         pass
     if cfg.routing.auto_wire and not cfg.routing.capability_confirmed:
-        print("  ⚠ model 看图能力尚未确认——首次启用需走交互引导（qwen-mm-plugins-proxy start 或 models-scan）")
+        print("  ⚠ model 看图能力尚未确认——首次启用需走交互引导（vision-relay start 或 models-scan）")
         problems.append("model_capabilities 未确认")
     for p in problems:
         print(f"\u26a0 {p}")
