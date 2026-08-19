@@ -97,7 +97,11 @@ Config rewrites happen only on `start` / `stop` (backup + rewrite the three harn
 
 ## Configuration
 
-Shared config lives in `~/.vision-relay/config` (fallback for env vars); proxy settings in `~/.vision-relay/proxy.json`. Env overrides: `VISION_RELAY_BIND_PORT`, `VISION_RELAY_VLM_MODEL`, `VISION_RELAY_VLM_BASE_URL`, `VISION_RELAY_VLM_API_KEY`, `VISION_RELAY_VLM_FORMAT`.
+Shared config lives in `~/.vision-relay/config` (fallback for env vars); proxy settings in `~/.vision-relay/proxy.json`. Env overrides: `VISION_RELAY_BIND_PORT`, `VISION_RELAY_VLM_MODEL`, `VISION_RELAY_VLM_BASE_URL`, `VISION_RELAY_VLM_API_KEY`, `VISION_RELAY_VLM_FORMAT` (config dir: `VISION_RELAY_CONFIG_DIR`).
+
+### Upgrading from qwen-mm-plugins-proxy
+
+vision-relay is the standalone successor of the `qwen-mm-plugins-proxy` capability. On first start it reads an existing `~/.qwen-mm-plugins/proxy.json` automatically and migrates it to `~/.vision-relay/` on next save; legacy `QWEN_MM_PROXY_*` env vars and `.qwen-mm-proxy.bak` wiring backups are still recognized (with a deprecation warning).
 
 ## Development
 
