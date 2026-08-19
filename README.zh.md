@@ -83,6 +83,31 @@ python -m pip install pytest httpx
 }
 ```
 
+> 上面的 `relays` 是**一层直连**(指向真实上游)示例。如果你本机装有 CC Switch / Codex++ 这类**本地路由工具**,请求要走两层(`harness → vision-relay(8787) → 工具(15721/57321) → 真实上游`),则按下方"两层路由"模板配置——此时 relay 的 `base_url` 填工具的本地端口,并加 `via` 字段(仅描述拓扑,不影响 URL 拼接)。
+
+**两层路由 · 经 Codex++(Codex 模型)**:
+
+```json
+{ "name": "codex", "protocol": "responses",
+  "base_url": "http://127.0.0.1:57321/v1", "via": "codex-plus", "models": ["*"] }
+```
+
+**两层路由 · 经 CC Switch(Codex 模型, chat 协议)**:
+
+```json
+{ "name": "cc-codex", "protocol": "chat",
+  "base_url": "http://127.0.0.1:15721", "via": "cc-switch", "models": ["*"] }
+```
+
+**两层路由 · 经 CC Switch(Claude 模型, anthropic 协议)**:
+
+```json
+{ "name": "cc-claude", "protocol": "anthropic",
+  "base_url": "http://127.0.0.1:15721", "via": "cc-switch", "models": ["*"] }
+```
+
+> 提示:若 `relays` 漏配(留空 `[]`),中继处理完图片后无处转发,请求会报 `UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")`——请务必为实际要用的 harness 填好对应 relay。
+
 2. 启动:`vision-relay start`(首次会交互确认哪些模型支持图片;之后 start/stop 自动接线并恢复,不再提示)。
 
 3. 验证:在 Claude Code / Codex / Qwen Code 里粘贴一张图并问"这是什么",然后 `vision-relay logs` 显示 `injected:1` 即成功。

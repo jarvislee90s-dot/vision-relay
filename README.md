@@ -87,6 +87,31 @@ python -m pip install pytest httpx
 }
 ```
 
+> The `relays` above is a **single-hop (direct-to-upstream)** example. If you run a local routing tool like **CC Switch / Codex++** and want a two-hop chain (`harness → vision-relay(8787) → tool(15721/57321) → real upstream`), point `relays[].base_url` at the tool's local port and add a `via` field (descriptive only — it does not affect URL joining), as in the two-hop templates below.
+
+**Two-hop · via Codex++ (Codex models, responses protocol)**:
+
+```json
+{ "name": "codex", "protocol": "responses",
+  "base_url": "http://127.0.0.1:57321/v1", "via": "codex-plus", "models": ["*"] }
+```
+
+**Two-hop · via CC Switch (Codex models, chat protocol)**:
+
+```json
+{ "name": "cc-codex", "protocol": "chat",
+  "base_url": "http://127.0.0.1:15721", "via": "cc-switch", "models": ["*"] }
+```
+
+**Two-hop · via CC Switch (Claude models, anthropic protocol)**:
+
+```json
+{ "name": "cc-claude", "protocol": "anthropic",
+  "base_url": "http://127.0.0.1:15721", "via": "cc-switch", "models": ["*"] }
+```
+
+> Note: if `relays` is left empty (`[]`), the proxy has nowhere to forward after transcribing images, and requests fail with `UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")` — make sure you add a relay for every harness you actually use.
+
 2. Start: `vision-relay start` (first run interactively asks which models support images; afterwards start/stop auto-wire and restore without prompting).
 
 3. Verify: paste an image in Claude Code / Codex / Qwen Code and ask "what is this", then `vision-relay logs` shows `injected:1` on success.

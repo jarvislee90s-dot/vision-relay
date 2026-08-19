@@ -154,3 +154,52 @@ DSH 在图片进入会话前按模型 `inputModalities` 拒绝（`MODEL_DOES_NOT
 - **幽灵控制面**：主 spec §8.1 设计了控制面（ui_port=8788，JSON 管理 API），但当前实现 `/status` 服务在数据面端口上，8788 无任何监听（config/CLI 输出/`check` 端口检查仍引用 ui_port）。Phase 2 落地 Web UI 前需先决策：实现真正的独立控制面，或从配置与输出中移除 ui_port（spec 与实现不许互相撒谎）。
 - **威胁模型与监听安全**：当前唯一防线是绑定 127.0.0.1——本地任意进程都可借本代理转发请求、消耗上游 key。需要：本地鉴权 token（可选开关）、VLM 转述不可信图片内容的间接 prompt-injection 边界文档化（注入文本带 `[图片描述]` 标记但内容不消毒）、描述缓存的留存/清理策略。
 - **上游遗留组件已删除**：`src/capabilities/proxy/` 插件 manifest、`install.sh`/`install-proxy.sh` 及其测试随独立化移除（决策见 `2026-08-19-vision-relay-rebrand-docs-port-design.md` §2）；独立库唯一入口是 `pip install vision-relay` + `vision-relay start`。
+
+---
+
+## 12. 上游路由工具自动探测与自动落盘（2026-08-19 新增）
+
+### 12.1 背景与动机
+
+用户反馈（2026-08-19 实测）：`relays` 必须手工按模板填写，首次配置极易漏配——漏配时 `_select_relay` 落到空 `base_url` 的默认 relay，请求报 `UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")`，被误判为"识图失效"。而本机最常见的上游是 CC-switch（15721）与 Codex++（57321）两类**本地路由工具**，它们的监听地址是稳定、可探测的。
+
+目标：**首次生成配置 / 每次 `start` 时，自动匹配所支持的上游路由工具清单；只要探测到清单内路由地址的端口处于开启状态，就自动把对应 relay 合入 `relays`（去重、不覆盖用户显式配置），并持久化到 `~/.vision-relay/proxy.json`。**
+
+### 12.2 支持的上游路由工具清单（v1）
+
+| 工具 | 默认监听地址 | 入站协议 | 自动生成的 relay 模板 |
+|---|---|---|---|
+| CC Switch | `http://127.0.0.1:15721` | `anthropic` / `chat` | `{ "name":"cc-<proto>", "protocol":<proto>, "base_url":"http://127.0.0.1:15721", "via":"cc-switch", "models":["*"] }` |
+| Codex++ | `http://127.0.0.1:57321/v1` | `responses` | `{ "name":"codex-plus", "protocol":"responses", "base_url":"http://127.0.0.1:57321/v1", "via":"codex-plus", "models":["*"] }` |
+
+清单可扩展（未来 TRAE / Kimi / gemini 等），每个工具项固定：`name`、默认 `base_url`、`protocol`、`via` 枚举值、探测端口。
+
+### 12.3 设计约束（继承主 spec §6.3 的"抗干扰"原则）
+
+主 spec §6.3 修订明确"机制完全由配置决定、从不探测/指纹端口……若未来要加自动检测，需记录失败模式（端口探测易与 VPN/本地服务端口撞、工具无法可靠指纹、可能误判 A/B 放法），做成 opt-in + 严格指纹 + 绝不改写 harness 配置"。本需求落地必须遵守：
+
+- **绝不探测指纹**：只探测"清单内已知路由工具"的**固定默认端口**是否开放（TCP connect），不做任何内容指纹/版本探测——端口撞车由「仅放行清单内地址」收敛。
+- **绝不改写 harness 配置**：探测结果只写入 `relays`（本代理自己的转发配置），不触碰 `~/.claude/settings.json` / `~/.codex/config.toml` / `~/.qwen/settings.json`。
+- **只增不覆盖**：同名 relay 已存在（含用户手工配置）→ 跳过，绝不覆盖用户显式配置；仅当不存在时自动加入，并在 `activated_relays` 记录（可被 `stop` 还原移除）。
+- **严格校验生成的 relay**：自动生成的 relay 必须通过 `RelayConfig.__post_init__`（protocol 枚举 / via 枚举强校验），非法即丢弃并记录 `check` 告警，不落盘脏数据。
+- **结果可复核**：每次自动探测后打印/记录一条结构化日志（`relay_autodetect`：探测到的工具、端口、生成/跳过的 relay 名），`vision-relay check` 显示「自动 relay」来源与 `via` 拓扑。
+
+### 12.4 触发时机
+
+1. **首次生成配置**（`onboarding` 首次交互引导后）：扫描清单 → 探测 → 合入 `relays` 一起落盘；
+2. **每次 `start`**（复用 `relays_activate` 路径）：对 `activated_relays` 中尚无条目的清单工具再探测一次（工具进程可能后启动），命中即补入并落盘；
+3. **`relays_restore`**（`stop`）：仅移除 `activated_relays` 记录的自动条目，用户手工条目与显式 `relays` 不动。
+
+### 12.5 失败模式与边界
+
+- **端口被占用但非目标工具**（VPN / 其他本地服务占 15721 或 57321）：按 §12.3「只增不覆盖 + check 告警」处理，不产生错误的 relay；用户可在 `check` 输出看到告警并手工校正。
+- **工具后启动**（探测时未开，start 之后才开）：本次不生成；下次 `start` 重新探测补入，或由 `check` 提示"检测到未接入的已知路由工具"。
+- **多协议工具（CC Switch 同时支持 anthropic 与 chat）**：v1 只对**入站侧将使用的协议**生成——以该 harness 入站协议为准（claude→anthropic、codex→chat/responses）；避免生成用不到的协议条目。
+- **远程/非回环工具**：清单仅覆盖本地回环工具（127.0.0.1）；远程上游仍走手工 `relays` 显式配置，不探测。
+
+### 12.6 验收要点（写入操作手册时）
+
+- 场景 A：全新环境，CC Switch 在 15721 开启、Codex++ 在 57321 开启 → 首次 start 后 `proxy.json` 自动出现对应 relay，`check` 显示两层拓扑，图片请求 `injected:1` 且 `upstream_status:200`。
+- 场景 B：用户已手工配好同名 relay → 自动探测不覆盖，`activated_relays` 不含该条，`stop` 不误删。
+- 场景 C：端口被无关进程占用 → 不生成、`check` 告警、不影响手工配置。
+- 场景 D：工具未启动 → 静默跳过、不报错、下次 start 再探。
