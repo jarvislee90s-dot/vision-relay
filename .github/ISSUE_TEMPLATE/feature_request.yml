@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a new capability or improvement for vision-relay
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. For bigger designs, please open a discussion first — large features go through a spec in `docs/superpowers/specs/` before implementation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: What are you trying to do that vision-relay currently cannot do?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How should it work? Which harness / protocol / VLM does it involve?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: Release, commit SHA, or install date
