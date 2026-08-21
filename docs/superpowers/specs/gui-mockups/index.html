@@ -2,50 +2,35 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>vision-relay GUI 设计参考稿 v2（定稿）</title>
+<title>vision-relay 控制台 — GUI 设计参考（定稿）</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 13px; color: #1f2937; background: #eef0f3; padding: 16px; }
   h1 { font-size: 17px; margin-bottom: 4px; }
-  .note { color: #6b7280; font-size: 12px; margin-bottom: 6px; }
-  .warn-note { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 12px; }
-  .doc-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .note { color: #6b7280; font-size: 12px; margin-bottom: 10px; }
+  .doc-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
   .doc-tab { padding: 6px 14px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; cursor: pointer; font-size: 12.5px; }
   .doc-tab.active { background: #111827; color: #fff; border-color: #111827; }
-  .page { display: none; }
-  .page.active { display: block; }
+  .page { display: none; } .page.active { display: block; }
   .app { display: flex; height: 640px; background: #fff; border: 1px solid #d1d5db; border-radius: 12px; overflow: hidden; position: relative; }
-  .side { width: 168px; background: #111827; color: #9ca3af; padding: 12px 0; flex-shrink: 0; }
+  .side { width: 160px; background: #111827; color: #9ca3af; padding: 12px 0; flex-shrink: 0; }
   .side .logo { padding: 6px 16px 14px; color: #fff; font-weight: 700; font-size: 14px; }
-  .side-item { padding: 8px 16px; cursor: pointer; }
-  .side-item.active { background: #1f2937; color: #fff; border-left: 3px solid #10b981; }
-  .badge { background: #f59e0b; color: #fff; border-radius: 8px; padding: 0 6px; font-size: 11px; margin-left: 4px; }
+  .side-item { padding: 8px 16px; } .side-item.active { background: #1f2937; color: #fff; border-left: 3px solid #10b981; }
   .main { flex: 1; background: #f5f6f8; padding: 14px; overflow: auto; }
   .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
   .card h3 { font-size: 13.5px; margin-bottom: 8px; }
-  .row { display: flex; align-items: center; gap: 10px; }
-  .row.between { justify-content: space-between; }
+  .row { display: flex; align-items: center; gap: 10px; } .row.between { justify-content: space-between; }
   .btn { background: #fff; border: 1px solid #d1d5db; border-radius: 7px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
   .btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
-  .btn.green { background: #10b981; color: #fff; border-color: #10b981; }
-  .btn.amber { background: #f59e0b; color: #fff; border-color: #f59e0b; }
-  .btn.red { background: #ef4444; color: #fff; border-color: #ef4444; }
   .btn.lg { padding: 9px 16px; font-size: 13px; }
   .tag { border-radius: 6px; padding: 2px 8px; font-size: 11px; }
-  .tag.ok { background: #ecfdf5; color: #059669; }
-  .tag.warn { background: #fffbeb; color: #b45309; }
-  .tag.err { background: #fef2f2; color: #b91c1c; }
-  .tag.info { background: #eff6ff; color: #1d4ed8; }
-  .tag.gray { background: #f3f4f6; color: #6b7280; }
+  .tag.ok { background: #ecfdf5; color: #059669; } .tag.warn { background: #fffbeb; color: #b45309; }
+  .tag.info { background: #eff6ff; color: #1d4ed8; } .tag.gray { background: #f3f4f6; color: #6b7280; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { background: #f9fafb; color: #6b7280; text-align: left; padding: 8px 12px; font-weight: 600; }
+  th { background: #f9fafb; color: #6b7280; text-align: left; padding: 8px 12px; }
   td { padding: 8px 12px; border-top: 1px solid #f3f4f6; }
   .input { border: 1px solid #d1d5db; border-radius: 7px; padding: 6px 10px; font-size: 12px; background: #fff; }
-  .dim { color: #6b7280; font-size: 12px; }
-  .small { font-size: 11px; }
-  .mono { font-family: Consolas, monospace; font-size: 11.5px; }
-  .field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .field label { width: 92px; color: #6b7280; font-size: 12px; flex-shrink: 0; text-align: right; }
+  .dim { color: #6b7280; font-size: 12px; } .small { font-size: 11px; } .mono { font-family: Consolas, monospace; font-size: 11.5px; }
   .switch { display: flex; align-items: center; gap: 8px; }
   .switch .track { width: 50px; height: 26px; background: #10b981; border-radius: 13px; position: relative; cursor: pointer; }
   .switch .track.off { background: #d1d5db; }
@@ -56,458 +41,356 @@
   .hop.bypass { border-left-color: #d1d5db; color: #9ca3af; font-weight: 400; }
   .hop .bz { font-size: 10px; color: #9ca3af; background: #f3f4f6; border-radius: 4px; padding: 0 4px; margin-left: 6px; }
   .arrow { color: #9ca3af; font-size: 11px; padding-left: 14px; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; cursor: pointer; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; }
   .dot.g { background: #10b981; } .dot.r { background: #ef4444; } .dot.gray { background: #d1d5db; }
-  .cols3 { display: flex; gap: 12px; }
-  .cols3 > div { flex: 1; }
+  .cols3 { display: flex; gap: 12px; } .cols3 > div { flex: 1; }
   .alert-warn { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; }
   .alert-err { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; }
   .alert-ok { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; }
-  .codebox { border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; font-family: Consolas, monospace; font-size: 11px; color: #334155; background: #f8fafc; }
-  .subtab { padding: 5px 14px; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; cursor: pointer; }
-  .subtab.active { background: #111827; color: #fff; }
+  .pin { background: #fffbeb; border: 1.5px dashed #f59e0b; border-radius: 10px; padding: 10px 12px; font-size: 12px; margin: 10px 0; color: #78350f; line-height: 1.7; }
+  .pin b.n { display: inline-block; background: #f59e0b; color: #fff; border-radius: 50%; width: 18px; height: 18px; text-align: center; line-height: 18px; font-size: 11px; margin-right: 6px; }
+  .pin .was { color: #92400e; text-decoration: line-through; }
+  .pin .now { color: #065f46; font-weight: 700; }
   .cap { display: inline-block; border-radius: 6px; padding: 2px 10px; }
-  .cap.text { background: #e5e7eb; color: #374151; }
-  .cap.image { background: #10b981; color: #fff; }
-  .steps { display: flex; gap: 8px; margin-bottom: 14px; }
-  .step { flex: 1; text-align: center; padding: 8px; border-radius: 8px; background: #f3f4f6; color: #6b7280; font-size: 12px; }
-  .step.on { background: #2563eb; color: #fff; }
-  .step.done { background: #ecfdf5; color: #059669; }
-  .drawer { display: none; margin-top: 10px; border-top: 1px dashed #e5e7eb; padding-top: 10px; }
-  .drawer.show { display: block; }
+  .cap.text { background: #e5e7eb; color: #374151; } .cap.image { background: #10b981; color: #fff; }
+  .field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .field label { width: 80px; color: #6b7280; font-size: 12px; flex-shrink: 0; text-align: right; }
   .modal { display: none; position: absolute; inset: 0; background: rgba(17,24,39,.45); z-index: 10; align-items: flex-start; justify-content: center; padding: 30px 40px; }
   .modal.show { display: flex; }
-  .modal-box { background: #fff; border-radius: 12px; padding: 18px 20px; width: 640px; max-height: 560px; overflow: auto; }
-  .fixed-item { opacity: .55; }
-  .hint { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #1e40af; margin-bottom: 10px; }
-  textarea.prompt { width: 100%; min-height: 52px; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; font-size: 11.5px; font-family: Consolas, monospace; }
+  .modal-box { background: #fff; border-radius: 12px; padding: 18px 20px; width: 620px; max-height: 540px; overflow: auto; }
+  .steps { display: flex; gap: 8px; margin-bottom: 14px; }
+  .step { flex: 1; text-align: center; padding: 8px; border-radius: 8px; background: #f3f4f6; color: #6b7280; font-size: 12px; }
+  .step.on { background: #2563eb; color: #fff; } .step.done { background: #ecfdf5; color: #059669; }
+  .drawer { margin-top: 8px; border-top: 1px dashed #e5e7eb; padding-top: 8px; }
+  textarea.prompt { width: 100%; min-height: 46px; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; font-size: 11.5px; font-family: Consolas, monospace; }
 </style>
 </head>
 <body>
 
-<h1>👁 vision-relay 控制台 — GUI 设计参考稿 v2（2026-08-21 按反馈重构）</h1>
-<div class="warn-note">⚠ 下方<b>顶部标签栏只是本文档的目录</b>（方便逐页查看），不是软件界面——真实软件只有左侧导航 5 项：<b>总览 / 模型能力 / 识图记录 / 事件日志 / 设置</b>。首次向导是触发型弹层，不在导航里。</div>
-<div class="note">本页可交互：① 总览的「路由开关」和每张卡的工具圆点可点击，观察拓扑链置灰/连线右移；② 「诊断与修复」弹层可开关、修复后角标数字减少；③ 详情抽屉可展开。</div>
+<h1>👁 vision-relay 控制台 — GUI 设计参考（定稿 2026-08-21）</h1>
+<div class="note">⚠ 下方<b>顶部标签栏只是本文档的目录</b>，不是软件界面——真实软件只有左侧导航 5 项：<b>总览 / 模型能力 / 识图记录 / 事件日志 / 设置</b>，首次向导为触发型弹层。可交互：总览的路由总开关、各卡工具圆点、详情抽屉、诊断报告弹层。对应 spec §6。</div>
 
 <div class="doc-tabs">
   <div class="doc-tab active" data-p="p1">📊 总览</div>
-  <div class="doc-tab" data-p="p3">🧠 模型能力</div>
+  <div class="doc-tab" data-p="p3">🧠 模型能力（三元组·实测）</div>
   <div class="doc-tab" data-p="p6">🖼 识图记录</div>
   <div class="doc-tab" data-p="p7">📜 事件日志</div>
-  <div class="doc-tab" data-p="p8">⚙️ 设置（服务·VLM·上游·高级）</div>
+  <div class="doc-tab" data-p="p8">⚙️ 设置</div>
   <div class="doc-tab" data-p="p9">🧙 首次向导</div>
+  <div class="doc-tab" data-p="p0">📌 设计要点与决策点</div>
 </div>
 
-<template id="side-tpl">
+<!-- ======== P0 设计要点 ======== -->
+<section class="page" id="p0">
+  <div class="pin"><b class="n">①</b><b>自动决策原则（本设计的骨架）</b>：每个面向用户的交互过三问——能从已记录状态/规则推导 → <b>系统自动做，零感知</b>；推导不出但有安全默认 → <b>默认自动 + 被动通知可改</b>；需要用户资源或真实意图 → <b>才暴露给用户</b>。铁律：自动化之后可见性补位——每个自动动作在总览「自动处理」区与事件日志留痕，用户不决策但能核查。</div>
+  <div class="pin"><b class="n">②</b><b>用户决策点只有 6 个</b>：①路由总开关 ②首次填 VLM（key/模型/端点，账号资源）②b 首次过目模型能力（实测结果已就绪，改猜错的即可，可跳过）③缺 key 时补填（被动提示后才出现）④关闭 GUI 时选「仅关界面 / 连服务一起关」（问一次并记住）⑤停用某条转发（稀有，藏在详情）。其余全部自动或被动。</div>
+  <div class="pin"><b class="n">③</b><b>看编分离</b>：监控类页面只看 + 少数动作；编辑集中在「设置」与「模型能力」。导航 5 页里识图记录 / 事件日志是纯看板——看不需要决策，可视化不是负担。总览的转发与工具信息并入每张 harness 卡的「详情」抽屉（快照 / relay / 停用），不设独立区块。</div>
+  <div class="pin"><b class="n">④</b><b>模型能力 = (harness, provider, 模型) 三元组</b>：同一模型名经不同 provider 能力可能不同。provider 自动来自工具档案（两层 = 路由工具激活供应商）/ 接管快照（一层 = 直连上游），用户不用填。判定优先级：<b>用户覆盖 > 实测探测 > 能力目录 > 未知默认纯文本</b>。</div>
+  <div class="pin"><b class="n">⑤</b><b>模态探测（可验证探针）</b>：对每个 (provider, 模型) 发一次最小带图请求——图里藏一个字，问"图里是什么"。三档判定：<b>报错</b>（不支持图片输入）→ 纯文本；<b>答对</b> → 支持图片；<b>返回 200 但答错</b>（静默吞图）→ 纯文本。超时 / 401 / 404 / 5xx 不下结论，回落能力目录（models.dev 风格静态目录，provider+model → 模态/上下文/推理档位）。成本每模型一次最小调用，结果按 (provider, 模型) 缓存、可重测；视频/音频模态探测留三期。</div>
+  <div class="pin"><b class="n">⑥</b><b>其他定稿</b>：保存语义统一（输入类控件一律页底统一保存，仅按钮类动作即时）；语言选择可见（跟随系统/中文/English）；托盘纯文字菜单（状态行 · 打开主界面 · 路由开/关 · 诊断报告 · 退出停止服务）；模态术语统一「图片 / 纯文本」。</div>
+</section>
+
+<!-- ======== P1 总览（合并后） ======== -->
+<section class="page active" id="p1"><div class="app">
   <div class="side">
     <div class="logo">👁 vision-relay</div>
-    <div class="side-item" data-k="p1">📊 总览</div>
-    <div class="side-item" data-k="p3">🧠 模型能力<span class="badge">2</span></div>
-    <div class="side-item" data-k="p6">🖼 识图记录</div>
-    <div class="side-item" data-k="p7">📜 事件日志</div>
-    <div class="side-item" data-k="p8">⚙️ 设置</div>
+    <div class="side-item active">📊 总览</div>
+    <div class="side-item">🧠 模型能力</div>
+    <div class="side-item">🖼 识图记录</div>
+    <div class="side-item">📜 事件日志</div>
+    <div class="side-item">⚙️ 设置</div>
   </div>
-</template>
+  <div class="main">
 
-<!-- ================= P1 总览 ================= -->
-<section class="page active" id="p1"><div class="app"><div class="main" data-side="p1">
-
-  <div class="card row between">
-    <div>
-      <div class="row"><span class="dot g" id="svcDot"></span><b style="font-size:15px;" id="svcTitle">服务运行中</b>
-        <span class="dim">PID 12345 · 127.0.0.1:8787 · 自动监听 每5秒</span></div>
-      <div class="dim" style="margin-top:4px;" id="svcSub">图片安全网已覆盖 3 个 harness · 上次对账 3 秒前 · 今日识图 27 次</div>
+    <div class="card row between">
+      <div>
+        <div class="row"><span class="dot g" id="svcDot"></span><b style="font-size:15px;" id="svcTitle">服务运行中</b>
+          <span class="dim">127.0.0.1:8787 · 自动对账中</span></div>
+        <div class="dim" style="margin-top:4px;" id="svcSub">安全网已覆盖 3 个 harness · 上次对账 3 秒前 · 今日识图 27 次 · 缓存命中 63%</div>
+      </div>
+      <div class="switch"><span class="dim">路由关闭</span><div class="track" id="masterToggle"><div class="knob"></div></div><b style="color:#059669;" id="toggleLabel">路由开启</b></div>
+      <button class="btn lg">🔄 刷新<span class="dim small">（便捷动作）</span></button>
+      <button class="btn lg" id="openDiag">📋 诊断报告</button>
     </div>
-    <div class="switch" title="启停服务与接线"><span class="dim">路由关闭</span><div class="track" id="masterToggle"><div class="knob"></div></div><b style="color:#059669;" id="toggleLabel">路由开启</b></div>
-    <button class="btn lg" title="手动触发一次对账：重扫 harness 配置 + 工具端口 + 服务状态，漂移就地收敛">🔄 刷新配置</button>
-    <button class="btn lg" id="openDiag">🩺 诊断与修复 <span id="diagBadge" style="color:#f59e0b;">●2</span></button>
-  </div>
-  <div class="hint" style="margin-top:-6px;">交互演示：点「路由开关」切换接管/直连态（拓扑链置灰、连线右移）；点各卡的工具圆点模拟工具路由开关。</div>
 
-  <div class="cols3">
-    <div class="card" data-h="claude">
-      <div class="row between"><b>🤖 Claude Code</b><span class="tag ok" data-role="stateTag">✓ 已接管</span></div>
-      <div class="chain">
-        <div class="hop">Claude Code</div>
-        <div class="arrow" data-role="a1">↓ base_url → 8787</div>
-        <div class="hop" data-role="relayHop">👁 vision-relay :8787 <span class="dot g"></span><span class="small" style="color:#059669;">安全网</span></div>
-        <div class="arrow" data-role="a2">↓ relay（两层）</div>
-        <div class="hop" data-role="toolHop" title="点击模拟 CC Switch 路由开关">🔀 CC Switch :15721 <span class="dot g" data-role="toolDot"></span><span class="small" style="color:#059669;" data-role="toolState">在线</span></div>
-        <div class="arrow">↓</div>
-        <div class="hop">☁️ 真实上游</div>
-        <div class="mono dim">https://open.bigmodel.cn/api/anthropic<br><span class="small">（CC Switch 当前供应商，尽力探测）</span></div>
-      </div>
-      <div class="small dim" style="border-top:1px dashed #e5e7eb; margin-top:8px; padding-top:6px;">
-        <a href="#" data-role="detailToggle">▸ 接线详情</a>（配置文件 / 接管快照 / 备份与回退档案）
-      </div>
-      <div class="drawer" data-role="drawer">
-        <table>
-          <tr><td class="dim" style="width:110px;">配置文件</td><td class="mono">~/.claude/settings.json → env.ANTHROPIC_BASE_URL</td></tr>
-          <tr><td class="dim">当前 → 期望</td><td><span class="mono">http://127.0.0.1:8787</span> → <span class="mono">:8787</span> <span class="tag ok">一致</span>（不一致时对账自动收敛，无需手动操作）</td></tr>
-          <tr><td class="dim">接管快照</td><td class="mono">base_url=https://open.bigmodel.cn/api/anthropic · key=env.ANTHROPIC_AUTH_TOKEN · 模型=glm-5-air</td><td></td></tr>
-          <tr><td class="dim">备份 / 回退档案</td><td>备份 8月20日 14:32 · 回退档案 <span class="mono">https://api.deepseek.com</span> <a href="#">编辑</a></td></tr>
-        </table>
-      </div>
-    </div>
-    <div class="card" data-h="codex">
-      <div class="row between"><b>💻 Codex</b><span class="tag ok" data-role="stateTag">✓ 已接管</span></div>
-      <div class="chain">
-        <div class="hop">Codex</div>
-        <div class="arrow" data-role="a1">↓ base_url → 8787</div>
-        <div class="hop" data-role="relayHop">👁 vision-relay :8787 <span class="dot g"></span><span class="small" style="color:#059669;">安全网</span></div>
-        <div class="arrow" data-role="a2">↓ relay（两层）</div>
-        <div class="hop" data-role="toolHop" title="点击模拟 Codex++ 路由开关">🔀 Codex++ :57321 <span class="dot g" data-role="toolDot"></span><span class="small" style="color:#059669;" data-role="toolState">在线</span></div>
-        <div class="arrow">↓</div>
-        <div class="hop">☁️ 真实上游</div>
-        <div class="mono dim">https://api.deepseek.com<br><span class="small">（Codex++ 当前供应商，尽力探测）</span></div>
-      </div>
-      <div class="small dim" style="border-top:1px dashed #e5e7eb; margin-top:8px; padding-top:6px;">
-        <a href="#" data-role="detailToggle">▸ 接线详情</a>（第二跳归属以接管快照为准——Codex 也可能经 CC Switch :15721）
-      </div>
-      <div class="drawer" data-role="drawer">
-        <table>
-          <tr><td class="dim" style="width:110px;">配置文件</td><td class="mono">~/.codex/config.toml → base_url</td></tr>
-          <tr><td class="dim">当前 → 期望</td><td><span class="mono">:8787</span> → <span class="mono">:8787</span> <span class="tag ok">一致</span></td></tr>
-          <tr><td class="dim">接管快照</td><td class="mono">base_url=http://127.0.0.1:57321/v1 · key=~/.codex/auth.json · 模型=gpt-5.6</td></tr>
-        </table>
-      </div>
-    </div>
-    <div class="card" data-h="qwen">
-      <div class="row between"><b>❓ Qwen Code</b><span class="tag ok" data-role="stateTag">✓ 已接管</span></div>
-      <div class="chain">
-        <div class="hop">Qwen Code</div>
-        <div class="arrow" data-role="a1">↓ base_url → 8787</div>
-        <div class="hop" data-role="relayHop">👁 vision-relay :8787 <span class="dot g"></span><span class="small" style="color:#059669;">安全网</span></div>
-        <div class="arrow" data-role="a2">↓ relay（一层直连）</div>
-        <div class="hop">☁️ 真实上游</div>
-        <div class="mono dim">https://dashscope.aliyuncs.com/compatible-mode/v1<br><span class="small">（本代理配置，必然可得）</span></div>
-      </div>
-      <div class="small dim" style="border-top:1px dashed #e5e7eb; margin-top:8px; padding-top:6px;">
-        <a href="#" data-role="detailToggle">▸ 接线详情</a>（无路由工具，始终一层直连）
-      </div>
-      <div class="drawer" data-role="drawer">
-        <table>
-          <tr><td class="dim" style="width:110px;">配置文件</td><td class="mono">~/.qwen/settings.json → model.baseUrl</td></tr>
-          <tr><td class="dim">接管快照</td><td class="mono">base_url=dashscope…/compatible-mode/v1 · key=model.apiKey · 模型=qwen3-coder</td></tr>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h3>🔔 待处理</h3>
-    <div class="alert-warn row between">
-      <span>🆕 检测到 <b>2 个新模型</b>（glm-5-air、glm-5-plus，来自 Claude Code 配置）—— 换供应商带来的批量新模型</span>
-      <button class="btn amber">去批量确认 →</button>
-    </div>
-    <div class="alert-err row between">
-      <span>⚡ 14:32 Codex 的 base_url 被 Codex++ 改写为 :57321，已自动抢回（间隔内漏过 2 张图）</span>
-      <a href="#" style="color:#2563eb;">查看事件</a>
-    </div>
-    <div class="dim" style="padding:2px 10px;">✓ VLM 连通正常 · 缓存命中 63% · 直连 relay 无缺 key</div>
-  </div>
-
-  <!-- ===== 诊断与修复 弹层 ===== -->
-  <div class="modal" id="diagModal">
-    <div class="modal-box">
-      <div class="row between" style="margin-bottom:10px;">
-        <b style="font-size:15px;">🩺 诊断与修复</b>
-        <button class="btn" id="closeDiag">✕ 关闭</button>
-      </div>
-      <div class="dim small" style="margin-bottom:10px;">角标数字 = <b>未解决问题数</b>，修复完成才减少；点开本窗口不消耗。<b>一键修复只处理确定性项</b>（左栏），需选择/补充信息的项（右栏）逐项处理。</div>
-
-      <b class="small">✔ 可自动修复（确定性，无歧义）</b>
-      <div class="alert-warn row between" data-fix="auto" style="margin-top:6px;">
-        <span>⚠ 漂移：codex base_url 当前 :57321，服务运行中期望 :8787</span>
-        <button class="btn green" data-role="fixBtn">修复（自动抢回）</button>
-      </div>
-      <div class="alert-warn row between" data-fix="auto">
-        <span>⚠ 僵死 PID 文件残留（进程已死但 PID 文件未清）</span>
-        <button class="btn green" data-role="fixBtn">清理</button>
-      </div>
-
-      <b class="small" style="display:block; margin-top:12px;">✋ 需选择 / 补充信息（不进一键修复）</b>
-      <div class="alert-err" data-fix="choice" style="margin-top:6px;">
-        <div class="row between">
-          <div><b>⚠ 僵尸接线：codex 的 base_url 仍指向 :8787，但服务已停止</b>
-            <div class="dim" style="margin-top:3px;">上次异常退出（09:14 被强杀）。修复目标动手前可选：</div></div>
+    <div class="cols3">
+      <div class="card" data-h="claude">
+        <div class="row between"><b>🤖 Claude Code</b><span class="tag ok" data-role="stateTag">✓ 已接管</span></div>
+        <div class="chain">
+          <div class="hop">Claude Code</div>
+          <div class="arrow" data-role="a1">↓ base_url → 8787</div>
+          <div class="hop" data-role="relayHop">👁 vision-relay :8787 <span class="dot g"></span>安全网</div>
+          <div class="arrow" data-role="a2">↓ relay（两层）</div>
+          <div class="hop" data-role="toolHop" style="cursor:pointer;" title="点击模拟工具路由开关">🔀 CC Switch :15721 <span class="dot g"></span><span style="color:#059669;">在线</span></div>
+          <div class="arrow">↓</div>
+          <div class="hop">☁️ https://open.bigmodel.cn/api/anthropic</div>
+          <div class="small dim">供应商 bigmodel（CC Switch 激活，只读探测）</div>
         </div>
-        <div style="margin-top:6px; padding:8px 10px; background:#fff; border-radius:6px; font-size:12px;">
-          <div><label><input type="radio" name="r1" checked> 恢复到接管快照组合 <span class="dim">→ http://127.0.0.1:57321/v1 + 原 key + 原模型（8月20日 14:32 接管时记档）</span></label></div>
-          <div><label><input type="radio" name="r1"> 按工具路由状态还原 <span class="dim">→ 工具在线写 :15721/:57321；工具也离线则按快照组合写真实上游</span></label></div>
-          <div><label><input type="radio" name="r1"> 我的回退档案 <span class="dim">→ https://api.deepseek.com（我保存的默认组合）</span></label></div>
-          <div><label><input type="radio" name="r1"> 直接重启服务并保持接管</label></div>
-        </div>
-        <div class="row" style="justify-content:space-between; margin-top:6px;">
-          <button class="btn">📄 打开配置文件该行</button>
-          <button class="btn red" data-role="fixBtn">按所选修复</button>
+        <div class="small dim" style="margin-top:6px;"><a href="#" data-role="detailToggle">▾ 详情：快照 · relay · 停用</a></div>
+        <div class="drawer show" data-role="drawer">
+          <table>
+            <tr><td class="dim small" style="width:88px;">接管快照</td><td class="mono small">base_url=open.bigmodel.cn/api/anthropic · key=env.ANTHROPIC_AUTH_TOKEN · 模型=glm-5-air</td></tr>
+            <tr><td class="dim small">relay</td><td class="small">cc-anthropic → :15721 <span class="tag gray">自动探测</span> 匹配 <span class="mono">*</span> · <a href="#">停用转发</a></td></tr>
+            <tr><td class="dim small">直连 relay</td><td class="small">glm-direct → open.bigmodel.cn <span class="tag gray">快照吸收</span> 匹配 <span class="mono">glm-*</span> · <a href="#">🔑 补填 key</a></td></tr>
+          </table>
         </div>
       </div>
-      <div class="alert-err row between" data-fix="choice">
-        <div><b>⚠ 直连连通性测试（路由关闭时排查）</b>
-          <div class="dim" style="margin-top:3px;">当前直连态：用各 harness 自己配置的 base_url + key 做轻量探测，区分「问题本来就有」还是「代理造成」。<span class="mono">claude ✓ 200 · codex ✗ 401（key 失效）· qwen ✓ 200</span></div></div>
-        <button class="btn amber">去配置 key</button>
+      <div class="card" data-h="codex">
+        <div class="row between"><b>💻 Codex</b><span class="tag ok" data-role="stateTag">✓ 已接管</span></div>
+        <div class="chain">
+          <div class="hop">Codex</div>
+          <div class="arrow" data-role="a1">↓ base_url → 8787</div>
+          <div class="hop" data-role="relayHop">👁 vision-relay :8787 <span class="dot g"></span>安全网</div>
+          <div class="arrow" data-role="a2">↓ relay（两层）</div>
+          <div class="hop" data-role="toolHop" style="cursor:pointer;" title="点击模拟工具路由开关">🔀 Codex++ :57321 <span class="dot g"></span><span style="color:#059669;">在线</span></div>
+          <div class="arrow">↓</div>
+          <div class="hop">☁️ https://api.deepseek.com</div>
+          <div class="small dim">供应商 deepseek（Codex++ 激活，只读探测）</div>
+        </div>
+        <div class="small dim" style="margin-top:6px;"><a href="#" data-role="detailToggle">▸ 详情：快照 · relay · 停用</a></div>
+        <div class="drawer" data-role="drawer">
+          <table>
+            <tr><td class="dim small" style="width:88px;">接管快照</td><td class="mono small">base_url=:57321/v1 · key=~/.codex/auth.json · 模型=gpt-5.6</td></tr>
+            <tr><td class="dim small">relay</td><td class="small">codex-plus → :57321/v1 <span class="tag gray">自动探测</span> 匹配 <span class="mono">*</span> · <a href="#">停用转发</a></td></tr>
+          </table>
+        </div>
       </div>
-
-      <table style="margin-top:8px;">
-        <tr><td>✓ 服务进程状态</td><td style="text-align:right;color:#059669;">正常</td></tr>
-        <tr><td>✓ claude / qwen-code 接线与期望一致</td><td style="text-align:right;color:#059669;">正常</td></tr>
-        <tr><td>✓ VLM 后端连通（qwen-vl-max，120ms）</td><td style="text-align:right;color:#059669;">正常</td></tr>
-      </table>
-      <div class="row" style="justify-content:space-between; margin-top:12px;">
-        <button class="btn">重新诊断</button>
-        <button class="btn primary" id="fixAll">一键修复（仅上方 ✔ 确定性项，2 个）</button>
-      </div>
-    </div>
-  </div>
-
-</div></div></section>
-
-<!-- ================= P3 模型能力 ================= -->
-<section class="page" id="p3"><div class="app"><div class="main" data-side="p3">
-
-  <div class="alert-warn row between">
-    <span>🆕 <b>2 个新模型</b>待确认（glm-5-air、glm-5-plus，来自 ~/.claude/settings.json）</span>
-    <span class="dim">批量：<a href="#" style="color:#2563eb;">全部纯文本</a> · <a href="#" style="color:#2563eb;">全部支持图片</a> · <a href="#" style="color:#2563eb;">按内置名单建议</a></span>
-  </div>
-
-  <div class="row" style="margin-bottom:8px;">
-    <div class="subtab active">Claude Code (5)</div><div class="subtab">Codex (3)</div><div class="subtab">Qwen Code (2)</div><div class="subtab">relay (3)</div>
-  </div>
-
-  <div class="card" style="padding:0;">
-    <table>
-      <tr><th>模型</th><th>来源</th><th>内置名单建议</th><th>图片能力</th><th>状态</th></tr>
-      <tr style="background:#fffbeb;"><td><b>glm-5-air</b></td><td class="dim">Claude Code · settings.json</td><td class="dim">glm/* → 纯文本</td><td><span class="cap text">纯文本</span> ⇄ <span class="cap image">支持图片</span></td><td><span class="tag warn">新 · 未保存</span></td></tr>
-      <tr style="background:#fffbeb;"><td><b>glm-5-plus</b></td><td class="dim">Claude Code · settings.json</td><td class="dim">glm/* → 纯文本</td><td><span class="cap text">纯文本</span> ⇄ <span class="cap image">支持图片</span></td><td><span class="tag warn">新 · 未保存</span></td></tr>
-      <tr><td>kimi-k2.7-code</td><td class="dim">Claude Code · settings.json</td><td class="dim">kimi-k2.7-code* → 支持图片</td><td><span class="cap image">支持图片 ✓</span></td><td class="dim">已确认 · 可随时改</td></tr>
-      <tr><td>deepseek-v4-flash</td><td class="dim">Claude Code · settings.json</td><td class="dim">deepseek/* → 纯文本</td><td><span class="cap text">纯文本 ✓</span></td><td class="dim">已确认 · 可随时改</td></tr>
-      <tr><td>claude-sonnet-5</td><td class="dim">Claude Code · settings.json</td><td class="dim">anthropic/* → 支持图片</td><td><span class="cap image">支持图片 ✓</span></td><td class="dim">已确认 · 可随时改</td></tr>
-    </table>
-  </div>
-  <div class="row" style="justify-content:flex-end;"><span class="dim small" style="margin-right:10px;">所有行随时可改，点保存即生效（能力判定缓存同步刷新）</span><button class="btn primary lg">保存（2 个新模型）</button></div>
-
-</div></div></section>
-
-<!-- ================= P6 识图记录 ================= -->
-<section class="page" id="p6"><div class="app"><div class="main" data-side="p6" style="display:flex; gap:10px;">
-
-  <div style="width:200px; flex-shrink:0;">
-    <div class="card" style="padding:10px;">
-      <b class="small">按 harness → 会话</b>
-      <div style="margin-top:6px; font-size:12px;">
-        <div style="padding:5px 8px; background:#eef2ff; border-radius:6px; font-weight:600;">🤖 Claude Code <span class="dim">12</span></div>
-        <div class="dim" style="padding:3px 8px 3px 20px;">├ 今天 · 「修复登录bug」 <span class="dim">5</span></div>
-        <div style="padding:3px 8px 3px 20px; background:#e0e7ff; border-radius:5px; color:#1e3a8a;">└ 昨天 · a3f2e1… <span class="dim">5</span></div>
-        <div class="dim" style="padding:3px 8px 3px 20px;">└ 昨天 · 未识别会话 <span class="dim">2</span></div>
-        <div style="padding:5px 8px; margin-top:6px;">💻 Codex <span class="dim">9</span></div>
-        <div style="padding:5px 8px;">❓ Qwen Code <span class="dim">6</span></div>
+      <div class="card" data-h="qwen">
+        <div class="row between"><b>❓ Qwen Code</b><span class="tag ok" data-role="stateTag">✓ 已接管</span></div>
+        <div class="chain">
+          <div class="hop">Qwen Code</div>
+          <div class="arrow" data-role="a1">↓ base_url → 8787</div>
+          <div class="hop" data-role="relayHop">👁 vision-relay :8787 <span class="dot g"></span>安全网</div>
+          <div class="arrow" data-role="a2">↓ relay（一层直连）</div>
+          <div class="hop">☁️ dashscope…/compatible-mode/v1</div>
+          <div class="small dim">供应商 dashscope（本代理配置）</div>
+        </div>
+        <div class="small dim" style="margin-top:6px;"><a href="#" data-role="detailToggle">▸ 详情：快照 · relay · 停用</a></div>
+        <div class="drawer" data-role="drawer">
+          <table>
+            <tr><td class="dim small" style="width:88px;">接管快照</td><td class="mono small">base_url=dashscope…/v1 · key=model.apiKey · 模型=qwen3-coder</td></tr>
+            <tr><td class="dim small">relay</td><td class="small">qwen-direct <span class="tag gray">快照吸收</span> 匹配 <span class="mono">qwen-*</span> · <a href="#">停用转发</a></td></tr>
+          </table>
+        </div>
       </div>
     </div>
-    <div class="dim small" style="padding:0 6px;">会话短名尽力而为：读得到 harness 会话目录的标题就显示短名（如「修复登录bug」），读不到显示截断 ID，不硬造。</div>
-  </div>
 
-  <div style="flex:1;">
-    <div class="card row between" style="padding:8px 12px;">
-      <b class="small">🤖 Claude Code / 会话 a3f2e1…（昨天）— 5 次识图</b>
-      <span class="small dim">留存 7 天 · <a href="#">留存设置（设置 → 高级）</a> · <a href="#">导出</a></span>
+    <div class="card">
+      <h3>自动处理（无需你操作）</h3>
+      <div class="alert-ok row between"><span>✅ 14:32 Codex base_url 被工具改写 → <b>已自动抢回</b>（间隔内漏过 2 张图）</span><a href="#" class="small">事件日志</a></div>
+      <div class="alert-ok row between"><span>✅ 09:20 僵尸接线 → 崩溃前路由是开的 → <b>已自动重启服务并保持接管</b></span><a href="#" class="small">事件日志</a></div>
+      <div class="alert-warn row between"><span>🆕 新模型 (Claude Code · bigmodel · glm-5-air/plus) → <b>已实测标注</b>（报错=纯文本 / 答对=支持图片）。⚠ 与实测不符时可改</span><a href="#" class="small">模型能力页</a></div>
+    </div>
+
+    <div class="card">
+      <h3>⚠ 需要你（只有补资源一种）</h3>
+      <div class="alert-err row between"><span>🔑 glm-direct（快照吸收的直连上游）缺 API key——工具离线时该 harness 无上游可用</span><button class="btn" style="border-color:#ef4444;color:#b91c1c;">补填 key</button></div>
+    </div>
+
+    <div class="modal" id="diagModal">
+      <div class="modal-box">
+        <div class="row between" style="margin-bottom:10px;"><b style="font-size:15px;">📋 诊断报告（自动运行，只读）</b><button class="btn" id="closeDiag">✕</button></div>
+        <div class="alert-ok">✅ <b>已自动修复</b>：漂移抢回 · 僵死 PID 清理 · 僵尸接线（按崩溃前意图重启服务）</div>
+        <table>
+          <tr><td>✓ 服务进程 / 端口 / 三 harness 接线一致性</td><td style="text-align:right;color:#059669;">正常</td></tr>
+          <tr><td>✓ 工具探测（CC Switch ● / Codex++ ●）· 激活供应商读取</td><td style="text-align:right;color:#059669;">正常</td></tr>
+          <tr><td>✓ 直连连通性 · VLM 后端（120ms）</td><td style="text-align:right;color:#059669;">正常</td></tr>
+        </table>
+        <div class="alert-err" style="margin-top:8px;">⚠ 唯一需你处理：glm-direct 缺 key <button class="btn" style="border-color:#ef4444;color:#b91c1c;">补填</button></div>
+      </div>
+    </div>
+
+  </div>
+</div></section>
+
+<!-- ======== P3 模型能力（三元组） ======== -->
+<section class="page" id="p3"><div class="app">
+  <div class="side">
+    <div class="logo">👁 vision-relay</div>
+    <div class="side-item">📊 总览</div>
+    <div class="side-item active">🧠 模型能力</div>
+    <div class="side-item">🖼 识图记录</div>
+    <div class="side-item">📜 事件日志</div>
+    <div class="side-item">⚙️ 设置</div>
+  </div>
+  <div class="main">
+    <div class="alert-ok row between">
+      <span>✅ 按 <b>(harness · provider · 模型)</b> 三元组标注；<b>「实测」列 = 探测结果</b>（可验证探针：图里藏字问出来，防静默吞图），只在猜错时改。</span>
+      <span><button class="btn">🔍 探测全部未测模型</button> <button class="btn">⬇ 从上游拉取模型清单（可选）</button></span>
     </div>
     <div class="card" style="padding:0;">
       <table>
-        <tr><th>时间</th><th>层级</th><th>提示词</th><th>缓存</th><th>耗时</th><th>VLM</th></tr>
-        <tr style="background:#f0f9ff;"><td>14:32:05</td><td>Tier2 聚焦</td><td>默认</td><td>未命中</td><td>2.4s</td><td>qwen-vl-max</td></tr>
-        <tr><td class="dim">13:18:44</td><td class="dim">Tier1 全面</td><td class="dim">默认</td><td class="dim">命中</td><td class="dim">0ms</td><td class="dim">—</td></tr>
+        <tr><th>harness</th><th>provider</th><th>模型</th><th>当前标注</th><th>依据</th><th>实测</th><th>操作</th></tr>
+        <tr><td rowspan="3">Claude Code</td><td>bigmodel</td><td>glm-5-air <span class="tag warn">🆕</span></td><td><span class="cap text">纯文本</span></td><td class="dim small">实测</td><td><span class="tag err" style="background:#fef2f2;color:#b91c1c;">✗ 报错：不支持图片输入</span></td><td><a href="#">改为支持图片</a> · <a href="#" class="small">重测</a></td></tr>
+        <tr><td>bigmodel</td><td>glm-5-plus <span class="tag warn">🆕</span></td><td><span class="cap image">支持图片</span></td><td class="dim small">实测</td><td><span class="tag ok">✓ 答对：图里的字是"访"</span></td><td><a href="#">改为纯文本</a> · <a href="#" class="small">重测</a></td></tr>
+        <tr><td>deepseek</td><td>deepseek-v4-flash</td><td><span class="cap text">纯文本</span></td><td class="dim small">实测</td><td><span class="tag err" style="background:#fef2f2;color:#b91c1c;">✗ 答错（未读图）</span></td><td><a href="#">改为支持图片</a> · <a href="#" class="small">重测</a></td></tr>
+        <tr><td>Codex</td><td>deepseek</td><td>kimi-k2.7-code</td><td><span class="cap image">支持图片</span></td><td class="dim small">能力目录</td><td><span class="tag gray">未测（key 未配）</span></td><td><a href="#">改为纯文本</a> · <a href="#">🔍 探测</a></td></tr>
+        <tr><td>Qwen Code</td><td>dashscope</td><td>qwen3-coder</td><td><span class="cap text">纯文本</span></td><td class="dim small">实测</td><td><span class="tag err" style="background:#fef2f2;color:#b91c1c;">✗ 报错</span></td><td><a href="#">改为支持图片</a> · <a href="#" class="small">重测</a></td></tr>
       </table>
     </div>
-    <div class="card">
-      <b class="small">▸ 14:32:05 · Tier2 明细</b>
-      <div class="row" style="align-items:flex-start; margin-top:8px;">
-        <div style="width:104px; flex-shrink:0;">
-          <div style="width:104px; height:74px; background:linear-gradient(135deg,#c7d2fe,#fbcfe8); border-radius:8px; display:flex; align-items:center; justify-content:center; color:#6b7280; font-size:11px;">🖼 缩略图</div>
-          <div class="small dim" style="margin-top:4px;">638 KB · png<br>哈希 8f3a…c2</div>
-        </div>
-        <div style="flex:1;">
-          <div class="small" style="color:#2563eb; font-weight:700; margin-bottom:3px;">① 发给 VLM 的提示词（当前生效：默认 Tier2，可在设置→VLM 自定义）</div>
-          <div class="codebox">请详细描述这张图片，重点涵盖：文字（逐字）、UI 元素、错误信息、布局结构。用户问题：这个报错怎么修？…（uncertainty 显式标注）</div>
-          <div class="small" style="color:#7c3aed; font-weight:700; margin:6px 0 3px;">② VLM 原始返回</div>
-          <div class="codebox" style="background:#faf5ff; border-color:#e9d5ff;">截图为终端报错 Traceback (most recent call last): FileNotFoundError … 布局：三行堆栈 + 底部命令行。不确定项：第 2 行被截断。</div>
-          <div class="small" style="color:#059669; font-weight:700; margin:6px 0 3px;">③ 实际注入对话的文本</div>
-          <div class="codebox" style="background:#ecfdf5; border-color:#a7f3d0; color:#064e3b;">[图片描述 1] 截图为终端报错 Traceback…（预算内截断至 96 token）</div>
+    <div class="row" style="justify-content:flex-end;"><button class="btn primary">保存修改</button></div>
+    <div class="pin"><b class="n">3</b>判定优先级：<span class="now">用户覆盖 > 实测探测 > 能力目录 > 未知默认纯文本</span>。三种实测结果都演示了：报错（明确拒绝图）→ 纯文本；答对（真读到图）→ 支持图片；<b>答错但返回 200</b>（静默吞图，lmstudio 等项目踩过的坑）→ 判纯文本，可验证探针专门防这个。没 key 的 provider 显示"未测"，回落目录标注。</div>
+  </div>
+</div></section>
+
+<!-- ======== P6 识图记录（看板） ======== -->
+<section class="page" id="p6"><div class="app">
+  <div class="side">
+    <div class="logo">👁 vision-relay</div>
+    <div class="side-item">📊 总览</div>
+    <div class="side-item">🧠 模型能力</div>
+    <div class="side-item active">🖼 识图记录</div>
+    <div class="side-item">📜 事件日志</div>
+    <div class="side-item">⚙️ 设置</div>
+  </div>
+  <div class="main" style="display:flex; gap:10px;">
+    <div style="width:190px; flex-shrink:0;">
+      <div class="card" style="padding:10px;">
+        <b class="small">按 harness → 会话</b>
+        <div style="margin-top:6px; font-size:12px;">
+          <div style="padding:5px 8px; background:#eef2ff; border-radius:6px; font-weight:600;">🤖 Claude Code <span class="dim">12</span></div>
+          <div class="dim" style="padding:3px 8px 3px 20px;">├ 今天 ·「修复登录bug」 <span class="dim">5</span></div>
+          <div style="padding:3px 8px 3px 20px; background:#e0e7ff; border-radius:5px; color:#1e3a8a;">└ 昨天 · a3f2e1… <span class="dim">5</span></div>
+          <div class="dim" style="padding:3px 8px 3px 20px;">└ 昨天 · 未识别会话 <span class="dim">2</span></div>
+          <div style="padding:5px 8px; margin-top:6px;">💻 Codex <span class="dim">9</span></div>
+          <div style="padding:5px 8px;">❓ Qwen Code <span class="dim">6</span></div>
         </div>
       </div>
+      <div class="dim small" style="padding:0 6px;">会话标识来自请求元数据（尽力而为）；短名读 harness 会话目录，读不到显示截断 ID，不硬造。</div>
     </div>
-  </div>
-
-</div></div></section>
-
-<!-- ================= P7 事件日志 ================= -->
-<section class="page" id="p7"><div class="app"><div class="main" data-side="p7">
-
-  <div class="card" style="padding:0;">
-    <div class="row between" style="padding:12px 14px 0;"><h3>接线 / 抢线 / 修复事件流水</h3>
-      <span class="small dim"><a href="#">筛选：全部 ▾</a> · <a href="#">导出</a></span></div>
-    <table>
-      <tr><th>时间</th><th>harness</th><th>类型</th><th>内容</th><th>结果</th></tr>
-      <tr><td class="mono">08-21 14:32:07</td><td>Codex</td><td><span class="tag warn">抢回</span></td><td>base_url 被 Codex++ 改写为 :57321 → 对账抢回 :8787</td><td class="dim">完成 · 间隔内漏过 2 张图</td></tr>
-      <tr><td class="mono">08-21 14:30:12</td><td>Claude Code</td><td><span class="tag info">吸收</span></td><td>检测到新上游 https://open.bigmodel.cn/api/anthropic（用户换供应商）→ 已接管，直连 relay 已指向，快照已更新</td><td class="dim">完成 · 提醒补 key</td></tr>
-      <tr><td class="mono">08-21 14:30:12</td><td>Claude Code</td><td><span class="tag warn">新模型</span></td><td>glm-5-air、glm-5-plus 出现</td><td class="dim">待批量确认</td></tr>
-      <tr><td class="mono">08-21 09:14:00</td><td>—</td><td><span class="tag err">异常退出</span></td><td>服务进程被强杀，接线未还原</td><td class="dim">→ 09:20 按接管快照组合修复完成</td></tr>
-      <tr><td class="mono">08-20 14:32:01</td><td>全部</td><td><span class="tag ok">接管</span></td><td>首次接线：备份与组合快照已存，三 harness base_url → :8787</td><td class="dim">完成</td></tr>
-    </table>
-  </div>
-
-</div></div></section>
-
-<!-- ================= P8 设置（四分区） ================= -->
-<section class="page" id="p8"><div class="app"><div class="main" data-side="p8">
-
-  <div class="row" style="margin-bottom:10px;">
-    <div class="subtab active" data-stab="s1">服务</div>
-    <div class="subtab" data-stab="s2">VLM</div>
-    <div class="subtab" data-stab="s3">上游转发</div>
-    <div class="subtab" data-stab="s4">高级</div>
-    <span class="dim small" style="margin-left:auto;">编辑集中在本页 · 四个分区共用底部一条「保存」</span>
-  </div>
-
-  <!-- 服务 -->
-  <div data-spage="s1">
-    <div class="card">
-      <h3>服务</h3>
-      <div class="field"><label>监听地址</label><input class="input" value="127.0.0.1:8787" style="min-width:170px;"><span class="dim small">仅本机；改动需重启服务</span></div>
-      <div class="field"><label>管理的 harness</label>
-        <label style="margin-right:12px;"><input type="checkbox" checked> Claude Code</label>
-        <label style="margin-right:12px;"><input type="checkbox" checked> Codex</label>
-        <label><input type="checkbox" checked> Qwen Code</label>
-        <span class="dim small">（= 本代理是否接管该 harness 的接线；与「上游转发」里停用单条 relay 是两回事）</span></div>
-      <div class="field"><label>未知模型默认</label><label style="margin-right:10px;"><input type="radio" name="u" checked> 纯文本（安全，走一次识图）</label><label><input type="radio" name="u"> 支持图片（直通）</label></div>
-      <div class="field"><label>自动监听</label><label><input type="checkbox" checked> 开启</label>　周期 <input class="input" value="5 秒" style="width:64px;"> ＋ 文件变更通知<span class="dim small">（「刷新配置」= 立即对账一次）</span></div>
-    </div>
-  </div>
-
-  <!-- VLM -->
-  <div data-spage="s2" style="display:none;">
-    <div class="card">
-      <h3>🌍 全局默认 VLM（未单独配置的 harness 回落）<span class="tag ok" style="margin-left:8px;">连通正常 · 120ms</span></h3>
-      <div class="field"><label>模型名称</label><input class="input" value="qwen-vl-max" style="min-width:170px;"></div>
-      <div class="field"><label>base URL</label><input class="input" value="https://dashscope.aliyuncs.com/compatible-mode/v1" style="min-width:340px;"></div>
-      <div class="field"><label>API key</label><input class="input" type="password" value="sk-●●●●●●" style="min-width:170px;"></div>
-      <div class="field"><label>协议</label><span class="subtab active">chat</span><span class="subtab">anthropic</span></div>
-    </div>
-    <div class="cols3">
+    <div style="flex:1;">
+      <div class="card row between" style="padding:8px 12px;">
+        <b class="small">🤖 Claude Code / 会话 a3f2e1…（昨天）— 5 次识图</b>
+        <span class="small dim">留存 7 天（设置·高级）· <a href="#">导出</a></span>
+      </div>
+      <div class="card" style="padding:0;">
+        <table>
+          <tr><th>时间</th><th>层级</th><th>提示词</th><th>缓存</th><th>耗时</th><th>VLM</th></tr>
+          <tr style="background:#f0f9ff;"><td>14:32:05</td><td>Tier2 聚焦</td><td>默认</td><td>未命中</td><td>2.4s</td><td>qwen-vl-max</td></tr>
+          <tr><td class="dim">13:18:44</td><td class="dim">Tier1 全面</td><td class="dim">默认</td><td class="dim">命中</td><td class="dim">0ms</td><td class="dim">—</td></tr>
+        </table>
+      </div>
       <div class="card">
-        <div class="row between"><b class="small">🤖 Claude Code 组</b><div class="switch"><span class="small dim">跟随全局</span><div class="track"><div class="knob"></div></div><b class="small">自定义</b></div></div>
-        <div class="field" style="margin-top:8px;"><label style="width:70px;">模型名称</label><input class="input" value="qwen3.5-omni-plus" style="min-width:120px;"></div>
-        <div class="field"><label style="width:70px;">base URL</label><input class="input" value="同全局" style="min-width:120px;"></div>
-        <div class="field"><label style="width:70px;">API key</label><input class="input" type="password" value="sk-●●●●" style="min-width:120px;"></div>
-      </div>
-      <div class="card"><div class="row between"><b class="small">💻 Codex 组</b><div class="switch"><b class="small" style="color:#059669;">跟随全局</b><div class="track off"><div class="knob"></div></div><span class="small dim">自定义</span></div></div><div class="dim" style="margin-top:10px;">使用全局：<span class="mono">qwen-vl-max @ dashscope</span></div></div>
-      <div class="card"><div class="row between"><b class="small">❓ Qwen Code 组</b><div class="switch"><b class="small" style="color:#059669;">跟随全局</b><div class="track off"><div class="knob"></div></div><span class="small dim">自定义</span></div></div><div class="dim" style="margin-top:10px;">使用全局：<span class="mono">qwen-vl-max @ dashscope</span></div></div>
-    </div>
-    <div class="card">
-      <h3>📝 识图提示词（可自定义，一键恢复默认）</h3>
-      <div class="small dim" style="margin-bottom:6px;">识图管线读取此处生效值；识图记录页 ① 段显示的是实际使用的提示词。</div>
-      <div class="field" style="align-items:flex-start;"><label>Tier1 全面</label><textarea class="prompt">请详细描述这张图片，重点涵盖：文字（逐字）、UI 元素、错误信息、布局结构。无法确定的内容请显式标注。</textarea></div>
-      <div class="field" style="align-items:flex-start;"><label>Tier2 聚焦</label><textarea class="prompt">围绕用户问题聚焦提取图片信息，逐字引用关键文字，标注不确定项。用户问题：{question}</textarea></div>
-      <div class="row"><button class="btn">保存自定义提示词</button><button class="btn">↩ 恢复默认</button><span class="dim small">当前：默认（未自定义）</span></div>
-    </div>
-    <div class="card">
-      <h3>🧪 VLM 测试（与生产同一调用路径，四种模式）</h3>
-      <div class="row" style="align-items:flex-start; gap:14px;">
-        <div style="width:120px; flex-shrink:0;">
-          <div style="width:120px; height:84px; background:linear-gradient(135deg,#c7d2fe,#fbcfe8); border-radius:8px; display:flex; align-items:center; justify-content:center; color:#6b7280; font-size:11px;">🖼 拖入 / 上传</div>
-        </div>
-        <div style="flex:1;">
-          <div class="row" style="flex-wrap:wrap; margin-bottom:6px;">
-            <span class="subtab active">Tier1 · 默认提示词</span><span class="subtab">Tier1 · 自选提示词</span>
-            <span class="subtab">Tier2 · 默认＋问题</span><span class="subtab">Tier2 · 自选提示词</span>
-            <input class="input" placeholder="自选提示词 / 聚焦问题…" style="min-width:180px;">
-            <button class="btn green">开始测试</button>
+        <b class="small">▸ 14:32:05 · Tier2 明细</b>
+        <div class="row" style="align-items:flex-start; margin-top:8px;">
+          <div style="width:104px; flex-shrink:0;">
+            <div style="width:104px; height:74px; background:linear-gradient(135deg,#c7d2fe,#fbcfe8); border-radius:8px; display:flex; align-items:center; justify-content:center; color:#6b7280; font-size:11px;">🖼 缩略图</div>
+            <div class="small dim" style="margin-top:4px;">638 KB · png<br>哈希 8f3a…c2</div>
           </div>
-          <div class="codebox" style="background:#ecfdf5; border-color:#a7f3d0;"><b style="color:#059669;">结果</b>（2.4s · 96 token · 用当前生效的自定义/默认提示词）：截图为终端报错 Traceback…</div>
+          <div style="flex:1;">
+            <div class="small" style="color:#2563eb; font-weight:700;">① 发给 VLM 的提示词（当前生效：默认 Tier2，设置·高级可自定义）</div>
+            <div class="mono" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px;">请详细描述这张图片…用户问题：这个报错怎么修？</div>
+            <div class="small" style="color:#7c3aed; font-weight:700; margin-top:6px;">② VLM 原始返回</div>
+            <div class="mono" style="background:#faf5ff; border:1px solid #e9d5ff; border-radius:6px; padding:8px;">截图为终端报错 Traceback…不确定项：第 2 行被截断。</div>
+            <div class="small" style="color:#059669; font-weight:700; margin-top:6px;">③ 实际注入对话的文本</div>
+            <div class="mono" style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:6px; padding:8px; color:#064e3b;">[图片描述 1] 截图为终端报错…（预算内截断至 96 token）</div>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="row" style="justify-content:flex-end;">
-      <span class="dim small" style="margin-right:10px;">统一保存见本页底部</span>
     </div>
   </div>
+</div></section>
 
-  <!-- 上游转发 -->
-  <div data-spage="s3" style="display:none;">
-    <div class="hint">relay = 「模型名匹配 → 转发到某上游」的规则。<b>全部由系统自动生成，无需手工创建</b>：路由工具在线 → 自动探测生成两层 relay；接管 / 换供应商 → 按接管快照吸收生成直连 relay。本页只读 + 两个轻操作：<b>停用转发</b>（该规则不参与匹配；停用自动项记入压制名单）、<b>🔑 补填 key</b>（快照吸收的直连 relay 缺 key 时）。完全自定义转发规则属高级用法：直接编辑 <span class="mono">~/.vision-relay/proxy.json</span>（见文档）。</div>
+<!-- ======== P7 事件日志（看板） ======== -->
+<section class="page" id="p7"><div class="app">
+  <div class="side">
+    <div class="logo">👁 vision-relay</div>
+    <div class="side-item">📊 总览</div>
+    <div class="side-item">🧠 模型能力</div>
+    <div class="side-item">🖼 识图记录</div>
+    <div class="side-item active">📜 事件日志</div>
+    <div class="side-item">⚙️ 设置</div>
+  </div>
+  <div class="main">
     <div class="card" style="padding:0;">
-      <div class="row between" style="padding:12px 14px 0;"><h3>relay 列表（本代理 → 上游，自动生成）</h3><span class="small dim">匹配模型 = 请求的模型名命中该列模式才走这条转发</span></div>
+      <div class="row between" style="padding:12px 14px 0;"><h3>自动动作全程留痕（自动化之后，可见性补位）</h3><span class="small dim"><a href="#">筛选 ▾</a> · <a href="#">导出</a></span></div>
       <table>
-        <tr><th>名称</th><th>协议</th><th>base_url</th><th>拓扑</th><th>来源</th><th>匹配模型</th><th>操作</th></tr>
-        <tr><td>cc-anthropic</td><td>anthropic</td><td class="mono">http://127.0.0.1:15721</td><td><span class="tag info">两层 · 经 CC Switch</span></td><td><span class="tag gray">自动探测</span></td><td>*</td><td><a href="#">停用转发</a></td></tr>
-        <tr><td>codex-plus</td><td>responses</td><td class="mono">http://127.0.0.1:57321/v1</td><td><span class="tag info">两层 · 经 Codex++</span></td><td><span class="tag gray">自动探测</span></td><td>*</td><td><a href="#">停用转发</a></td></tr>
-        <tr><td>qwen-direct</td><td>chat</td><td class="mono">https://dashscope.aliyuncs.com/compatible-mode/v1</td><td><span class="tag gray">一层直连</span></td><td><span class="tag gray">快照吸收</span></td><td>qwen-*</td><td><a href="#">停用转发</a></td></tr>
-        <tr style="background:#fffbeb;"><td>glm-direct</td><td>anthropic</td><td class="mono">https://open.bigmodel.cn/api/anthropic</td><td><span class="tag gray">一层直连</span></td><td><span class="tag gray">快照吸收</span></td><td>glm-*</td><td><a href="#">🔑 补填 key</a> · <a href="#">停用转发</a></td></tr>
+        <tr><th>时间</th><th>harness</th><th>类型</th><th>内容</th><th>结果</th></tr>
+        <tr><td class="mono">14:32:07</td><td>Codex</td><td><span class="tag warn">自动抢回</span></td><td>base_url 被 Codex++ 改写 → 对账抢回 :8787</td><td class="dim">完成 · 漏过 2 张图</td></tr>
+        <tr><td class="mono">14:30:12</td><td>Claude Code</td><td><span class="tag info">自动吸收</span></td><td>新上游 open.bigmodel.cn → 已接管 + 快照更新</td><td class="dim">完成 · 缺 key 已提醒</td></tr>
+        <tr><td class="mono">14:30:12</td><td>Claude Code</td><td><span class="tag warn">自动标注</span></td><td>新模型 glm-5-air/plus：实测探测 → 纯文本（报错）/ 支持图片（答对）</td><td class="dim">已通知可改</td></tr>
+        <tr><td class="mono">09:20:33</td><td>Codex</td><td><span class="tag ok">自动修复</span></td><td>僵尸接线：崩溃前路由开 → 重启服务保持接管</td><td class="dim">完成</td></tr>
       </table>
     </div>
-    <div class="cols3">
-      <div class="card"><h3>🔀 CC Switch <span class="dot g"></span><span class="small" style="color:#059669;">在线</span></h3>
-        <div class="dim small">端口 15721 · 支持 Claude Code / Codex</div>
-        <div class="small" style="margin-top:6px;">激活供应商 <b>bigmodel</b><br><span class="mono">https://open.bigmodel.cn/api/anthropic</span></div>
-        <div class="small dim" style="margin-top:4px;">读取：配置库（只读）→ 状态接口兜底</div></div>
-      <div class="card"><h3>🔀 Codex++ <span class="dot g"></span><span class="small" style="color:#059669;">在线</span></h3>
-        <div class="dim small">端口 57321 · 支持 Codex</div>
-        <div class="small" style="margin-top:6px;">激活供应商 <b>deepseek</b><br><span class="mono">https://api.deepseek.com</span></div>
-        <div class="small dim" style="margin-top:4px;">读取：settings.json（只读）</div></div>
-      <div class="card"><h3>＋ 未来工具</h3><div class="dim small" style="margin-top:6px;">工具档案 = 名字 + 端口 + 支持的 harness + relay 模板 + 激活供应商读取方式。TRAE / Kimi 加条目即接入。</div></div>
-    </div>
   </div>
+</div></section>
 
-  <!-- 高级 -->
-  <div data-spage="s4" style="display:none;">
+<!-- ======== P8 设置 ======== -->
+<section class="page" id="p8"><div class="app">
+  <div class="side">
+    <div class="logo">👁 vision-relay</div>
+    <div class="side-item">📊 总览</div>
+    <div class="side-item">🧠 模型能力</div>
+    <div class="side-item">🖼 识图记录</div>
+    <div class="side-item">📜 事件日志</div>
+    <div class="side-item active">⚙️ 设置</div>
+  </div>
+  <div class="main">
     <div class="card">
-      <h3>高级</h3>
-      <div class="field"><label>识图留痕</label><label><input type="checkbox" checked> 记录</label>　留存 <input class="input" value="7 天" style="width:64px;">　<span class="dim small">仅存本机；<a href="#">整体关闭（敏感环境）</a></span></div>
-      <div class="field"><label>语言</label><span class="subtab active">中文</span><span class="subtab">English</span></div>
-      <div class="field"><label>关于</label><span class="dim">版本 0.3.0 · 通信契约 v1 · 核心与 GUI 同包（冻结分发）· <a href="#">pip 通道说明</a></span></div>
+      <h3>🔍 VLM（唯一必配）<span class="tag ok" style="margin-left:8px;">连通正常</span></h3>
+      <div class="field"><label>模型名称</label><input class="input" value="qwen-vl-max" style="min-width:160px;"></div>
+      <div class="field"><label>base URL</label><input class="input" value="https://dashscope.aliyuncs.com/compatible-mode/v1" style="min-width:320px;"></div>
+      <div class="field"><label>API key</label><input class="input" type="password" value="sk-●●●●●●" style="min-width:160px;"></div>
+      <div class="row" style="justify-content:flex-end;"><button class="btn">🧪 测试（可选）</button><button class="btn primary">💾 保存</button></div>
+    </div>
+    <div class="card">
+      <h3>按 harness 分组</h3>
+      <table>
+        <tr><td>🤖 Claude Code</td><td><span class="tag gray">自定义</span> <span class="mono dim">qwen3.5-omni-plus @ 同全局端点</span></td><td style="text-align:right;"><a href="#">改回跟随全局</a></td></tr>
+        <tr><td>💻 Codex</td><td><span class="tag ok">跟随全局 ✓</span></td><td style="text-align:right;"><a href="#">单独配置</a></td></tr>
+        <tr><td>❓ Qwen Code</td><td><span class="tag ok">跟随全局 ✓</span></td><td style="text-align:right;"><a href="#">单独配置</a></td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>外观</h3>
+      <div class="field"><label>语言</label><span class="tag info" style="cursor:pointer;">跟随系统 ✓</span><span class="tag gray" style="cursor:pointer;">中文</span><span class="tag gray" style="cursor:pointer;">English</span><span class="dim small">（保留可见——切换频率低但确实是个选择）</span></div>
+    </div>
+    <details class="card">
+      <summary style="cursor:pointer;font-weight:600;">📝 识图提示词（高级，默认内置）▸</summary>
+      <div class="field" style="align-items:flex-start; margin-top:10px;"><label>Tier1 全面</label><textarea class="prompt">请详细描述这张图片，重点涵盖：文字（逐字）、UI 元素、错误信息、布局结构。无法确定的内容请显式标注。</textarea></div>
+      <div class="field" style="align-items:flex-start;"><label>Tier2 聚焦</label><textarea class="prompt">围绕用户问题聚焦提取图片信息，逐字引用关键文字，标注不确定项。用户问题：{question}</textarea></div>
+      <div class="row"><button class="btn">保存自定义</button><button class="btn">↩ 恢复默认</button></div>
+    </details>
+    <details class="card">
+      <summary style="cursor:pointer;font-weight:600;">服务与高级（全部默认值）▸</summary>
+      <table style="margin-top:8px;">
+        <tr><td class="dim" style="width:130px;">监听地址</td><td>127.0.0.1:8787（默认）</td></tr>
+        <tr><td class="dim">管理的 harness</td><td>自动检测：Claude Code ✓ · Codex ✓ · Qwen Code ✓</td></tr>
+        <tr><td class="dim">自动对账</td><td>开启 · 每 5 秒 + 文件变更通知（默认）</td></tr>
+        <tr><td class="dim">识图留痕</td><td>记录 · 留存 7 天 · 仅本机（默认）</td></tr>
+      </table>
+    </details>
+  </div>
+</div></section>
+
+<!-- ======== P9 首次向导 ======== -->
+<section class="page" id="p9"><div class="app">
+  <div class="side"><div class="logo">👁 vision-relay</div></div>
+  <div class="main">
+    <div class="steps">
+      <div class="step done">① 配置 VLM ✓</div>
+      <div class="step on">② 过目模型能力（可跳过）</div>
+      <div class="step">完成</div>
+    </div>
+    <div class="card">
+      <h3>② 模型能力过目（自动预标注，改猜错的）</h3>
+      <div class="alert-warn">⚠ 标错两个方向的代价：视觉模型标成纯文本 → 每张图都白走 VLM 转述（费 token + 降质）；纯文本标成视觉 → 请求报错。<b>探测已自动跑完（每模型一次最小调用），过目实测结果即可。</b></div>
+      <table>
+        <tr><th>harness · provider</th><th>模型</th><th>预标注</th><th>实测</th><th>操作</th></tr>
+        <tr><td>Claude Code · bigmodel</td><td>glm-5-air</td><td><span class="cap text">纯文本</span></td><td><span class="tag err" style="background:#fef2f2;color:#b91c1c;">✗ 报错：不支持图片输入</span></td><td><a href="#">改为支持图片</a> · <a href="#" class="small">重测</a></td></tr>
+        <tr><td>Claude Code · bigmodel</td><td>glm-5-plus</td><td><span class="cap image">支持图片</span></td><td><span class="tag ok">✓ 答对：图里的字是"访"</span></td><td><a href="#">改为纯文本</a></td></tr>
+        <tr><td>Codex · deepseek</td><td>kimi-k2.7-code</td><td><span class="cap image">支持图片</span></td><td><span class="tag gray">未测（key 未配，按目录）</span></td><td><a href="#">🔍 探测</a></td></tr>
+      </table>
+      <div class="row" style="justify-content:space-between; margin-top:10px;">
+        <button class="btn">← 上一步</button>
+        <button class="btn">跳过（按目录默认）</button>
+        <button class="btn primary lg">完成 → 开启路由</button>
+      </div>
     </div>
   </div>
-
-  <!-- 统一保存栏：设置页四个分区共用，所有输入类控件（含开关/勾选）一律由此保存 -->
-  <div class="card row between" style="position:sticky; bottom:0; box-shadow:0 -2px 8px rgba(0,0,0,.06); margin-bottom:0;">
-    <span class="dim small">● 2 处未保存修改（服务 1 · VLM 1）——输入类修改（含开关、勾选）统一由这里保存生效；离开本页前未保存会提示</span>
-    <div class="row">
-      <button class="btn">放弃修改</button>
-      <button class="btn primary lg">💾 保存设置（2 处）</button>
-    </div>
-  </div>
-
-</div></div></section>
-
-<!-- ================= P9 首次向导 ================= -->
-<section class="page" id="p9"><div class="app"><div class="main" data-side="">
-
-  <div class="hint">触发时点：proxy.json 不存在，或存在但「首次确认」标志未置位（capability_confirmed）。升级、新模型不重跑向导——新模型走「模型能力」页增量批量确认。</div>
-  <div class="steps">
-    <div class="step done">① 扫描模型 ✓</div>
-    <div class="step on">② 确认图片能力</div>
-    <div class="step">③ 配置 VLM 并测试</div>
-  </div>
-  <div class="card">
-    <h3>步骤 ②：确认图片能力（复用「模型能力」页的批量表格）</h3>
-    <div class="dim small" style="margin-bottom:8px;">扫描发现 10 个模型（Claude Code 5 / Codex 3 / Qwen Code 2）。默认全部「纯文本」最安全——支持图片的模型请手动切换。</div>
-    <table>
-      <tr><th>模型</th><th>来源</th><th>内置名单建议</th><th>图片能力</th></tr>
-      <tr><td><b>glm-5-air</b></td><td class="dim">Claude Code</td><td class="dim">纯文本</td><td><span class="cap text">纯文本</span> ⇄ <span class="cap image">支持图片</span></td></tr>
-      <tr><td><b>kimi-k2.7-code</b></td><td class="dim">Claude Code</td><td class="dim">支持图片</td><td><span class="cap image">支持图片 ✓</span></td></tr>
-      <tr><td colspan="4" class="dim" style="text-align:center;">…（完整表格同「模型能力」页，含批量操作）</td></tr>
-    </table>
-    <div class="row" style="justify-content:space-between; margin-top:10px;">
-      <button class="btn">← 上一步</button>
-      <div class="dim small">完成全部三步后才允许开启路由</div>
-      <button class="btn primary">下一步：配置 VLM →</button>
-    </div>
-  </div>
-
-</div></div></section>
+</div></section>
 
 <script>
-  // ===== 文档级标签切换 =====
   document.querySelectorAll('.doc-tab').forEach(function (t) {
     t.addEventListener('click', function () {
       document.querySelectorAll('.doc-tab').forEach(function (x) { x.classList.remove('active'); });
@@ -516,110 +399,51 @@
       document.getElementById(t.dataset.p).classList.add('active');
     });
   });
-  // ===== 侧边栏注入 =====
-  var tpl = document.getElementById('side-tpl');
-  document.querySelectorAll('.main[data-side]').forEach(function (main) {
-    var side = tpl.content.cloneNode(true);
-    var k = main.dataset.side;
-    side.querySelectorAll('.side-item').forEach(function (it) {
-      if (it.dataset.k === k) it.classList.add('active');
-      it.addEventListener('click', function () {
-        var tab = document.querySelector('.doc-tab[data-p="' + it.dataset.k + '"]');
-        if (tab) tab.click();
-      });
-    });
-    main.parentElement.insertBefore(side, main);
-  });
-  // ===== 设置页子分区切换 =====
-  document.querySelectorAll('.subtab[data-stab]').forEach(function (t) {
-    t.addEventListener('click', function () {
-      document.querySelectorAll('.subtab[data-stab]').forEach(function (x) { x.classList.remove('active'); });
-      t.classList.add('active');
-      document.querySelectorAll('[data-spage]').forEach(function (p) { p.style.display = 'none'; });
-      document.querySelector('[data-spage="' + t.dataset.stab + '"]').style.display = '';
-    });
-  });
-  // ===== 拓扑链动态渲染：路由总开关 + 每卡工具开关 =====
-  var routingOn = true;
-  var toolOn = { claude: true, codex: true, qwen: true };
+  var routingOn = true; var toolOn = { claude: true, codex: true, qwen: true };
   function renderChains() {
     document.querySelectorAll('.card[data-h]').forEach(function (card) {
       var h = card.dataset.h;
-      var relayHop = card.querySelector('[data-role="relayHop"]');
-      var toolHop = card.querySelector('[data-role="toolHop"]');
-      var a1 = card.querySelector('[data-role="a1"]');
-      var a2 = card.querySelector('[data-role="a2"]');
+      var relayHop = card.querySelector('[data-role="relayHop"]'), toolHop = card.querySelector('[data-role="toolHop"]');
+      var a1 = card.querySelector('[data-role="a1"]'), a2 = card.querySelector('[data-role="a2"]');
       var tagEl = card.querySelector('[data-role="stateTag"]');
       if (routingOn) {
-        relayHop.classList.remove('bypass'); relayHop.innerHTML = '👁 vision-relay :8787 <span class="dot g"></span><span class="small" style="color:#059669;">安全网</span>';
-        a1.style.display = ''; a1.textContent = '↓ base_url → 8787';
+        relayHop.classList.remove('bypass'); relayHop.innerHTML = '👁 vision-relay :8787 <span class="dot g"></span>安全网'; a1.style.display = ''; a1.textContent = '↓ base_url → 8787';
         if (toolHop) {
-          if (toolOn[h]) { toolHop.classList.remove('bypass'); toolHop.innerHTML = toolHop.dataset.name + ' <span class="dot g" data-role="toolDot"></span><span class="small" style="color:#059669;">在线</span>'; a2.style.display = ''; a2.textContent = '↓ relay（两层）'; }
-          else { toolHop.classList.add('bypass'); toolHop.innerHTML = toolHop.dataset.name + ' <span class="dot gray" data-role="toolDot"></span><span class="bz">已旁路 · 离线</span>'; a2.style.display = ''; a2.textContent = '↓ relay（回落一层直连）'; }
-        } else { a2.style.display = ''; a2.textContent = '↓ relay（一层直连）'; }
+          if (toolOn[h]) { toolHop.classList.remove('bypass'); toolHop.innerHTML = toolHop.dataset.name + ' <span class="dot g"></span><span style="color:#059669;">在线</span>'; a2.textContent = '↓ relay（两层）'; }
+          else { toolHop.classList.add('bypass'); toolHop.innerHTML = toolHop.dataset.name + ' <span class="dot gray"></span><span class="bz">已旁路</span>'; a2.textContent = '↓ relay（回落一层直连）'; }
+        } else { a2.textContent = '↓ relay（一层直连）'; }
         tagEl.className = 'tag ok'; tagEl.textContent = '✓ 已接管';
       } else {
-        relayHop.classList.add('bypass');
-        relayHop.innerHTML = '👁 vision-relay :8787 <span class="bz">已旁路 · 置灰</span>';
-        a1.style.display = 'none';
+        relayHop.classList.add('bypass'); relayHop.innerHTML = '👁 vision-relay :8787 <span class="bz">已旁路</span>'; a1.style.display = 'none';
         if (toolHop) {
-          if (toolOn[h]) { toolHop.classList.remove('bypass'); toolHop.innerHTML = toolHop.dataset.name + ' <span class="dot g" data-role="toolDot"></span><span class="small" style="color:#059669;">在线</span>'; a2.textContent = '↓ 直连 ' + toolHop.dataset.short; }
-          else { toolHop.classList.add('bypass'); toolHop.innerHTML = toolHop.dataset.name + ' <span class="dot gray" data-role="toolDot"></span><span class="bz">已旁路 · 离线</span>'; a2.textContent = '↓ 直连真实上游'; }
-          a2.style.display = '';
-        } else { a2.textContent = '↓ 直连真实上游'; a2.style.display = ''; }
+          if (toolOn[h]) { toolHop.classList.remove('bypass'); toolHop.innerHTML = toolHop.dataset.name + ' <span class="dot g"></span><span style="color:#059669;">在线</span>'; a2.textContent = '↓ 直连 ' + toolHop.dataset.short; }
+          else { toolHop.classList.add('bypass'); toolHop.innerHTML = toolHop.dataset.name + ' <span class="dot gray"></span><span class="bz">已旁路</span>'; a2.textContent = '↓ 直连真实上游'; }
+        } else { a2.textContent = '↓ 直连真实上游'; }
         tagEl.className = 'tag gray'; tagEl.textContent = '未接管 · 直连';
       }
-      bindToolDot(card);
     });
     document.getElementById('svcTitle').textContent = routingOn ? '服务运行中' : '服务已停止';
     document.getElementById('svcDot').className = 'dot ' + (routingOn ? 'g' : 'r');
-    document.getElementById('svcSub').textContent = routingOn ? '图片安全网已覆盖 3 个 harness · 上次对账 3 秒前 · 今日识图 27 次' : '安全网未生效：请求不经本代理，直接发往下一跳';
-    var tk = document.getElementById('masterToggle');
-    tk.classList.toggle('off', !routingOn);
+    document.getElementById('svcSub').textContent = routingOn ? '安全网已覆盖 3 个 harness · 上次对账 3 秒前 · 今日识图 27 次 · 缓存命中 63%' : '安全网未生效：请求不经本代理';
+    document.getElementById('masterToggle').classList.toggle('off', !routingOn);
     document.getElementById('toggleLabel').textContent = routingOn ? '路由开启' : '路由已关';
   }
-  function bindToolDot(card) {
-    var hop = card.querySelector('[data-role="toolHop"]');
-    if (!hop) return;
-    if (hop.dataset.bound) return; hop.dataset.bound = '1';
-    hop.addEventListener('click', function () { toolOn[card.dataset.h] = !toolOn[card.dataset.h]; renderChains(); });
-  }
   document.querySelectorAll('.card[data-h] [data-role="toolHop"]').forEach(function (h) {
-    h.dataset.name = h.textContent.split(' :')[0].replace('🔀 ', '🔀 ');
-    h.dataset.short = h.textContent.match(/:\d+/) ? h.textContent.match(/:\d+/)[0] : '';
+    h.dataset.name = h.textContent.split(' :')[0];
+    h.dataset.short = (h.textContent.match(/:\d+/) || [''])[0];
+    h.addEventListener('click', function () { toolOn[h.closest('.card').dataset.h] = !toolOn[h.closest('.card').dataset.h]; renderChains(); });
   });
-  document.getElementById('masterToggle').addEventListener('click', function () { routingOn = !routingOn; renderChains(); });
-  // ===== 详情抽屉 =====
   document.querySelectorAll('[data-role="detailToggle"]').forEach(function (a) {
     a.addEventListener('click', function (e) {
       e.preventDefault();
       var d = a.closest('.card').querySelector('[data-role="drawer"]');
       d.classList.toggle('show');
-      a.textContent = d.classList.contains('show') ? '▾ 收起详情' : '▸ 接线详情';
+      a.textContent = d.classList.contains('show') ? '▾ 详情：快照 · relay · 停用' : '▸ 详情：快照 · relay · 停用';
     });
   });
-  // ===== 诊断弹层：开关 / 修复 / 角标 =====
-  var modal = document.getElementById('diagModal');
-  document.getElementById('openDiag').addEventListener('click', function () { modal.classList.add('show'); });
-  document.getElementById('closeDiag').addEventListener('click', function () { modal.classList.remove('show'); });
-  function refreshBadge() {
-    var n = document.querySelectorAll('#diagModal [data-fix]:not(.fixed-item)').length;
-    document.getElementById('diagBadge').textContent = n ? '●' + n : '✓';
-    document.getElementById('fixAll').textContent = '一键修复（仅上方 ✔ 确定性项，' + document.querySelectorAll('#diagModal [data-fix="auto"]:not(.fixed-item)').length + ' 个）';
-  }
-  document.querySelectorAll('#diagModal [data-role="fixBtn"]').forEach(function (b) {
-    b.addEventListener('click', function () {
-      var item = b.closest('[data-fix]');
-      item.classList.remove('alert-warn', 'alert-err'); item.classList.add('alert-ok', 'fixed-item');
-      item.querySelectorAll('button').forEach(function (x) { x.style.display = 'none'; });
-      item.insertAdjacentHTML('beforeend', '<span class="tag ok">已修复 ✓</span>');
-      refreshBadge();
-    });
-  });
-  document.getElementById('fixAll').addEventListener('click', function () {
-    document.querySelectorAll('#diagModal [data-fix="auto"]:not(.fixed-item) [data-role="fixBtn"]').forEach(function (b) { b.click(); });
-  });
-  refreshBadge();
+  document.getElementById('masterToggle').addEventListener('click', function () { routingOn = !routingOn; renderChains(); });
+  document.getElementById('openDiag').addEventListener('click', function () { document.getElementById('diagModal').classList.add('show'); });
+  document.getElementById('closeDiag').addEventListener('click', function () { document.getElementById('diagModal').classList.remove('show'); });
   renderChains();
 </script>
 </body>
