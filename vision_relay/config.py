@@ -93,6 +93,11 @@ class VisionLogConfig:
     retention_days: int = 7
 
     def __post_init__(self) -> None:
+        # 数字字符串收拢为 int（对齐 bind_port=int(...) 惯例）；不可解析值显式 ConfigError。
+        try:
+            self.retention_days = int(self.retention_days)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"vision_log.retention_days must be an integer, got {self.retention_days!r}") from exc
         # retention_days=0 会让 cleanup 按整日 cutoff 误删当日文件；要关闭留存请用 enabled=false。
         if self.retention_days < 1:
             raise ConfigError(

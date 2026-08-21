@@ -166,16 +166,20 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             ir = _PARSERS[proto](body)
             harness = _HARNESS_BY_PROTO.get(proto)
             relay = _select_relay(self._cfg, proto, ir.model)
-            # 按 harness 切 VLM（spec §7.1）：vlm_clients 与 run_server 建的 pipeline 配套；
-            # pipeline 被整体替换（测试注入替身）时不越权覆盖，尊重替换者自带的 vlm。
-            clients = getattr(self.server, "vlm_clients", None)
-            if clients and getattr(self.server, "vlm_clients_pipeline", None) is self._pipeline:
-                vlm_client = clients.get(harness) or clients.get("_default")
-                if vlm_client is not None and vlm_client is not self._pipeline.vlm:
-                    self._pipeline.vlm = vlm_client
+            # 按 harness 请求级选用 VLM（spec §7.1，I-1）：clients 挂在 pipeline 上
+            # （run_server 配套注入），经 process(vlm=...) 请求级注入，不变异共享
+            # pipeline.vlm；pipeline 被测试整体替换时无此属性，vlm_arg=None 回落
+            # pipeline.vlm，互不越权。
+            clients = getattr(self._pipeline, "vlm_clients", None)
+            vlm_arg = (clients.get(harness) or clients.get("_default")) if clients else None
             provider = _resolve_provider(self._cfg, relay, getattr(self.server, "tool_provider_cache", {}))
             result = self._pipeline.process(
-                ir, self._cfg, harness, provider, session_id=extract_session_id(proto, body)
+                ir,
+                self._cfg,
+                harness,
+                provider,
+                session_id=extract_session_id(proto, body),
+                vlm=vlm_arg,
             )
             out_body = _SERIALIZERS[proto](result.ir)
             status, text = _forward(relay, out_body, ir.stream)
@@ -227,15 +231,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 def run_server(cfg: ProxyConfig | None = None, handler_cls=ProxyHandler):
     """Build the ThreadingHTTPServer with cfg + pipeline attached; caller calls serve_forever()."""
     cfg = cfg or load_config()
-    vlm = VLMClient(cfg.vlm)
-    cache = DescriptionCache()
-    pipeline = Pipeline(vlm, cache)
+    clients = build_vlm_clients(cfg)
+    pipeline = Pipeline(clients["_default"], DescriptionCache())
     server = http.server.ThreadingHTTPServer((cfg.bind_host, cfg.bind_port), handler_cls)
     server.cfg = cfg  # type: ignore[attr-defined]
     server.pipeline = pipeline  # type: ignore[attr-defined]
-    # per-harness VLM 客户端（spec §7.1）+ 请求期 provider 解析缓存。
-    # vlm_clients_pipeline 标记配套关系：pipeline 被替换后 handler 不再越权切 VLM。
-    server.vlm_clients = build_vlm_clients(cfg)  # type: ignore[attr-defined]
-    server.vlm_clients_pipeline = pipeline  # type: ignore[attr-defined]
+    # per-harness VLM 客户端（spec §7.1）挂在 pipeline 上：请求期按 harness 选用并经
+    # process(vlm=...) 请求级注入。测试注入的新 pipeline 天然没有该属性，自动回落
+    # pipeline.vlm；初始 vlm 复用 clients["_default"]，不再另建冗余 client。
+    pipeline.vlm_clients = clients  # type: ignore[attr-defined]
     server.tool_provider_cache = {}  # type: ignore[attr-defined]
     return server

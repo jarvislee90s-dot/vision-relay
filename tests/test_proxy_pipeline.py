@@ -516,3 +516,70 @@ class TestSessionExtraction:
         assert extract_session_id("anthropic", {"metadata": {"user_id": "user_abc__session-77"}}) == "session-77"
         assert extract_session_id("anthropic", {"metadata": {"user_id": "plain"}}) == "plain"
         assert extract_session_id("chat", {}) is None
+
+
+# ---- 审查修订 I-1/I-2：请求级 VLM 选用 + 真实图片哈希 ----
+
+
+class TestRequestScopedVlm:
+    def test_vlm_param_used_and_no_shared_mutation(self, tmp_path, monkeypatch):
+        """I-1 防回归钉：process(vlm=B) 请求级选 VLM——describe 走 B，共享 pipeline.vlm
+        保持 A 不被变异（并发请求不得交错用错 VLM）。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        calls: list[str] = []
+
+        class VlmA:
+            def describe(self, image, question=None, tier=1, detail=None):
+                calls.append("A")
+                return "from A"
+
+        class VlmB:
+            def describe(self, image, question=None, tier=1, detail=None):
+                calls.append("B")
+                return "from B"
+
+        a = VlmA()
+        pl = Pipeline(a, DescriptionCache())
+        msg = Message(
+            role="user",
+            content=[
+                ContentBlock(type="text", text="q"),
+                ContentBlock(type="image", image=ImageBlock(base64="aGk=", media_type="image/png")),
+            ],
+        )
+        ir = IRRequest(model="deepseek-v4", messages=[msg])
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "k"
+        result = pl.process(ir, cfg, "claude", "bigmodel", session_id="s1", vlm=VlmB())
+        assert calls == ["B"]  # 描述走请求级 vlm=B
+        assert pl.vlm is a  # 共享 vlm 未被变异
+        assert any(
+            "from B" in (b.text or "") for m in result.ir.messages for b in m.content if b.type == "text"
+        )  # 注入的描述来自 B
+
+    def test_image_hash_is_full_sha256_hex_of_key(self, tmp_path, monkeypatch):
+        """I-2：image_hash 必须是完整 sha256 hex（64 位小写十六进制），不能是
+        "hash:" 前缀截断或 URL 原文前缀（会泄漏签名 token）。"""
+        import re
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "k"
+        recorded = []
+        monkeypatch.setattr(
+            "vision_relay.pipeline.record_vision_call",
+            lambda row, cfg_: recorded.append(row),
+        )
+
+        class FakeVLM:
+            def describe(self, image, question=None, tier=1, detail=None):
+                return "d"
+
+        pl = Pipeline(FakeVLM(), DescriptionCache())
+        msg = Message(
+            role="user", content=[ContentBlock(type="image", image=ImageBlock(base64="aGk=", media_type="image/png"))]
+        )
+        ir = IRRequest(model="deepseek-v4", messages=[msg])
+        pl.process(ir, cfg, "claude", "bigmodel", session_id="s2")
+        assert recorded, "VLM 调用必须留痕"
+        assert re.fullmatch(r"[0-9a-f]{64}", recorded[0]["image_hash"])

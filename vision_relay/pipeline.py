@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import random
 import threading
@@ -101,7 +102,11 @@ class Pipeline:
         harness: str | None = None,
         provider: str | None = None,
         session_id: str | None = None,
+        vlm=None,
     ) -> ProcessResult:
+        # 请求级 VLM 选用（I-1）：vlm 由调用方（server 按 harness）注入，本请求内全部
+        # 描述调用走 active_vlm；不变异 self.vlm（共享 pipeline 并发下不得交错用错 VLM）。
+        active_vlm = vlm or self.vlm
         if self.table.judge(ir.model, cfg, harness, provider) == "image":
             return ProcessResult(ir=ir)  # image model: zero overhead passthrough
         result = ProcessResult(ir=ir)
@@ -128,18 +133,19 @@ class Pipeline:
         # 当前轮不限量：全部同步描述并注入；有用户问题则用 Tier2 聚焦（spec §5.4）
         question = self._current_question(ir)
         for target in current_targets:
-            outcome = self._handle_one(target, result, question, cfg, harness, provider, session_id)
+            outcome = self._handle_one(target, result, question, cfg, harness, provider, session_id, active_vlm)
             if outcome == "stripped":
                 result.stripped += 1
 
         # 黄金窗口历史：从新到旧，X 封顶 VLM 调用；缓存命中不计入预算
+        # （历史轮不传 cfg 即不留痕；vlm 仍用请求级 active_vlm，同请求不混 VLM）
         quota = max(int(budget), 1)
         for target in golden_targets:
             if self.cache.get(target.key, None) is not None:
-                self._handle_one(target, result)
+                self._handle_one(target, result, vlm=active_vlm)
             elif quota > 0:
                 quota -= 1
-                outcome = self._handle_one(target, result)
+                outcome = self._handle_one(target, result, vlm=active_vlm)
                 if outcome == "stripped":
                     result.stripped += 1
             else:
@@ -149,7 +155,7 @@ class Pipeline:
         # 深层历史：只注入缓存命中；未命中直接剥离（Phase 2 后台缓存二阶段）
         for target in deep_targets:
             if self.cache.get(target.key, None) is not None:
-                self._handle_one(target, result)
+                self._handle_one(target, result, vlm=active_vlm)
             else:
                 self._strip_target(target, "深层历史未缓存，图片未处理")
                 result.stripped += 1
@@ -191,21 +197,24 @@ class Pipeline:
         harness: str | None = None,
         provider: str | None = None,
         session_id: str | None = None,
+        vlm=None,
     ) -> str:
         # spec §5.4：当前轮带用户问题时用 Tier2 聚焦（URL+问题缓存键），否则 Tier1。
         # cfg 透传时才留痕（spec §6）：历史轮（黄金窗口/深层）调用不传 cfg，即不留痕。
+        # vlm 为请求级选用（I-1）：缺省回落 self.vlm，本图片的描述与留痕 vlm_model 一致用它。
+        active_vlm = vlm or self.vlm
         key = target.key
         cached = self.cache.get(key, question)
         if cached is not None:
             self._inject(target, cached, result)
             return "injected"
-        recordable = cfg is not None and _describe_accepts_detail(self.vlm)
+        recordable = cfg is not None and _describe_accepts_detail(active_vlm)
         detail: dict = {}
         started = time.time()
         try:
             tier = 2 if question else 1
             desc = self._describe_with_retry(
-                target.image, question, tier, result, detail=detail if recordable else None
+                target.image, question, tier, result, detail=detail if recordable else None, vlm=active_vlm
             )
             self.cache.put(key, question, desc)
         except Exception as exc:  # noqa: BLE001 - fail-open on ANY VLM failure
@@ -226,8 +235,10 @@ class Pipeline:
                         "injected": self._format_desc(desc, target),
                         "duration_ms": int((time.time() - started) * 1000),
                         "cache_hit": False,
-                        "image_hash": key[:64],
-                        "vlm_model": getattr(getattr(self.vlm, "cfg", None), "model", None),
+                        # I-2：缓存键可能是 "hash:"+hex（截尾丢比特）或 URL 原文（会带签名
+                        # token）——统一取完整 sha256 hex 作图片指纹。
+                        "image_hash": hashlib.sha256(key.encode()).hexdigest(),
+                        "vlm_model": getattr(getattr(active_vlm, "cfg", None), "model", None),
                     },
                     cfg,
                 )
@@ -237,24 +248,26 @@ class Pipeline:
         return "injected"
 
     def _describe_with_retry(
-        self, image, question: str | None, tier: int, result: ProcessResult, detail: dict | None = None
+        self, image, question: str | None, tier: int, result: ProcessResult, detail: dict | None = None, vlm=None
     ) -> str:
         """VLM 调用 + spec §5.4 重试退避：可重试错误按指数退避重试，
         耗尽或不可重试错误抛给外层 fail-open。detail 非 None 时透传给 describe
-        回填 prompt/raw（Task10 出参契约，供留痕）。"""
+        回填 prompt/raw（Task10 出参契约，供留痕）。vlm 为请求级选用（I-1），
+        缺省回落 self.vlm。"""
+        active_vlm = vlm or self.vlm
         last: VLMError | None = None
         for attempt in range(VLM_MAX_ATTEMPTS):
             try:
                 with self.semaphore:
                     if detail is None:
-                        desc = self.vlm.describe(image, question=question, tier=tier)
+                        desc = active_vlm.describe(image, question=question, tier=tier)
                     else:
-                        desc = self.vlm.describe(image, question=question, tier=tier, detail=detail)
+                        desc = active_vlm.describe(image, question=question, tier=tier, detail=detail)
                     result.vlm_calls += 1
                 return desc
             except VLMError as exc:
                 last = exc
-                if attempt is VLM_MAX_ATTEMPTS - 1 or not _is_retryable(exc):
+                if attempt == VLM_MAX_ATTEMPTS - 1 or not _is_retryable(exc):
                     raise
                 time.sleep(self._backoff(attempt))
             except Exception:

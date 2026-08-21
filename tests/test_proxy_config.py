@@ -336,3 +336,12 @@ class TestVisionLogConfig:
 
     def test_retention_days_one_is_minimum_valid(self):
         assert ProxyConfig.from_dict({"vision_log": {"retention_days": 1}}).vision_log.retention_days == 1
+
+    def test_retention_days_numeric_string_coerced(self):
+        """M-3：数字字符串收拢为 int（"3" 等价 3，对齐 bind_port 惯例）。"""
+        assert ProxyConfig.from_dict({"vision_log": {"retention_days": "3"}}).vision_log.retention_days == 3
+
+    def test_retention_days_garbage_raises_config_error(self):
+        """M-3：不可解析值显式 ConfigError（而非裸 TypeError/ValueError 逃逸）。"""
+        with pytest.raises(ConfigError, match="retention_days"):
+            ProxyConfig.from_dict({"vision_log": {"retention_days": "abc"}})
