@@ -9,3 +9,4 @@ dist/
 .DS_Store
 项目启动提示词.txt
 .superpowers/
+.zcode/
