@@ -180,7 +180,7 @@ def confirm_models(groups, key_source=None, out=None) -> dict | None:
             items.append((g, ent))
     if not items:
         return {}
-    vision = {(id(g), ent.model): (_default_cap(ent.model) == "vision") for g, ent in items}
+    vision = {(id(g), ent.model): (_default_cap(ent.model) == "image") for g, ent in items}
     idx = 0
     n = len(items)
     last_group = None

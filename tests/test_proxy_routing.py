@@ -61,7 +61,7 @@ def test_routing_bad_harness_and_unknown_default_raise():
 
 def test_unknown_default_fallthrough():
     cfg = ProxyConfig(routing=RoutingConfig(unknown_default="vision"))
-    assert capability.CapabilityTable()._resolve("zz-unknown-123", cfg) == "vision"
+    assert capability.CapabilityTable()._resolve("zz-unknown-123", cfg) == "image"  # 旧词汇读取时归一
     cfg2 = ProxyConfig(routing=RoutingConfig(unknown_default="text_only"))
     assert capability.CapabilityTable()._resolve("zz-unknown-123", cfg2) == "text_only"
 
@@ -280,7 +280,7 @@ def test_judge_harness_aware():
     cfg = ProxyConfig(model_capabilities={"claude": {"sonnet": "text_only"}, "global": {"minimax-m3": "vision"}})
     t = capability.CapabilityTable()
     assert t.judge("sonnet", cfg, "claude") == "text_only"
-    assert t.judge("minimax-m3", cfg, "codex") == "vision"  # 全局组兜底
+    assert t.judge("minimax-m3", cfg, "codex") == "image"  # 全局组兜底（读取时归一旧词汇）
     assert t.judge("zz-unknown", cfg, "codex") == cfg.routing.unknown_default
 
 

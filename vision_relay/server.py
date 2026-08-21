@@ -138,7 +138,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         started = time.time()
         try:
             ir = _PARSERS[proto](body)
-            result = self._pipeline.process(ir, self._cfg, _HARNESS_BY_PROTO.get(proto))
+            result = self._pipeline.process(ir, self._cfg, _HARNESS_BY_PROTO.get(proto), None)
             relay = _select_relay(self._cfg, proto, ir.model)
             out_body = _SERIALIZERS[proto](result.ir)
             status, text = _forward(relay, out_body, ir.stream)

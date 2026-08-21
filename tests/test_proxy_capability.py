@@ -7,12 +7,12 @@ BUILTIN = {
     "deepseek/*": "text_only",
     "glm/*": "text_only",
     "zai/*": "text_only",
-    "openai/*": "vision",
-    "anthropic/*": "vision",
-    "google/*": "vision",
-    "qwen-vl-*": "vision",
-    "qwen3.5-omni-*": "vision",
-    "kimi-k2.7-code*": "vision",
+    "openai/*": "image",
+    "anthropic/*": "image",
+    "google/*": "image",
+    "qwen-vl-*": "image",
+    "qwen3.5-omni-*": "image",
+    "kimi-k2.7-code*": "image",
     "openrouter/deepseek/*": "text_only",
 }
 
@@ -20,13 +20,13 @@ BUILTIN = {
 def test_builtin_list_matches_spec():
     table = CapabilityTable()
     assert table.judge("deepseek/deepseek-chat", ProxyConfig()) == "text_only"
-    assert table.judge("qwen-vl-max", ProxyConfig()) == "vision"
+    assert table.judge("qwen-vl-max", ProxyConfig()) == "image"
     assert table.judge("openrouter/deepseek/v3", ProxyConfig()) == "text_only"
 
 
 def test_user_config_overrides_builtin():
-    cfg = ProxyConfig(model_capabilities={"deepseek-vl-2": "vision"})
-    assert CapabilityTable().judge("deepseek-vl-2", cfg) == "vision"
+    cfg = ProxyConfig(model_capabilities={"deepseek-vl-2": "vision"})  # 直接构造的旧词汇，judge 读取时归一
+    assert CapabilityTable().judge("deepseek-vl-2", cfg) == "image"
 
 
 def test_unknown_model_defaults_to_intercept():
@@ -82,3 +82,66 @@ def test_migrated_unknown_default_image_passthrough():
     result = Pipeline(spy, DescriptionCache()).process(ir, cfg, "claude")
     assert spy.calls == 0 and result.vlm_calls == 0 and result.injected == 0
     assert any(b.type == "image" for m in result.ir.messages for b in m.content)  # 原图原样返回
+
+
+# ---- Phase2 M1: triple-key tri-state resolution ----
+
+
+def _cfg(caps=None, probe=None, unknown="text_only"):
+    return ProxyConfig.from_dict(
+        {
+            "model_capabilities": caps or {},
+            "probe_results": probe or {},
+            "routing": {"unknown_default": unknown},
+        }
+    )
+
+
+class TestTripleResolution:
+    def test_user_override_wins(self):
+        cfg = _cfg(
+            caps={"claude": {"bigmodel": {"m1": "image"}}}, probe={"bigmodel": {"m1": {"result": "text_only", "ts": 1}}}
+        )
+        assert CapabilityTable().judge("m1", cfg, "claude", "bigmodel") == "image"
+
+    def test_probe_beats_catalog_written(self):
+        cfg = _cfg(
+            caps={"claude": {"bigmodel": {"m1": "text_only"}}}, probe={"bigmodel": {"m1": {"result": "image", "ts": 1}}}
+        )
+        # caps 值来自 catalog 自动标注（sources 可证），probe 更新——判定取 probe
+        cfg.capability_sources = {"claude": {"bigmodel": {"m1": "catalog"}}}
+        assert CapabilityTable().judge("m1", cfg, "claude", "bigmodel") == "image"
+
+    def test_user_beats_probe_when_source_user(self):
+        cfg = _cfg(
+            caps={"claude": {"bigmodel": {"m1": "text_only"}}}, probe={"bigmodel": {"m1": {"result": "image", "ts": 1}}}
+        )
+        cfg.capability_sources = {"claude": {"bigmodel": {"m1": "user"}}}
+        assert CapabilityTable().judge("m1", cfg, "claude", "bigmodel") == "text_only"
+
+    def test_probe_used_when_no_caps(self):
+        cfg = _cfg(probe={"bigmodel": {"m2": {"result": "image", "ts": 1}}})
+        assert CapabilityTable().judge("m2", cfg, "claude", "bigmodel") == "image"
+
+    def test_builtin_pattern_fallback(self):
+        cfg = _cfg()
+        assert CapabilityTable().judge("qwen-vl-max", cfg, "claude", "any") == "image"
+        assert CapabilityTable().judge("deepseek-v4", cfg, "codex", "any") == "text_only"
+
+    def test_unannotated_falls_to_unknown_default_switch(self):
+        assert CapabilityTable().judge("mystery", _cfg(unknown="text_only"), "claude", "p") == "text_only"
+        assert CapabilityTable().judge("mystery", _cfg(unknown="image"), "claude", "p") == "image"
+
+    def test_provider_mismatch_does_not_leak(self):
+        cfg = _cfg(caps={"claude": {"provA": {"m1": "image"}}})
+        assert CapabilityTable().judge("m1", cfg, "claude", "provB") == "text_only"  # 落到未标注→开关
+
+    def test_harness_none_still_resolves_via_probe_and_builtin(self):
+        cfg = _cfg(probe={"bigmodel": {"m1": {"result": "image", "ts": 1}}})
+        assert CapabilityTable().judge("m1", cfg, None, "bigmodel") == "image"
+
+    def test_cache_key_includes_provider(self):
+        t = CapabilityTable()
+        cfg = _cfg(probe={"a": {"m": {"result": "image", "ts": 1}}})
+        assert t.judge("m", cfg, "claude", "a") == "image"
+        assert t.judge("m", cfg, "claude", "b") == "text_only"  # 同名模型不同 provider 不同结果

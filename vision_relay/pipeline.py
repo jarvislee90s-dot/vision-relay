@@ -71,9 +71,11 @@ class Pipeline:
         self.semaphore = semaphore or threading.Semaphore(5)
         self.table = CapabilityTable()
 
-    def process(self, ir: IRRequest, cfg: ProxyConfig, harness: str | None = None) -> ProcessResult:
-        if self.table.judge(ir.model, cfg, harness) in ("vision", "image"):  # 过渡期双词汇，Task2 统一为 image
-            return ProcessResult(ir=ir)  # vision model: zero overhead passthrough
+    def process(
+        self, ir: IRRequest, cfg: ProxyConfig, harness: str | None = None, provider: str | None = None
+    ) -> ProcessResult:
+        if self.table.judge(ir.model, cfg, harness, provider) == "image":
+            return ProcessResult(ir=ir)  # image model: zero overhead passthrough
         result = ProcessResult(ir=ir)
         budget = self._budget(ir, cfg)
         if budget <= 1:
