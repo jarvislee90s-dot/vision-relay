@@ -130,3 +130,21 @@ def test_describe_anthropic_malformed_content_raises_parse():
     with pytest.raises(VLMError) as exc:
         client.describe(ImageBlock(base64="ZGF0YQ==", media_type="image/png"))
     assert exc.value.reason == "PARSE"
+
+
+# ---- Phase2 M1: describe_detail for vision log ----
+
+
+class TestDescribeDetail:
+    def test_detail_contains_prompt_and_raw(self, monkeypatch):
+        from vision_relay.config import VLMConfig
+        from vision_relay.ir import ImageBlock
+        from vision_relay.vlm import VLMClient
+
+        client = VLMClient(VLMConfig(api_key="k"))
+        monkeypatch.setattr(VLMClient, "_describe_chat", lambda self, image, prompt: "红色卡车")
+        detail = {}
+        desc = client.describe(ImageBlock(base64="aGk=", media_type="image/png"), detail=detail)
+        assert desc == "红色卡车"
+        assert "Describe the image" in detail["prompt"]
+        assert detail["raw"] == "红色卡车"

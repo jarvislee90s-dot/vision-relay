@@ -76,25 +76,33 @@ class VLMClient:
         return {"type": "image_url", "image_url": {"url": f"data:{img.media_type or 'image/png'};base64,{b64}"}}
 
     # -- calls ----------------------------------------------------------------
-    def describe(self, image: ImageBlock, question: str | None = None, tier: int = 1) -> str:
+    def describe(
+        self, image: ImageBlock, question: str | None = None, tier: int = 1, detail: dict | None = None
+    ) -> str:
         prompt = self._prompt(question, tier)
         if self._resolve_local_model() is not None:
             try:
-                return self._describe_local(image, prompt)
+                desc = self._describe_local(image, prompt)
             except (VLMError, httpx.HTTPError) as exc:
                 # 本地失败回退云端端点（fail-open）；本地探测结果已缓存，避免重复探测
                 self._local_model = None
                 raise VLMError("TRANSPORT", f"local ollama failed: {exc}") from exc
-        try:
-            if self.cfg.format == "anthropic":
-                return self._describe_anthropic(image, prompt)
-            return self._describe_chat(image, prompt)
-        except VLMError:
-            raise
-        except httpx.TimeoutException as exc:
-            raise VLMError("TIMEOUT", str(exc)) from exc
-        except httpx.HTTPError as exc:
-            raise VLMError("TRANSPORT", str(exc)) from exc
+        else:
+            try:
+                if self.cfg.format == "anthropic":
+                    desc = self._describe_anthropic(image, prompt)
+                else:
+                    desc = self._describe_chat(image, prompt)
+            except VLMError:
+                raise
+            except httpx.TimeoutException as exc:
+                raise VLMError("TIMEOUT", str(exc)) from exc
+            except httpx.HTTPError as exc:
+                raise VLMError("TRANSPORT", str(exc)) from exc
+        if detail is not None:
+            detail["prompt"] = prompt
+            detail["raw"] = desc  # 文本层原始返回（协议原文可后续增强，M1 记文本）
+        return desc
 
     def _describe_chat(self, image: ImageBlock, prompt: str) -> str:
         url = self.cfg.base_url.rstrip("/") + "/chat/completions"
