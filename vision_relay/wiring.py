@@ -7,7 +7,9 @@ import os
 import re
 from dataclasses import dataclass
 
+from . import snapshot
 from .config import RelayConfig, save_config
+from .tools import _TEMPLATES, TOOL_DOSSIERS
 
 BAK_SUFFIX = ".vision-relay.bak"
 LEGACY_BAK_SUFFIX = ".qwen-mm-proxy.bak"
@@ -111,7 +113,7 @@ def write_base_url(path: str, h: _Harness, url: str) -> bool:
 
 
 def wiring_backup_and_rewrite(cfg) -> list[str]:
-    """为启用的 harness 备份(不重复)并把 base_url 指到本代理；返回改动描述。"""
+    """为启用的 harness 备份(不重复)并把 base_url 指到本代理；接管前记录组合快照。"""
     proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
     home = HOME
     changed: list[str] = []
@@ -121,6 +123,24 @@ def wiring_backup_and_rewrite(cfg) -> list[str]:
         if not os.path.exists(p):
             changed.append(f"{name}: no config file, skipped")
             continue
+        original = read_base_url(p, h)
+        if original and classify_base_url(original, cfg.bind_port) != "ours":
+            # 接管前组合快照：base_url + key 位置 + 模型 + 第二跳归属（spec §5）
+            second_hop = classify_base_url(original, cfg.bind_port)
+            second_hop = second_hop if second_hop in TOOL_DOSSIERS else None
+            try:
+                model = _first_model(p)
+            except OSError:
+                model = ""
+            try:
+                snapshot.save(
+                    name,
+                    snapshot.Snapshot(
+                        base_url=original, key_ref=snapshot.key_ref_for(name), model=model, second_hop=second_hop
+                    ),
+                )
+            except OSError:
+                pass
         if _find_bak(p) is None:  # 已有备份（含旧后缀）不覆盖，防止把代理地址存成"原始值"
             try:
                 os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -132,6 +152,16 @@ def wiring_backup_and_rewrite(cfg) -> list[str]:
         ok = write_base_url(p, h, proxy_url)
         changed.append(f"{name}: base_url -> {proxy_url} ({'ok' if ok else 'FAIL'})")
     return changed
+
+
+def _first_model(path: str) -> str:
+    """从 harness 配置尽力抽一个模型名（快照记录用；失败返回空串）。"""
+    try:
+        txt = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return ""
+    m = re.search(r'(?i)(?:model|name)["\']?\s*[:=]\s*["\']([\w@.\-/]+)["\']', txt)
+    return m.group(1) if m else ""
 
 
 def wiring_restore(cfg) -> list[str]:
@@ -219,3 +249,68 @@ def wiring_report(cfg) -> list[dict]:
             }
         )
     return out
+
+
+def classify_base_url(url: str | None, bind_port: int) -> str:
+    """base_url 归属：ours | cc-switch | codex-plus | other | none（spec §5 观测信号①）。"""
+    if not url:
+        return "none"
+    if url == f"http://127.0.0.1:{bind_port}" or url.startswith(f"http://127.0.0.1:{bind_port}/"):
+        return "ours"
+    m = re.search(r":(\d+)", url)
+    if not m:
+        return "other"
+    port = int(m.group(1))
+    for name, d in TOOL_DOSSIERS.items():
+        if port == d.port:
+            return name
+    return "other"
+
+
+def wiring_restore_by_snapshot(cfg) -> list[str]:
+    """按接管组合快照还原（spec §5 修复：路由关-崩溃路径）。仅当前指向本代理时执行。"""
+    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
+    snaps = snapshot.load()
+    restored: list[str] = []
+    for name in cfg.routing.harnesses:
+        snap = snaps.get(name)
+        if snap is None:
+            continue
+        p = _path(HOME, name)
+        cur = read_base_url(p, HARNESS_CFG[name]) if os.path.exists(p) else None
+        if cur is None or (cur != proxy_url and not cur.startswith(proxy_url + "/")):
+            restored.append(f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原")
+            continue
+        ok = write_base_url(p, HARNESS_CFG[name], snap.base_url)
+        restored.append(f"{name}: restored to {snap.base_url} ({'ok' if ok else 'FAIL'})")
+    return restored
+
+
+def ensure_tool_relays(cfg, tool_states) -> list[str]:
+    """在线工具档案 → 自动 relay（name 去重不覆盖；离线不加；spec §5/§12）。
+    返回新增 relay name 列表。"""
+    added: list[str] = []
+    online_names = {s.name for s in tool_states if s.online}
+    for (tool_name, harness), tpl in _TEMPLATES.items():
+        if tool_name not in online_names:
+            continue
+        if harness not in cfg.routing.harnesses:
+            continue
+        name = _relay_name(tool_name, harness, tpl)
+        if any(r.name == name for r in cfg.relays):
+            continue
+        try:
+            cfg.relays.append(RelayConfig(name=name, **dict(tpl)))
+            if name not in cfg.routing.activated_relays:
+                cfg.routing.activated_relays.append(name)
+            added.append(name)
+        except Exception:  # 模板非法跳过（§12.3）
+            continue
+    save_config(cfg)
+    return added
+
+
+def _relay_name(tool_name: str, harness: str, tpl: dict) -> str:
+    if tool_name == "cc-switch":
+        return "cc-anthropic" if tpl["protocol"] == "anthropic" else "cc-codex"
+    return "codex-plus"
