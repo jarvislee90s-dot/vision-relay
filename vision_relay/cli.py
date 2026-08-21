@@ -103,8 +103,11 @@ def cmd_start(cfg) -> int:
         # 服务存活信号=端口或 pid 文件，若在写 pid 前对账会被判为"服务已死"，
         # 触发按快照还原（wiring_restore_by_snapshot），反而撤销刚完成的接线。
         try:
-            for a in reconcile_reconcile(cfg, trigger="start")["actions"]:
+            report = reconcile_reconcile(cfg, trigger="start")
+            for a in report["actions"]:
                 print(f"  [reconcile] {a}")
+            for n in report["needs_you"]:  # m-2: 需要用户处理的事项（如 direct-* 缺 key）不能静默丢弃
+                print(f"  [需要你] {n}")
         except TimeoutError as exc:
             # 拿不到写锁不该阻止起服：降级提示，后续 refresh/自动监听再收敛。
             print(f"  [reconcile] 配置写入忙，对账稍后重试: {exc}")
@@ -172,10 +175,13 @@ def cmd_start_intent(on: bool) -> None:
 
 
 def _spawn_detached(argv: list[str]) -> int:
-    """分离 spawn 完整命令（argv[0]=可执行文件）。返回 0 成功 / 1 失败。"""
+    """分离 spawn 完整命令（argv[0]=可执行文件）。返回 0 成功 / 1 失败。
+
+    分离进程无控制台：一律注入 VISION_RELAY_RESTART=1，让子进程 cmd_start 跳过
+    交互 onboarding（env 用拷贝注入，不污染当前进程环境）。"""
     import subprocess
 
-    kwargs: dict = {}
+    kwargs: dict = {"env": {**os.environ, "VISION_RELAY_RESTART": "1"}}
     if os.name == "nt":
         kwargs["creationflags"] = 0x00000008  # DETACHED_PROCESS
     else:
@@ -309,13 +315,20 @@ def _probe_target_for(cfg, harness: str, provider: str, tool_by_name: dict) -> t
 
 
 def cmd_events(cfg) -> int:
+    import json
+
     from .reconcile import tail_events
 
     for row in tail_events(50):
         import time as _t
 
         stamp = _t.strftime("%m-%d %H:%M:%S", _t.localtime(row.get("ts", 0)))
-        print(f"{stamp} [{row.get('type')}] {row.get('harness') or '-'} {row.get('detail') or row.get('name') or ''}")
+        # append_event 把 detail 扁平展开进事件行（没有 'detail' 键）：payload =
+        # ts/type/harness 之外的剩余字段（reclaim 的 from/to、absorb 的新地址、
+        # auto_fix 的 fix/ok、auto_annotate 的 model/result），行尾以 JSON 呈现。
+        payload = {k: v for k, v in row.items() if k not in ("ts", "type", "harness")}
+        detail = " " + json.dumps(payload, ensure_ascii=False) if payload else ""
+        print(f"{stamp} [{row.get('type')}] {row.get('harness') or '-'}{detail}")
     return 0
 
 

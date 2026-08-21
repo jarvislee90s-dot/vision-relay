@@ -577,3 +577,74 @@ class TestMainDispatchNewVerbs:
             lambda cfg, **kw: {"actions": [], "needs_you": [], "observed": {}},
         )
         assert cli.main(["refresh"]) == 0
+
+
+# ---- review fixes: M-1 events payload / m-1 detach env / m-2 start needs_you ----
+
+
+class TestEventsPayload:
+    def test_events_shows_payload_fields(self, tmp_path, monkeypatch, capsys):
+        """M-1: 事件 payload（from/to/ok 等）必须可见——spec §5「从什么改成什么」可查。
+
+        append_event 把 detail 扁平展开进事件行（没有 'detail' 键），渲染必须取
+        ts/type/harness 之外的剩余字段，否则 reclaim/absorb/auto_fix 的内容全丢。
+        """
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay import reconcile
+
+        reconcile.append_event("reclaim", "codex", {"from": "http://old:1", "to": "http://127.0.0.1:8787", "ok": True})
+        assert cli.cmd_events(None) == 0
+        out = capsys.readouterr().out
+        assert "http://old:1" in out
+        assert "http://127.0.0.1:8787" in out
+        assert "reclaim" in out and "codex" in out
+
+    def test_events_row_without_payload(self, tmp_path, monkeypatch, capsys):
+        """只有 ts/type/harness 的行不带尾坠 JSON，不打印 '{}'。"""
+        import json
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        tmp_path.joinpath("events.jsonl").write_text(
+            json.dumps({"ts": 1, "type": "reclaim", "harness": None}) + "\n", encoding="utf-8"
+        )
+        assert cli.cmd_events(None) == 0
+        assert "{}" not in capsys.readouterr().out
+
+
+class TestDetachSpawnEnv:
+    def test_spawn_detached_injects_restart_env(self, tmp_path, monkeypatch):
+        """m-1: 任何分离 spawn 都无控制台——一律注入 VISION_RELAY_RESTART=1 跳过交互向导。"""
+        import os
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        captured = {}
+
+        class _FakePopen:
+            def __init__(self, argv, **kwargs):
+                captured["argv"] = argv
+                captured["env"] = kwargs.get("env")
+
+        monkeypatch.setattr("subprocess.Popen", _FakePopen)
+        assert cli._spawn_detached(["C:/py/python.exe", "-m", "vision_relay", "start"]) == 0
+        assert captured["argv"][0] == "C:/py/python.exe"
+        assert captured["env"]["VISION_RELAY_RESTART"] == "1"
+        assert "VISION_RELAY_RESTART" not in os.environ  # 拷贝注入，不污染当前进程环境
+
+
+class TestStartReconcileNeedsYou:
+    def test_start_reconcile_surfaces_needs_you(self, tmp_path, monkeypatch, capsys):
+        """m-2: start 对账返回的 needs_you 不能静默丢弃（如 direct-* 缺 key 提醒）。"""
+        cfg = _fake_start_env(tmp_path, monkeypatch)
+
+        def _fake(cfg_, **kw):
+            return {
+                "actions": [{"type": "reclaim", "harness": "claude"}],
+                "needs_you": [{"type": "missing_key", "harness": "claude", "hint": "补 key"}],
+                "observed": {},
+            }
+
+        monkeypatch.setattr("vision_relay.cli.reconcile_reconcile", _fake)
+        assert cli.cmd_start(cfg) == 0
+        out = capsys.readouterr().out
+        assert "[需要你]" in out
+        assert "补 key" in out
