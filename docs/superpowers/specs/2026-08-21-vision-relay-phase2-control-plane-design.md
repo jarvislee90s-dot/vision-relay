@@ -131,7 +131,7 @@ flowchart LR
 
 ## 6. GUI 设计（8 页面，Tauri + React）
 
-交互 demo 存档：[gui-mockups/](gui-mockups/)（总览 v2、诊断与修复面板、模型能力批量确认、识图记录）。
+交互布局参考（定稿线框，浏览器直接打开，可点标签页切换）：[gui-mockups/index.html](gui-mockups/index.html)——全部 8 页 + 首次向导；诊断与修复为总览页弹层（同文件内附）。
 
 | 页面 | 承载需求 | 要点 |
 |---|---|---|
