@@ -39,6 +39,12 @@ class CapabilityTable:
         self._cache: dict[tuple, str] = {}
 
     def judge(self, model: str, cfg: ProxyConfig, harness: str | None = None, provider: str | None = None) -> str:
+        """判定 model 的输入模态（"image" | "text_only"），按 (harness, provider, model) 缓存。
+
+        契约：缓存绑定单一 cfg 快照——本表实例只对构造时的判定结果负责，
+        cfg（model_capabilities/probe_results/routing 等）后续变更不会反映到已缓存
+        判定；cfg 变更后应丢弃旧表、换新实例重建缓存。
+        """
         key = (harness, provider, model)
         if key in self._cache:
             return self._cache[key]

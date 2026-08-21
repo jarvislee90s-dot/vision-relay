@@ -86,6 +86,9 @@ class RelayConfig:
 
 CAPABILITY_VALUES = ("image", "text_only")
 
+# capability_sources 叶子合法来源（spec §5）：用户覆盖 / 实测探针 / 目录建议。
+CAPABILITY_SOURCE_VALUES = ("user", "probe", "catalog")
+
 
 @dataclass
 class VisionLogConfig:
@@ -134,9 +137,8 @@ class ProxyConfig:
         for hk, hv in vlh.items():
             if not isinstance(hv, dict):
                 raise ConfigError(f"vlm_by_harness[{hk}]: expected an object, got {type(hv).__name__}")
-        probe_results = data.get("probe_results", {})
-        if not isinstance(probe_results, dict):
-            raise ConfigError(f"probe_results: expected an object, got {type(probe_results).__name__}")
+        probe_results = _parse_probe_results(data.get("probe_results", {}))
+        capability_sources = _parse_capability_sources(data.get("capability_sources", {}))
         return cls(
             bind_host=server.get("bind_host", "127.0.0.1"),
             bind_port=int(server.get("bind_port", 8787)),
@@ -144,7 +146,7 @@ class ProxyConfig:
             vlm=VLMConfig(**{k: v for k, v in vlm.items() if k in VLMConfig.__dataclass_fields__}),
             vlm_by_harness=vlh,
             model_capabilities=caps,
-            capability_sources=data.get("capability_sources", {}),
+            capability_sources=capability_sources,
             probe_results=probe_results,
             vision_log=VisionLogConfig(
                 **{k: v for k, v in data.get("vision_log", {}).items() if k in VisionLogConfig.__dataclass_fields__}
@@ -182,6 +184,53 @@ def _normalize_cap(value: object) -> str:
     raise ConfigError(
         f"model_capabilities: value must be one of {CAPABILITY_VALUES} (or legacy 'vision'), got {value!r}"
     )
+
+
+def _parse_probe_results(raw: object) -> dict:
+    """probe_results 轻校验 {provider:{model:{result,ts}}}：
+    result 为遗留 'vision' 归一 'image'；其他非法值/形态 → ConfigError。"""
+    if not isinstance(raw, dict):
+        raise ConfigError(f"probe_results: expected an object, got {type(raw).__name__}")
+    out: dict[str, dict] = {}
+    for provider, models in raw.items():
+        if not isinstance(models, dict):
+            raise ConfigError(f"probe_results[{provider!r}]: expected an object, got {type(models).__name__}")
+        bucket: dict[str, dict] = {}
+        for model, entry in models.items():
+            if not isinstance(entry, dict):
+                raise ConfigError(f"probe_results[{provider!r}][{model!r}]: expected an object with result/ts")
+            result = entry.get("result")
+            if result == "vision":
+                result = "image"
+            if result not in CAPABILITY_VALUES:
+                raise ConfigError(
+                    f"probe_results[{provider!r}][{model!r}].result: must be one of {CAPABILITY_VALUES} "
+                    f"(or legacy 'vision'), got {result!r}"
+                )
+            bucket[model] = {"result": result, "ts": entry.get("ts")}
+        out[provider] = bucket
+    return out
+
+
+def _parse_capability_sources(raw: object) -> dict:
+    """capability_sources 轻校验：叶子值必须 ∈ {user, probe, catalog}，否则 ConfigError。"""
+    if not isinstance(raw, dict):
+        raise ConfigError(f"capability_sources: expected an object, got {type(raw).__name__}")
+    for harness, providers in raw.items():
+        if not isinstance(providers, dict):
+            raise ConfigError(f"capability_sources[{harness!r}]: expected an object, got {type(providers).__name__}")
+        for provider, models in providers.items():
+            if not isinstance(models, dict):
+                raise ConfigError(
+                    f"capability_sources[{harness!r}][{provider!r}]: expected an object, got {type(models).__name__}"
+                )
+            for model, src in models.items():
+                if src not in CAPABILITY_SOURCE_VALUES:
+                    raise ConfigError(
+                        f"capability_sources[{harness!r}][{provider!r}][{model!r}]: must be one of "
+                        f"{CAPABILITY_SOURCE_VALUES}, got {src!r}"
+                    )
+    return raw
 
 
 def _parse_capabilities(raw: dict) -> tuple[dict, bool]:

@@ -145,3 +145,25 @@ class TestTripleResolution:
         cfg = _cfg(probe={"a": {"m": {"result": "image", "ts": 1}}})
         assert t.judge("m", cfg, "claude", "a") == "image"
         assert t.judge("m", cfg, "claude", "b") == "text_only"  # 同名模型不同 provider 不同结果
+
+
+class TestLadderThreeStoredNonUser:
+    """阶梯3回归钉：来源为 probe|catalog 的存储值本身参与判定（先于内置名单与开关）。"""
+
+    def test_catalog_sourced_stored_value_resolves(self):
+        # 无探针、无内置命中：catalog 来源的存储值直接给出结论（而非落 unknown_default）
+        cfg = _cfg(caps={"claude": {"p": {"mystery": "image"}}})
+        cfg.capability_sources = {"claude": {"p": {"mystery": "catalog"}}}
+        assert CapabilityTable().judge("mystery", cfg, "claude", "p") == "image"
+
+    def test_probe_sourced_stored_value_resolves(self):
+        # source="probe" 变体：阶梯3同样生效（守护钉；不绿说明阶梯3有 bug）
+        cfg = _cfg(caps={"claude": {"p": {"mystery": "image"}}})
+        cfg.capability_sources = {"claude": {"p": {"mystery": "probe"}}}
+        assert CapabilityTable().judge("mystery", cfg, "claude", "p") == "image"
+
+    def test_catalog_sourced_stored_beats_builtin(self):
+        # 阶梯3先于内置名单：catalog 写入的 text_only 压过 openai/* 的内置 image
+        cfg = _cfg(caps={"claude": {"p": {"openai/gpt-x": "text_only"}}})
+        cfg.capability_sources = {"claude": {"p": {"openai/gpt-x": "catalog"}}}
+        assert CapabilityTable().judge("openai/gpt-x", cfg, "claude", "p") == "text_only"

@@ -3,21 +3,24 @@
 探针=红色 8×8 PNG + "这是什么颜色"。三档判定：
   报错且报文含模态语义 → text_only（主力信号：不识图直接报错）
   200 且答对颜色       → image（真读到图）
-  200 但答错/没答      → text_only（静默吞图，防误判）
-  401/403/404/5xx/超时/解析失败 → None（不下结论，回落目录建议）
+  200 但答错颜色       → text_only（静默吞图，防误判）
+  200 但没答出来/解析失败 → None（含糊，不下结论）
+  401/403/404/5xx/超时/连接失败 → None（不下结论，回落目录建议）
 结果由调用方按 (provider, model) 写入 probe_results 缓存。
 """
 
 from __future__ import annotations
 
 import base64
+import re
 import struct
 import zlib
 
 import httpx
 
 _QUESTION = "这张图片是什么颜色？只回答一个颜色词（例如：红色）。"
-_COLOR_HINTS = ("红", "red")
+# 中文颜色词按子串命中；英文必须整词（\bred\b）——hundred/credit 含子串 red 但不是颜色词。
+_RE_RED = re.compile(r"\bred\b")
 
 
 def red_png() -> bytes:
@@ -41,12 +44,16 @@ def _data_url() -> str:
 _MODALITY_ERROR_HINTS = ("image", "vision", "multimodal", "modalit", "图片", "图像", "视觉")
 
 
+def _mentions_color(low: str) -> bool:
+    """颜色词命中：中文 "红" 子串；英文 "red" 整词（词边界，防 hundred/credit 误判）。"""
+    return "红" in low or bool(_RE_RED.search(low))
+
+
 def _verdict(status: int, answer: str | None) -> str | None:
     if status == 200:
         if answer is None:
             return None  # 解析失败=含糊
-        low = answer.lower()
-        return "image" if any(h in low for h in _COLOR_HINTS) else "text_only"
+        return "image" if _mentions_color(answer.lower()) else "text_only"
     if status in (401, 403, 404) or status >= 500:
         return None
     low = (answer or "").lower()
@@ -130,7 +137,10 @@ def _extract(protocol: str, data) -> str | None:
 def probe_modality(base_url: str, api_key: str, model: str, protocol: str, timeout: float = 30.0) -> str | None:
     """发一次最小带图请求并判定。返回 'image' | 'text_only' | None(不下结论)。"""
     if protocol == "anthropic":
-        url = base_url.rstrip("/") + "/v1/messages"
+        root = base_url.rstrip("/")
+        if root.endswith("/v1"):  # base 已含版本段时不重复拼接（防 /v1/v1/messages）
+            root = root[: -len("/v1")]
+        url = root + "/v1/messages"
         body = _anthropic_body(model)
         headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"} if api_key else {}
     elif protocol == "responses":
@@ -143,7 +153,7 @@ def probe_modality(base_url: str, api_key: str, model: str, protocol: str, timeo
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         resp = httpx.post(url, json=body, headers=headers, timeout=timeout, trust_env=False)
-    except httpx.HTTPError:
+    except (httpx.HTTPError, httpx.InvalidURL):  # InvalidURL 不是 HTTPError 子类，需单列
         return None
     try:
         answer = _extract(protocol, resp.json())
@@ -155,8 +165,7 @@ def probe_modality(base_url: str, api_key: str, model: str, protocol: str, timeo
 
 
 def _extract_from_text(protocol: str, text: str) -> str | None:
-    """JSON 解析失败时退而做一次宽松文本嗅探（找颜色词）。"""
-    low = text.lower()
-    if any(h in low for h in _COLOR_HINTS):
+    """JSON 解析失败时退而做一次宽松文本嗅探（找颜色词；词边界见 _mentions_color）。"""
+    if _mentions_color(text.lower()):
         return "红"
     return None

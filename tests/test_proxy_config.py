@@ -258,6 +258,26 @@ class TestTriStateCapabilities:
         cfg = ProxyConfig.from_dict({"probe_results": {"prov": {"m": {"result": "image", "ts": 1}}}})
         assert cfg.probe_results["prov"]["m"]["result"] == "image"
 
+    def test_probe_results_legacy_vision_normalized(self):
+        cfg = ProxyConfig.from_dict({"probe_results": {"prov": {"m": {"result": "vision", "ts": 1}}}})
+        assert cfg.probe_results["prov"]["m"]["result"] == "image"
+
+    def test_probe_results_invalid_result_rejected(self):
+        with pytest.raises(ConfigError, match="probe_results"):
+            ProxyConfig.from_dict({"probe_results": {"prov": {"m": {"result": "movie", "ts": 1}}}})
+
+    def test_probe_results_non_object_entry_rejected(self):
+        with pytest.raises(ConfigError, match="probe_results"):
+            ProxyConfig.from_dict({"probe_results": {"prov": {"m": "image"}}})
+
+    def test_sources_invalid_leaf_rejected(self):
+        with pytest.raises(ConfigError, match="capability_sources"):
+            ProxyConfig.from_dict({"capability_sources": {"claude": {"prov": {"m1": "guess"}}}})
+
+    def test_sources_non_object_levels_rejected(self):
+        with pytest.raises(ConfigError, match="capability_sources"):
+            ProxyConfig.from_dict({"capability_sources": {"claude": "nope"}})
+
     def test_flat_migration_idempotent_across_save_load(self):
         """I1：load→save→load 两轮后形状稳定（global 组吸收为固定点，不再二次套 'legacy'）。"""
         cfg = ProxyConfig.from_dict({"model_capabilities": {"deepseek/*": "text_only"}})

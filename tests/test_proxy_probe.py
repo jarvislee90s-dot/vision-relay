@@ -43,6 +43,68 @@ class TestVerdict:
         assert self._classify(500, "oops") is None
         assert self._classify(200, None) is None  # 解析失败=含糊
 
+    def test_english_substring_words_not_misjudged_image(self):
+        # "hundred"/"credit" 含子串 red 但不是颜色词 → 不得误判 image（词边界）
+        assert self._classify(200, "hundred") == "text_only"
+        assert self._classify(200, "credit balance: 0") == "text_only"
+
+    def test_chinese_substring_and_english_word_still_match(self):
+        assert self._classify(200, "深红色") == "image"  # 中文保持子串
+        assert self._classify(200, "It is RED") == "image"  # 英文整词（大小写不敏感）
+
+
+class TestTextSniffWordBoundary:
+    def test_hundred_credit_not_sniffed_as_red(self):
+        assert probe._extract_from_text("chat", "total: hundred credits") is None
+
+    def test_standalone_red_sniffed(self):
+        assert probe._extract_from_text("chat", 'the color is "red".') == "红"  # 引号/句读不破坏词边界
+        assert probe._extract_from_text("chat", "红色") == "红"
+
+
+class TestAnthropicUrl:
+    def _capture_url(self, monkeypatch, base_url):
+        seen = {}
+
+        class _Resp:
+            status_code = 401
+
+            def json(self):
+                return {}
+
+            text = ""
+
+        def fake_post(url, **kw):
+            seen["url"] = url
+            return _Resp()
+
+        monkeypatch.setattr(probe.httpx, "post", fake_post)
+        probe.probe_modality(base_url, "sk", "m", "anthropic")
+        return seen["url"]
+
+    def test_v1_suffix_not_duplicated(self, monkeypatch):
+        url = self._capture_url(monkeypatch, "https://x/v1")
+        assert url.endswith("/v1/messages")
+        assert "/v1/v1" not in url
+
+    def test_trailing_slash_v1_not_duplicated(self, monkeypatch):
+        url = self._capture_url(monkeypatch, "https://x/v1/")
+        assert url.endswith("/v1/messages")
+        assert "/v1/v1" not in url
+
+    def test_bare_base_still_appends_v1(self, monkeypatch):
+        url = self._capture_url(monkeypatch, "https://x")
+        assert url == "https://x/v1/messages"
+
+
+class TestInvalidURLGuard:
+    def test_invalid_url_returns_none_not_raise(self, monkeypatch):
+        def fake_post(url, **kw):
+            raise probe.httpx.InvalidURL("bad url")
+
+        monkeypatch.setattr(probe.httpx, "post", fake_post)
+        assert probe.probe_modality("https://x", "", "m", "chat") is None
+
 
 class TestProbeCall:
     def test_chat_request_shape_and_result_cached(self, tmp_path, monkeypatch):
