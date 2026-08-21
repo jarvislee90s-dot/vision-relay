@@ -85,8 +85,8 @@
   <div class="pin"><b class="n">①</b><b>自动决策原则（本设计的骨架）</b>：每个面向用户的交互过三问——能从已记录状态/规则推导 → <b>系统自动做，零感知</b>；推导不出但有安全默认 → <b>默认自动 + 被动通知可改</b>；需要用户资源或真实意图 → <b>才暴露给用户</b>。铁律：自动化之后可见性补位——每个自动动作在总览「自动处理」区与事件日志留痕，用户不决策但能核查。</div>
   <div class="pin"><b class="n">②</b><b>用户决策点只有 6 个</b>：①路由总开关 ②首次填 VLM（key/模型/端点，账号资源）②b 首次过目模型能力（实测结果已就绪，改猜错的即可，可跳过）③缺 key 时补填（被动提示后才出现）④关闭 GUI 时选「仅关界面 / 连服务一起关」（问一次并记住）⑤停用某条转发（稀有，藏在详情）。其余全部自动或被动。</div>
   <div class="pin"><b class="n">③</b><b>看编分离</b>：监控类页面只看 + 少数动作；编辑集中在「设置」与「模型能力」。导航 5 页里识图记录 / 事件日志是纯看板——看不需要决策，可视化不是负担。总览的转发与工具信息并入每张 harness 卡的「详情」抽屉（快照 / relay / 停用），不设独立区块。</div>
-  <div class="pin"><b class="n">④</b><b>模型能力 = (harness, provider, 模型) 三元组</b>：同一模型名经不同 provider 能力可能不同。provider 自动来自工具档案（两层 = 路由工具激活供应商）/ 接管快照（一层 = 直连上游），用户不用填。判定优先级：<b>用户覆盖 > 实测探测 > 能力目录 > 未知默认纯文本</b>。</div>
-  <div class="pin"><b class="n">⑤</b><b>模态探测（可验证探针）</b>：对每个 (provider, 模型) 发一次最小带图请求——图里藏一个字，问"图里是什么"。三档判定：<b>报错</b>（不支持图片输入）→ 纯文本；<b>答对</b> → 支持图片；<b>返回 200 但答错</b>（静默吞图）→ 纯文本。超时 / 401 / 404 / 5xx 不下结论，回落能力目录（models.dev 风格静态目录，provider+model → 模态/上下文/推理档位）。成本每模型一次最小调用，结果按 (provider, 模型) 缓存、可重测；视频/音频模态探测留三期。</div>
+  <div class="pin"><b class="n">④</b><b>模型能力 = (harness, provider, 模型) 三元组</b>：同一模型名经不同 provider 能力可能不同。provider 自动来自工具档案（两层 = 路由工具激活供应商）/ 接管快照（一层 = 直连上游），用户不用填。记录只存<b>输入模态一个字段、三态</b>（纯文本 / 支持图片 / <b>未标注</b>）；取值优先级：<b>用户覆盖 > 实测探测 > 目录建议 > 未标注（空）</b>，上下文长度/推理档位不采集。</div>
+  <div class="pin"><b class="n">⑤</b><b>模态探测（可验证探针）</b>：对每个 (provider, 模型) 发一次最小带图请求——图里藏一个字，问"图里是什么"。三档判定：<b>报错</b>（不支持图片输入）→ 纯文本；<b>答对</b> → 支持图片；<b>返回 200 但答错</b>（静默吞图）→ 纯文本。超时 / 401 / 404 / 5xx 不下结论，回落目录建议（models.dev 风格外部目录，<b>只取其输入模态字段</b>）。成本每模型一次最小调用，结果缓存可重测。<b>空状态（未标注）的运行行为 = 设置里的全局开关</b>：默认「按纯文本走 VLM 转述」=安全侧；可切「直通」省 token 但真纯文本会报错——开关两侧的代价就是界面文案。视频/音频模态探测留三期。</div>
   <div class="pin"><b class="n">⑥</b><b>其他定稿</b>：保存语义统一（输入类控件一律页底统一保存，仅按钮类动作即时）；语言选择可见（跟随系统/中文/English）；托盘纯文字菜单（状态行 · 打开主界面 · 路由开/关 · 诊断报告 · 退出停止服务）；模态术语统一「图片 / 纯文本」。</div>
 </section>
 
@@ -215,7 +215,7 @@
   </div>
   <div class="main">
     <div class="alert-ok row between">
-      <span>✅ 按 <b>(harness · provider · 模型)</b> 三元组标注；<b>「实测」列 = 探测结果</b>（可验证探针：图里藏字问出来，防静默吞图），只在猜错时改。</span>
+      <span>✅ 按 <b>(harness · provider · 模型)</b> 三元组标注，记录只有输入模态一个字段（纯文本 / 支持图片 / <b>未标注</b>）；<b>「实测」列 = 探测结果</b>（可验证探针，防静默吞图），只在猜错时改。未标注模型的运行行为由设置里的开关决定（默认走 VLM 转述）。</span>
       <span><button class="btn">🔍 探测全部未测模型</button> <button class="btn">⬇ 从上游拉取模型清单（可选）</button></span>
     </div>
     <div class="card" style="padding:0;">
@@ -224,8 +224,9 @@
         <tr><td rowspan="3">Claude Code</td><td>bigmodel</td><td>glm-5-air <span class="tag warn">🆕</span></td><td><span class="cap text">纯文本</span></td><td class="dim small">实测</td><td><span class="tag err" style="background:#fef2f2;color:#b91c1c;">✗ 报错：不支持图片输入</span></td><td><a href="#">改为支持图片</a> · <a href="#" class="small">重测</a></td></tr>
         <tr><td>bigmodel</td><td>glm-5-plus <span class="tag warn">🆕</span></td><td><span class="cap image">支持图片</span></td><td class="dim small">实测</td><td><span class="tag ok">✓ 答对：图里的字是"访"</span></td><td><a href="#">改为纯文本</a> · <a href="#" class="small">重测</a></td></tr>
         <tr><td>deepseek</td><td>deepseek-v4-flash</td><td><span class="cap text">纯文本</span></td><td class="dim small">实测</td><td><span class="tag err" style="background:#fef2f2;color:#b91c1c;">✗ 答错（未读图）</span></td><td><a href="#">改为支持图片</a> · <a href="#" class="small">重测</a></td></tr>
-        <tr><td>Codex</td><td>deepseek</td><td>kimi-k2.7-code</td><td><span class="cap image">支持图片</span></td><td class="dim small">能力目录</td><td><span class="tag gray">未测（key 未配）</span></td><td><a href="#">改为纯文本</a> · <a href="#">🔍 探测</a></td></tr>
+        <tr><td>Codex</td><td>deepseek</td><td>kimi-k2.7-code</td><td><span class="cap image">支持图片</span></td><td class="dim small">目录建议</td><td><span class="tag gray">未测（key 未配）</span></td><td><a href="#">改为纯文本</a> · <a href="#">🔍 探测</a></td></tr>
         <tr><td>Qwen Code</td><td>dashscope</td><td>qwen3-coder</td><td><span class="cap text">纯文本</span></td><td class="dim small">实测</td><td><span class="tag err" style="background:#fef2f2;color:#b91c1c;">✗ 报错</span></td><td><a href="#">改为支持图片</a> · <a href="#" class="small">重测</a></td></tr>
+        <tr style="background:#f9fafb;"><td>Codex</td><td>deepseek</td><td>glm-5-air</td><td><span class="tag gray">未标注（空）</span></td><td class="dim small">无（探测含糊：5xx）</td><td><span class="tag gray">不下结论</span></td><td><a href="#">标为纯文本</a> · <a href="#">标为支持图片</a> · <a href="#">重测</a> <span class="dim small">（运行时按设置开关：默认走识图）</span></td></tr>
       </table>
     </div>
     <div class="row" style="justify-content:flex-end;"><button class="btn primary">保存修改</button></div>
@@ -356,6 +357,7 @@
       <table style="margin-top:8px;">
         <tr><td class="dim" style="width:130px;">监听地址</td><td>127.0.0.1:8787（默认）</td></tr>
         <tr><td class="dim">管理的 harness</td><td>自动检测：Claude Code ✓ · Codex ✓ · Qwen Code ✓</td></tr>
+        <tr><td class="dim">未标注模型默认</td><td><label><input type="radio" name="u" checked> 按纯文本走 VLM 转述（安全，默认）</label>　<label><input type="radio" name="u"> 直通（省 token，真纯文本会报错）</label></td></tr>
         <tr><td class="dim">自动对账</td><td>开启 · 每 5 秒 + 文件变更通知（默认）</td></tr>
         <tr><td class="dim">识图留痕</td><td>记录 · 留存 7 天 · 仅本机（默认）</td></tr>
       </table>
