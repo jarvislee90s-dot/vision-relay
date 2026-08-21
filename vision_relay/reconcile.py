@@ -60,9 +60,12 @@ def _events_path() -> str:
 
 def append_event(type_: str, harness: str | None, detail: dict) -> None:
     row = {"ts": time.time(), "type": type_, "harness": harness, **detail}
-    os.makedirs(config_dir(), exist_ok=True)
-    with open(_events_path(), "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    try:
+        os.makedirs(config_dir(), exist_ok=True)
+        with open(_events_path(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # 事件是可观测通道，不 gate 收敛
 
 
 def tail_events(n: int = 50) -> list[dict]:
@@ -120,6 +123,8 @@ def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
+    except PermissionError:
+        return True  # Unix EPERM＝进程存在但属他人＝活着（须排在 OSError 之前）
     except OSError:
         return False
 
@@ -132,11 +137,13 @@ def observe(cfg: ProxyConfig, tool_states: list | None = None) -> dict:
     harness_rows = {}
     for name in cfg.routing.harnesses:
         p = wiring._path(HOME, name)
-        cur = wiring.read_base_url(p, wiring.HARNESS_CFG[name]) if os.path.exists(p) else None
+        exists = os.path.exists(p)
+        cur = wiring.read_base_url(p, wiring.HARNESS_CFG[name]) if exists else None
         harness_rows[name] = {
             "base_url": cur,
             "ownership": wiring.classify_base_url(cur, cfg.bind_port),
             "has_snapshot": name in snapshot.load(),
+            "config_exists": exists,  # 区分"文件不存在"与"文件在但读不到 base_url"（后者仍走 reclaim）
         }
     return {
         "service_alive": _service_alive(cfg),
@@ -172,7 +179,11 @@ def _reclaim(cfg: ProxyConfig, harness: str, cur: str) -> bool:
 
 
 def _absorb(cfg: ProxyConfig, harness: str, new_base: str) -> None:
-    """吸收新上游（spec §5）：接管回本代理 + 新地址成为直连 relay + 快照更新。"""
+    """吸收新上游（spec §5）：新地址先落盘为直连 relay，再接管回本代理 + 快照更新。
+
+    顺序即失败语义：relay 先存、base_url 后接管——write_base_url 失败时下轮
+    owner 仍是 other，会再次 absorb 直至收敛；绝不出现"已接管但 relay 永缺"。
+    """
     from . import wiring
 
     snap = snapshot.Snapshot(base_url=new_base, key_ref=snapshot.key_ref_for(harness), model="", second_hop=None)
@@ -181,25 +192,44 @@ def _absorb(cfg: ProxyConfig, harness: str, new_base: str) -> None:
     cfg.relays = [r for r in cfg.relays if r.name != name]
     proto = {"claude": "anthropic", "codex": "responses", "qwen-code": "chat"}[harness]
     cfg.relays.append(RelayConfig(name=name, protocol=proto, base_url=new_base, models=["*"]))
-    wiring.write_base_url(wiring._path(HOME, harness), wiring.HARNESS_CFG[harness], _expected_base(cfg))
-    append_event("absorb", harness, {"new_base_url": new_base, "needs_key": True})
+    save_config(cfg)  # relay 先落盘；此步失败则中止在接管之前（下轮重试整个 absorb）
+    ok = wiring.write_base_url(wiring._path(HOME, harness), wiring.HARNESS_CFG[harness], _expected_base(cfg))
+    append_event("absorb", harness, {"new_base_url": new_base, "needs_key": True, "ok": ok})
+
+
+def _wait_port_online(port: int, timeout_s: float = 2.0, interval_s: float = 0.2) -> bool:
+    """短轮询本机端口直到通或超时（重启诚实化用；测试可 monkeypatch）。"""
+    import socket
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        with socket.socket() as s:
+            s.settimeout(0.3)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval_s)
 
 
 def _restart_service(cfg: ProxyConfig) -> bool:
-    """分离进程重启服务（崩溃前路由开 -> 自动重启保持接管，spec §5 修复）。"""
+    """分离进程重启服务（崩溃前路由开 -> 自动重启保持接管，spec §5 修复）。
+
+    spawn 成功 ≠ 服务起来了（stale pid 等场景会谎报）：短轮询端口后如实返回。
+    """
     import subprocess
     import sys
 
     kwargs: dict = {}
     if os.name == "nt":
-        kwargs["creationflags"] = 0x00000008 | 0x08000000  # DETACHED_PROCESS | CREATE_NO_WINDOW
+        kwargs["creationflags"] = 0x00000008  # DETACHED_PROCESS（CREATE_NO_WINDOW 与其互斥，只留一个）
     else:
         kwargs["start_new_session"] = True
     try:
         subprocess.Popen([sys.executable, "-m", "vision_relay", "start"], **kwargs)
-        return True
     except OSError:
         return False
+    return _wait_port_online(cfg.bind_port)
 
 
 def reconcile(
@@ -209,7 +239,9 @@ def reconcile(
     expected_wired: set[str] | None = None,
 ) -> dict:
     """执行对账。expected_wired：本轮应保持接管的 harness 集合（None=全部启用的）。
-    返回 {"actions": [...], "needs_you": [...], "observed": {...}}（GUI/CLI 共用）。"""
+    返回 {"actions": [...], "needs_you": [...], "observed": {...}}（GUI/CLI 共用）。
+    注意：config_lock 默认 30s 拿不到锁时，TimeoutError 会原样抛给调用方。
+    """
     from . import wiring
 
     tool_states = tool_states if tool_states is not None else tools.probe_tools()
@@ -236,6 +268,11 @@ def reconcile(
                     if owner == "other" and cur:
                         _absorb(cfg, name, cur)
                         actions.append({"type": "absorb", "harness": name, "new_base_url": cur})
+                    elif not row["config_exists"]:
+                        # 配置文件本身不存在：reclaim 必败（写入无从谈起），交给人
+                        needs_you.append(
+                            {"type": "no_config_file", "harness": name, "hint": "无 harness 配置文件，需手动创建"}
+                        )
                     else:
                         if _reclaim(cfg, name, cur or ""):
                             actions.append({"type": "reclaim", "harness": name, "from": cur})
