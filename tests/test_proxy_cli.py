@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from vision_relay import cli
 from vision_relay.cli import parse_args
 
 # ── parse_args tests ────────────────────────────────────────────────────────
@@ -141,7 +142,11 @@ def test_cmd_start_already_running(tmp_path):
     pid_file = tmp_path / "proxy.pid"
     pid_file.write_text("42")
     cfg = ProxyConfig()
-    with patch("vision_relay.cli._pid_path", return_value=str(pid_file)):
+    # L1 后守卫查 pid 存活性：monkeypatch 为"活着"保证跨机器确定性（pid 42 是否真实存在因机而异）
+    with (
+        patch("vision_relay.cli._pid_path", return_value=str(pid_file)),
+        patch("vision_relay.cli._pid_running", return_value=True),
+    ):
         assert cmd_start(cfg) == 1
 
 
@@ -209,3 +214,366 @@ def test_version_flag(capsys):
         parse_args(["--version"])
     assert exc.value.code == 0
     assert __version__ in capsys.readouterr().out
+
+
+# ---- Phase2 M1: lifecycle intent + new verbs (json tested in Task 14) ----
+# 注：任务稿替身 `lambda: x.setdefault(...) or <fallback>` 有 or-惯用法缺陷（记录值
+# 为真时返回记录值而非回退值），这里改为显式记录+返回；断言与任务稿逐字一致。
+
+
+class TestIntentState:
+    def test_start_sets_routing_on_stop_clears(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay import reconcile
+
+        cli.cmd_start_intent(True)
+        assert reconcile.get_routing_on() is True
+        cli.cmd_start_intent(False)
+        assert reconcile.get_routing_on() is False
+
+
+class TestDetachStart:
+    def test_detach_spawns_child_and_returns(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        spawned = {}
+
+        def _fake_spawn(argv):
+            spawned["argv"] = argv
+            return 0
+
+        monkeypatch.setattr(cli, "_spawn_detached", _fake_spawn)
+        rc = cli.cmd_start_detach(None)
+        assert rc == 0
+        assert spawned["argv"][1:] == ["-m", "vision_relay", "start"]
+
+
+class TestRefreshVerb:
+    def test_refresh_calls_reconcile(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        called = {}
+
+        def _fake_reconcile(cfg, **kw):
+            called["ok"] = True
+            return {"actions": [], "needs_you": [], "observed": {}}
+
+        monkeypatch.setattr("vision_relay.cli.reconcile_reconcile", _fake_reconcile)
+        rc = cli.cmd_refresh(ProxyConfig())
+        assert rc == 0 and called.get("ok") is True
+
+    def test_refresh_warns_on_failed_auto_fix(self, tmp_path, monkeypatch, capsys):
+        """L2: auto_fix 失败的 action 必须有显式警告行，不能混进普通日志。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        def _fake_reconcile(cfg, **kw):
+            return {
+                "actions": [
+                    {"type": "auto_fix", "harness": "claude", "fix": "restart", "ok": False},
+                    {"type": "reclaim", "harness": "codex", "from": ":15721"},
+                ],
+                "needs_you": [],
+                "observed": {},
+            }
+
+        monkeypatch.setattr("vision_relay.cli.reconcile_reconcile", _fake_reconcile)
+        assert cli.cmd_refresh(ProxyConfig()) == 0
+        out = capsys.readouterr().out
+        assert "自动修复失败" in out
+        assert "[reconcile]" in out  # 正常 action 照常打印
+
+    def test_refresh_timeout_human_friendly(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        def _boom(cfg, **kw):
+            raise TimeoutError("config_lock: timeout after 30s")
+
+        monkeypatch.setattr("vision_relay.cli.reconcile_reconcile", _boom)
+        rc = cli.cmd_refresh(ProxyConfig())
+        assert rc == 1
+        assert "刷新失败" in capsys.readouterr().out
+
+
+class TestDiagnoseVerb:
+    @staticmethod
+    def _obs():
+        return {
+            "service_alive": False,
+            "routing_on": True,
+            "tools": [
+                {
+                    "name": "cc-switch",
+                    "port": 15721,
+                    "online": True,
+                    "active_provider": "prov-x",
+                    "provider_base_url": "http://up",
+                }
+            ],
+            "harnesses": {"claude": {"base_url": "http://127.0.0.1:8787", "ownership": "ours"}},
+        }
+
+    def test_diagnose_report_and_failed_auto_fix_warning(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        def _fake_reconcile(cfg, **kw):
+            return {
+                "actions": [{"type": "auto_fix", "harness": "claude", "fix": "restart", "ok": False}],
+                "needs_you": [{"type": "unresolvable", "harness": "claude", "hint": "快照缺失"}],
+                "observed": self._obs(),
+            }
+
+        monkeypatch.setattr("vision_relay.cli.reconcile_reconcile", _fake_reconcile)
+        rc = cli.cmd_diagnose(ProxyConfig())
+        assert rc == 1  # needs_you 非空 -> 1
+        out = capsys.readouterr().out
+        assert "自动修复失败" in out
+        assert "需要你" in out
+        assert "未运行" in out and "路由意图: 开" in out
+        assert "cc-switch" in out and "在线" in out and "prov-x" in out
+        assert "base_url=http://127.0.0.1:8787 [ours]" in out
+
+    def test_diagnose_clean_when_no_needs_you(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        def _fake_reconcile(cfg, **kw):
+            return {"actions": [], "needs_you": [], "observed": self._obs()}
+
+        monkeypatch.setattr("vision_relay.cli.reconcile_reconcile", _fake_reconcile)
+        assert cli.cmd_diagnose(ProxyConfig()) == 0
+
+    def test_diagnose_timeout_human_friendly(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        def _boom(cfg, **kw):
+            raise TimeoutError("config_lock: timeout after 30s")
+
+        monkeypatch.setattr("vision_relay.cli.reconcile_reconcile", _boom)
+        assert cli.cmd_diagnose(ProxyConfig()) == 1
+        assert "诊断失败" in capsys.readouterr().out
+
+
+# ---- cmd_start 生命周期加固：L1 stale-pid / L3 restart-skip / intent / start 对账 ----
+
+
+def _fake_start_env(tmp_path, monkeypatch):
+    """cmd_start 全链路替身：onboarding/wiring/reconcile/run_server 全 fake，隔离真实 HOME。"""
+    from vision_relay import wiring
+    from vision_relay.config import ProxyConfig
+
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr("vision_relay.onboarding.run_onboarding", lambda cfg, *a, **k: True)
+    monkeypatch.setattr(wiring, "relays_activate", lambda c: ["relay activated"])
+    monkeypatch.setattr(wiring, "wiring_backup_and_rewrite", lambda c: ["wire rewritten"])
+    monkeypatch.setattr(
+        "vision_relay.cli.reconcile_reconcile",
+        lambda cfg, **kw: {"actions": [], "needs_you": [], "observed": {}},
+    )
+
+    class _FakeServer:
+        def serve_forever(self):
+            pass
+
+    monkeypatch.setattr("vision_relay.server.run_server", lambda cfg: _FakeServer())
+    return ProxyConfig()
+
+
+class TestStartLifecycle:
+    def test_start_clears_stale_pid_and_starts(self, tmp_path, monkeypatch):
+        """L1: pid 文件是硬崩溃残留（大 pid 不存在）-> 清掉继续启动，而非拒绝。"""
+        cfg = _fake_start_env(tmp_path, monkeypatch)
+        (tmp_path / "proxy.pid").write_text("999999999")
+        assert cli.cmd_start(cfg) == 0
+        assert not (tmp_path / "proxy.pid").exists()  # 正常收尾清理
+        from vision_relay import reconcile
+
+        assert reconcile.get_routing_on() is True  # start 记录路由意图
+
+    def test_start_refuses_when_pid_alive(self, tmp_path, monkeypatch, capsys):
+        cfg = _fake_start_env(tmp_path, monkeypatch)
+        (tmp_path / "proxy.pid").write_text("999999999")
+        monkeypatch.setattr(cli, "_pid_running", lambda pid: True)
+        assert cli.cmd_start(cfg) == 1
+        assert "already running" in capsys.readouterr().out
+        assert (tmp_path / "proxy.pid").exists()  # 活着的 pid 文件不动
+
+    def test_start_skips_onboarding_when_restart_env(self, tmp_path, monkeypatch, capsys):
+        """L3: 分离重启子进程（VISION_RELAY_RESTART=1）无控制台，绝不能进交互向导。"""
+        cfg = _fake_start_env(tmp_path, monkeypatch)
+        monkeypatch.setenv("VISION_RELAY_RESTART", "1")
+        from vision_relay import onboarding
+
+        seen = []
+        monkeypatch.setattr(onboarding, "run_onboarding", lambda cfg, *a, **k: seen.append(1) or True)
+        assert cli.cmd_start(cfg) == 0
+        assert seen == []
+        assert "跳过" in capsys.readouterr().out
+
+    def test_start_invokes_reconcile(self, tmp_path, monkeypatch):
+        cfg = _fake_start_env(tmp_path, monkeypatch)
+        calls = {}
+
+        def _fake(cfg_, **kw):
+            calls["trigger"] = kw.get("trigger")
+            return {"actions": [{"type": "reclaim", "harness": "claude"}], "needs_you": [], "observed": {}}
+
+        monkeypatch.setattr("vision_relay.cli.reconcile_reconcile", _fake)
+        assert cli.cmd_start(cfg) == 0
+        assert calls["trigger"] == "start"
+
+    def test_start_survives_reconcile_timeout(self, tmp_path, monkeypatch, capsys):
+        """对账拿不到锁（TimeoutError）不能阻止起服：降级为提示，服务照常。"""
+        cfg = _fake_start_env(tmp_path, monkeypatch)
+
+        def _boom(cfg_, **kw):
+            raise TimeoutError("config_lock: timeout after 30s")
+
+        monkeypatch.setattr("vision_relay.cli.reconcile_reconcile", _boom)
+        assert cli.cmd_start(cfg) == 0
+        assert "稍后" in capsys.readouterr().out
+
+
+class TestStopIntent:
+    def test_stop_clears_routing_intent(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay import reconcile, wiring
+        from vision_relay.config import ProxyConfig
+
+        (tmp_path / "proxy.pid").write_text("999999999")
+        monkeypatch.setattr(cli, "_pid_running", lambda pid: True)
+        monkeypatch.setattr(cli, "_terminate", lambda pid: True)
+        monkeypatch.setattr("vision_relay.config.load_config", lambda *a, **k: ProxyConfig())
+        monkeypatch.setattr(wiring, "wiring_restore", lambda c: [])
+        monkeypatch.setattr(wiring, "relays_restore", lambda c: [])
+        reconcile.set_routing_on(True)
+        assert cli.cmd_stop() == 0
+        assert reconcile.get_routing_on() is False  # stop 记录关闭意图
+
+
+class TestRestartServiceEnv:
+    def test_restart_service_spawn_injects_restart_env(self, tmp_path, monkeypatch):
+        """L3: reconcile._restart_service spawn 时注入 VISION_RELAY_RESTART=1（拷贝，不污染原环境）。"""
+        import os
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay import reconcile
+        from vision_relay.config import ProxyConfig
+
+        captured = {}
+
+        class _FakePopen:
+            def __init__(self, argv, **kwargs):
+                captured["argv"] = argv
+                captured["env"] = kwargs.get("env")
+
+        monkeypatch.setattr("subprocess.Popen", _FakePopen)
+        monkeypatch.setattr(reconcile, "_wait_port_online", lambda port, timeout_s=2.0: True)
+        assert reconcile._restart_service(ProxyConfig()) is True
+        assert captured["argv"][1:] == ["-m", "vision_relay", "start"]
+        assert captured["env"]["VISION_RELAY_RESTART"] == "1"
+        assert "VISION_RELAY_RESTART" not in os.environ  # 不写回父进程环境
+
+
+# ---- tools / probe / events / visionlog verbs + main dispatch ----
+
+
+class TestToolsVerb:
+    def test_tools_lists_tool_states(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+        from vision_relay.tools import ToolState
+
+        monkeypatch.setattr(
+            "vision_relay.tools.probe_tools",
+            lambda *a, **k: [ToolState("cc-switch", 15721, True, "prov-x", "http://up")],
+        )
+        assert cli.cmd_tools(ProxyConfig()) == 0
+        out = capsys.readouterr().out
+        assert "cc-switch" in out and "在线" in out and "prov-x" in out
+
+
+class TestProbeVerb:
+    def test_probe_single_model(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        monkeypatch.setattr(
+            "vision_relay.reconcile.observe",
+            lambda cfg, *a, **k: {"service_alive": False, "routing_on": False, "tools": [], "harnesses": {}},
+        )
+        monkeypatch.setattr("vision_relay.annotate.run_probe", lambda *a, **k: "image")
+        args = cli.parse_args(["probe", "--harness", "claude", "--provider", "p", "--model", "m1"])
+        assert cli.cmd_probe(args, ProxyConfig()) == 0
+        assert "m1" in capsys.readouterr().out
+
+
+class TestEventsVerb:
+    def test_events_tails_recent(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay import reconcile
+
+        reconcile.append_event("reclaim", "codex", {"from": "a", "to": "b"})
+        assert cli.cmd_events(None) == 0
+        out = capsys.readouterr().out
+        assert "reclaim" in out and "codex" in out
+
+
+class TestVisionlogVerb:
+    def test_visionlog_queries_and_truncates(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        monkeypatch.setattr(
+            "vision_relay.visionlog.query",
+            lambda harness=None, limit=200: [
+                {"ts": "t", "harness": "claude", "tier": 1, "cache_hit": False, "injected": "x" * 100}
+            ],
+        )
+        args = cli.parse_args(["visionlog"])
+        assert cli.cmd_visionlog(args, ProxyConfig()) == 0
+        out = capsys.readouterr().out
+        assert "claude" in out and "cache=False" in out
+        assert "x" * 60 in out and "x" * 61 not in out  # injected 截断到 60 字符
+
+
+class TestNewVerbParseArgs:
+    def test_parse_args_start_detach_flag(self):
+        args = parse_args(["start", "--detach"])
+        assert args.command == "start" and args.detach is True
+
+    def test_parse_args_new_verbs(self):
+        assert parse_args(["refresh"]).command == "refresh"
+        assert parse_args(["diagnose"]).command == "diagnose"
+        assert parse_args(["tools"]).command == "tools"
+        assert parse_args(["events"]).command == "events"
+        args = parse_args(["visionlog", "--harness", "claude"])
+        assert args.command == "visionlog" and args.harness == "claude"
+
+    def test_parse_args_probe_flags(self):
+        args = parse_args(["probe", "--all-untested"])
+        assert args.all_untested is True and args.model is None and args.harness is None
+
+
+class TestMainDispatchNewVerbs:
+    def test_main_dispatch_start_detach(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        monkeypatch.setattr("vision_relay.config.load_config", lambda *a, **k: ProxyConfig())
+        monkeypatch.setattr(cli, "_spawn_detached", lambda argv: 0)
+        assert cli.main(["start", "--detach"]) == 0
+
+    def test_main_dispatch_refresh(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        monkeypatch.setattr("vision_relay.config.load_config", lambda *a, **k: ProxyConfig())
+        monkeypatch.setattr(
+            "vision_relay.cli.reconcile_reconcile",
+            lambda cfg, **kw: {"actions": [], "needs_you": [], "observed": {}},
+        )
+        assert cli.main(["refresh"]) == 0

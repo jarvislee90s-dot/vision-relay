@@ -226,7 +226,13 @@ def _restart_service(cfg: ProxyConfig) -> bool:
     else:
         kwargs["start_new_session"] = True
     try:
-        subprocess.Popen([sys.executable, "-m", "vision_relay", "start"], **kwargs)
+        # 注入 VISION_RELAY_RESTART=1：分离重启的子进程无控制台，cmd_start 据此跳过
+        # 交互 onboarding（capability_confirmed 未确认时否则会在无终端环境下挂死）。
+        subprocess.Popen(
+            [sys.executable, "-m", "vision_relay", "start"],
+            env={**os.environ, "VISION_RELAY_RESTART": "1"},
+            **kwargs,
+        )
     except OSError:
         return False
     return _wait_port_online(cfg.bind_port)

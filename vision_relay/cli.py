@@ -10,6 +10,7 @@ import sys
 
 from . import __version__
 from .env_util import config_dir
+from .reconcile import reconcile as reconcile_reconcile
 
 PID_FILE = "proxy.pid"
 LOG_FILE = "proxy.log"
@@ -19,7 +20,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="vision-relay")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("start")
+    st = sub.add_parser("start")
+    st.add_argument("--detach", action="store_true", help="分离进程启动（GUI/自动重试用）")
     sub.add_parser("stop")
     sub.add_parser("status")
     sub.add_parser("logs")
@@ -29,6 +31,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sub.add_parser("check")
     sub.add_parser("models-scan")  # 非交互打印模型能力草稿
     sub.add_parser("models")  # 显式交互入口：重新确认/编辑 model_capabilities
+    sub.add_parser("refresh")  # M1: 手动对账（= 刷新按钮后端）
+    sub.add_parser("diagnose")  # M1: 观测 + 自动修复 + 报告
+    sub.add_parser("tools")  # M1: 工具档案探测
+    pr = sub.add_parser("probe")  # M1: 模态探针
+    pr.add_argument("--harness")
+    pr.add_argument("--provider")
+    pr.add_argument("--model")
+    pr.add_argument("--all-untested", action="store_true")
+    sub.add_parser("events")  # M1: 事件日志 tail
+    vl = sub.add_parser("visionlog")  # M1: 识图记录查询
+    vl.add_argument("--harness")
     return parser.parse_args(argv)
 
 
@@ -47,20 +60,36 @@ def _write_pid() -> None:
 
 
 def cmd_start(cfg) -> int:
-    if os.path.exists(_pid_path()):
-        print(f"already running (pid {open(_pid_path()).read().strip()})")
-        return 1
-    if cfg.routing.auto_wire:
-        # 首次启用：显式交互确认各模型看图能力(默认纯文本最安全)；未确认则不接线、不起服。
-        from .onboarding import run_onboarding
-
-        if not run_onboarding(cfg):
-            print("未完成模型看图能力确认，未启动代理。", file=sys.stderr)
-            print(
-                "请用交互终端重跑 vision-relay start，或 vision-relay models-scan 复核。",
-                file=sys.stderr,
-            )
+    # L1: pid 文件存在但进程已死（硬崩溃残留）-> 清掉继续启动（与 cmd_stop 对称），而非拒绝。
+    try:
+        with open(_pid_path(), encoding="utf-8") as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        pid = -1
+    if pid != -1:
+        if _pid_running(pid):
+            print(f"already running (pid {pid})")
             return 1
+        try:
+            os.unlink(_pid_path())
+        except OSError:
+            pass
+    if cfg.routing.auto_wire:
+        # L3: 分离重启（reconcile._restart_service 注入 VISION_RELAY_RESTART=1）的子进程
+        # 无控制台，交互 onboarding 会挂死——跳过向导（首次确认仍可手动 start/models 完成）。
+        if os.environ.get("VISION_RELAY_RESTART"):
+            print("restart: 跳过首次向导")
+        else:
+            # 首次启用：显式交互确认各模型看图能力(默认纯文本最安全)；未确认则不接线、不起服。
+            from .onboarding import run_onboarding
+
+            if not run_onboarding(cfg):
+                print("未完成模型看图能力确认，未启动代理。", file=sys.stderr)
+                print(
+                    "请用交互终端重跑 vision-relay start，或 vision-relay models-scan 复核。",
+                    file=sys.stderr,
+                )
+                return 1
         from .wiring import relays_activate, wiring_backup_and_rewrite
 
         for msg in relays_activate(cfg):
@@ -68,6 +97,17 @@ def cmd_start(cfg) -> int:
         for msg in wiring_backup_and_rewrite(cfg):
             print(f"  [wire] {msg}")
     _write_pid()
+    cmd_start_intent(True)
+    if cfg.routing.auto_wire:
+        # 对账收敛（spec §4 所有触发源走同一套逻辑）。必须排在 _write_pid 之后：
+        # 服务存活信号=端口或 pid 文件，若在写 pid 前对账会被判为"服务已死"，
+        # 触发按快照还原（wiring_restore_by_snapshot），反而撤销刚完成的接线。
+        try:
+            for a in reconcile_reconcile(cfg, trigger="start")["actions"]:
+                print(f"  [reconcile] {a}")
+        except TimeoutError as exc:
+            # 拿不到写锁不该阻止起服：降级提示，后续 refresh/自动监听再收敛。
+            print(f"  [reconcile] 配置写入忙，对账稍后重试: {exc}")
     from .server import run_server
 
     server = run_server(cfg)
@@ -117,6 +157,175 @@ def cmd_stop() -> int:
                 print(f"  [restore] {msg}")
     except Exception:  # noqa: BLE001 - 回滚尽力而为
         pass
+    cmd_start_intent(False)  # stop 记录关闭意图（崩溃后自动修复按此推导，spec §5）
+    return 0
+
+
+# ---- M1: 意图状态 / 分离启动 / 对账动词（GUI 与 CLI 共用同一套入口） ----
+
+
+def cmd_start_intent(on: bool) -> None:
+    """记录用户路由意图（崩溃后自动修复按此推导，spec §5）。"""
+    from .reconcile import set_routing_on
+
+    set_routing_on(on)
+
+
+def _spawn_detached(argv: list[str]) -> int:
+    """分离 spawn 完整命令（argv[0]=可执行文件）。返回 0 成功 / 1 失败。"""
+    import subprocess
+
+    kwargs: dict = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = 0x00000008  # DETACHED_PROCESS
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        subprocess.Popen(argv, **kwargs)
+        return 0
+    except OSError as exc:
+        print(f"cannot spawn {argv}: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_start_detach(cfg) -> int:
+    """分离进程启动：父进程立即返回，子进程跑普通 start（写 pid/意图）。"""
+    rc = _spawn_detached([sys.executable, "-m", "vision_relay", "start"])
+    print("started (detached)" if rc == 0 else "detach failed")
+    return rc
+
+
+def cmd_refresh(cfg) -> int:
+    """手动对账 = GUI「刷新」按钮的后端（spec §5 唯一写路径）。"""
+    try:
+        report = reconcile_reconcile(cfg, trigger="manual")
+    except TimeoutError as exc:
+        print(f"刷新失败：配置写入忙，请稍后重试（{exc}）")
+        return 1
+    for a in report["actions"]:
+        if a.get("type") == "auto_fix" and a.get("ok") is False:
+            print(f"  ⚠ 自动修复失败: {a}")  # L2: 失败必须显式可见，不能混进普通日志
+        else:
+            print(f"  [reconcile] {a}")
+    for n in report["needs_you"]:
+        print(f"  [需要你] {n}")
+    return 0
+
+
+def cmd_diagnose(cfg) -> int:
+    """诊断报告（自动运行 + 自动修复 + needs_you；spec §5 修复流程）。"""
+    try:
+        report = reconcile_reconcile(cfg, trigger="diagnose")
+    except TimeoutError as exc:
+        print(f"诊断失败：配置写入忙，请稍后重试（{exc}）")
+        return 1
+    obs = report["observed"]
+    print(f"服务: {'运行中' if obs['service_alive'] else '未运行'} · 路由意图: {'开' if obs['routing_on'] else '关'}")
+    for t in obs["tools"]:
+        prov = f" · 供应商 {t['active_provider']}" if t["active_provider"] else ""
+        print(f"  工具 {t['name']} :{t['port']} {'在线' if t['online'] else '离线'}{prov}")
+    for name, row in obs["harnesses"].items():
+        print(f"  {name}: base_url={row['base_url'] or '(无)'} [{row['ownership']}]")
+    for a in report["actions"]:
+        if a.get("type") == "auto_fix" and a.get("ok") is False:
+            print(f"  ⚠ 自动修复失败: {a}")  # L2: 同 cmd_refresh
+        else:
+            print(f"  [已自动处理] {a}")
+    for n in report["needs_you"]:
+        print(f"  ⚠ 需要你: {n}")
+    return 0 if not report["needs_you"] else 1
+
+
+def cmd_tools(cfg) -> int:
+    from .tools import probe_tools
+
+    for s in probe_tools():
+        prov = f" · 供应商 {s.active_provider} ({s.provider_base_url})" if s.active_provider else ""
+        print(f"{s.name}: :{s.port} {'在线' if s.online else '离线'}{prov}")
+    return 0
+
+
+def cmd_probe(args, cfg) -> int:
+    from .annotate import run_probe
+    from .reconcile import observe
+
+    obs = observe(cfg)
+    if args.all_untested or not args.model:
+        # 对所有已知 (provider, model) 且无探针缓存的组合探测
+        from .onboarding import scan_model_groups
+
+        count = 0
+        tool_by_name = {t["name"]: t for t in obs["tools"]}
+        for g in scan_model_groups(cfg):
+            provider = _provider_for_group(cfg, g.group, tool_by_name)
+            for ent in g.entries:
+                if args.model and ent.model != args.model:
+                    continue
+                cached = cfg.probe_results.get(provider or "?", {}).get(ent.model)
+                if cached and not args.all_untested:
+                    continue
+                base, key, proto = _probe_target_for(cfg, g.group, provider, tool_by_name)
+                result = run_probe(cfg, g.group, provider or "?", ent.model, base, key, proto)
+                print(f"  {ent.model}: {result}")
+                count += 1
+        print(f"probed {count} model(s)")
+        return 0
+    base, key, proto = _probe_target_for(
+        cfg, args.harness or "", args.provider or "?", {t["name"]: t for t in obs["tools"]}
+    )
+    result = run_probe(cfg, args.harness or "?", args.provider or "?", args.model, base, key, proto)
+    print(f"{args.model}: {result}")
+    return 0 if result else 1
+
+
+def _provider_for_group(cfg, group: str, tool_by_name: dict) -> str | None:
+    """harness -> 当前 provider 名（两层=工具激活供应商；直连场景名未知回 None，调用方用 '?' 占位）。"""
+    from . import tools
+
+    for name, d in tools.TOOL_DOSSIERS.items():
+        if (
+            group in d.harnesses
+            and tool_by_name.get(name, {}).get("online")
+            and tool_by_name[name].get("active_provider")
+        ):
+            return tool_by_name[name]["active_provider"]
+    return None
+
+
+def _probe_target_for(cfg, harness: str, provider: str, tool_by_name: dict) -> tuple[str, str, str]:
+    """探测目标：两层=工具端口（无 key）；直连=对应 relay 的 base_url+key。"""
+    from . import tools
+
+    proto = {"claude": "anthropic", "codex": "responses", "qwen-code": "chat"}.get(harness, "chat")
+    for name, d in tools.TOOL_DOSSIERS.items():
+        if harness in d.harnesses and tool_by_name.get(name, {}).get("online"):
+            port = tool_by_name[name]["port"]
+            base = "http://127.0.0.1:%d/v1" % port if name == "codex-plus" else "http://127.0.0.1:%d" % port
+            return base, "", proto if name != "codex-plus" else "responses"
+    for r in cfg.relays:
+        if r.protocol == proto and r.base_url and not r.base_url.startswith("http://127.0.0.1"):
+            return r.base_url, r.api_key, proto
+    return "", "", proto
+
+
+def cmd_events(cfg) -> int:
+    from .reconcile import tail_events
+
+    for row in tail_events(50):
+        import time as _t
+
+        stamp = _t.strftime("%m-%d %H:%M:%S", _t.localtime(row.get("ts", 0)))
+        print(f"{stamp} [{row.get('type')}] {row.get('harness') or '-'} {row.get('detail') or row.get('name') or ''}")
+    return 0
+
+
+def cmd_visionlog(args, cfg) -> int:
+    from .visionlog import query
+
+    for row in query(harness=getattr(args, "harness", None), limit=50):
+        print(
+            f"{row.get('ts')} {row.get('harness')} t{row.get('tier')} cache={row.get('cache_hit')} {str(row.get('injected'))[:60]}"
+        )
     return 0
 
 
@@ -306,6 +515,8 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+    if args.command == "start" and getattr(args, "detach", False):
+        return cmd_start_detach(cfg)
     if args.command == "start":
         return cmd_start(cfg)
     if args.command == "test-image":
@@ -316,4 +527,16 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_models_scan(cfg)
     if args.command == "check":
         return cmd_check(cfg)
+    if args.command == "refresh":
+        return cmd_refresh(cfg)
+    if args.command == "diagnose":
+        return cmd_diagnose(cfg)
+    if args.command == "tools":
+        return cmd_tools(cfg)
+    if args.command == "probe":
+        return cmd_probe(args, cfg)
+    if args.command == "events":
+        return cmd_events(cfg)
+    if args.command == "visionlog":
+        return cmd_visionlog(args, cfg)
     return 1
