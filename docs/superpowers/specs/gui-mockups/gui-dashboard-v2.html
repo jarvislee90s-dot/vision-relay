@@ -1,0 +1,172 @@
+<h2>GUI Demo ②：总览页 v2（按你的反馈修改）+ 诊断与修复面板</h2>
+<p class="subtitle">改动：① 路由开关改为滑动开关 ② 修复 → 「诊断与修复」透明检查清单（下方第二个图）③ 三张卡都显示真实上游（两层时尽力探测工具的当前供应商，探不到就诚实显示）④ 新模型 → 批量确认 ⑤ 新增「识图记录」页</p>
+
+<div class="mockup">
+<div class="mockup-header">总览页 v2 — 上半部分</div>
+<div class="mockup-body" style="padding:0;">
+  <div style="font-family:system-ui,'Segoe UI',sans-serif; font-size:13px; color:#1f2937;">
+    <div style="display:flex; height:40px; background:#111827; color:#9ca3af; align-items:center;">
+      <div style="padding:0 14px; color:#fff; font-weight:700;">👁 vision-relay</div>
+      <div style="flex:1; display:flex; gap:2px; padding-left:8px; font-size:12px;">
+        <div style="padding:4px 12px; background:#1f2937; color:#fff; border-radius:6px 6px 0 0;">📊 总览</div>
+        <div style="padding:4px 12px;">🔌 接线管理</div>
+        <div style="padding:4px 12px;">🧠 模型能力 <span style="background:#f59e0b; color:#fff; border-radius:8px; padding:0 6px;">2</span></div>
+        <div style="padding:4px 12px;">🔍 VLM 设置</div>
+        <div style="padding:4px 12px;">🌐 上游转发</div>
+        <div style="padding:4px 12px;">🖼 识图记录</div>
+        <div style="padding:4px 12px;">📜 事件日志</div>
+        <div style="padding:4px 12px;">⚙️ 设置</div>
+      </div>
+    </div>
+
+    <div style="background:#f5f6f8; padding:16px;">
+
+      <!-- 状态横幅：滑动开关 -->
+      <div style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px 20px; display:flex; align-items:center; gap:20px; margin-bottom:14px;">
+        <div style="flex:1;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="width:10px; height:10px; border-radius:50%; background:#10b981; box-shadow:0 0 6px #10b981;"></span>
+            <span style="font-size:16px; font-weight:700;">服务运行中</span>
+            <span style="color:#6b7280; font-size:12px;">PID 12345 · 127.0.0.1:8787 · 自动监听 每5秒</span>
+          </div>
+          <div style="color:#6b7280; font-size:12px; margin-top:4px;">安全网已覆盖 3 个 harness · 上次对账 3 秒前 · 今日识图 27 次</div>
+        </div>
+        <!-- 滑动开关 -->
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:12px; color:#6b7280;">路由关闭</span>
+          <div style="width:52px; height:28px; background:#10b981; border-radius:14px; position:relative; cursor:pointer;">
+            <div style="width:22px; height:22px; background:#fff; border-radius:50%; position:absolute; top:3px; right:3px;"></div>
+          </div>
+          <span style="font-size:12px; color:#059669; font-weight:700;">路由开启</span>
+        </div>
+        <button style="background:#fff; border:1px solid #d1d5db; border-radius:8px; padding:9px 14px; cursor:pointer;">🔄 刷新配置</button>
+        <button style="background:#fff; border:1px solid #d1d5db; border-radius:8px; padding:9px 14px; cursor:pointer;">🩺 诊断与修复 <span style="color:#f59e0b;">●2</span></button>
+      </div>
+
+      <!-- 三个 harness 卡：都带真实上游 -->
+      <div style="display:flex; gap:12px; margin-bottom:14px;">
+        <div style="flex:1; background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <b>🤖 Claude Code</b>
+            <span style="background:#ecfdf5; color:#059669; border-radius:6px; padding:2px 8px; font-size:11px;">✓ 已接管</span>
+          </div>
+          <div style="font-size:12px; line-height:2; color:#374151;">
+            Claude Code → <b>👁 8787</b> <span style="color:#059669;">●安全网</span> → <b>🔀 CC Switch</b> <span style="color:#059669;">●在线</span>
+          </div>
+          <div style="border-top:1px dashed #e5e7eb; margin-top:8px; padding-top:8px; font-size:12px;">
+            ☁️ 真实上游：<b>glm-4.7</b> <span style="color:#6b7280;">（CC Switch 当前供应商，尽力探测）</span>
+          </div>
+          <div style="font-size:11px; color:#6b7280; margin-top:6px;">备份 8月20日 14:32 · <a style="color:#2563eb;">回退档案</a></div>
+        </div>
+        <div style="flex:1; background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <b>💻 Codex</b>
+            <span style="background:#ecfdf5; color:#059669; border-radius:6px; padding:2px 8px; font-size:11px;">✓ 已接管</span>
+          </div>
+          <div style="font-size:12px; line-height:2; color:#374151;">
+            Codex → <b>👁 8787</b> <span style="color:#059669;">●安全网</span> → <b>🔀 Codex++</b> <span style="color:#059669;">●在线</span>
+          </div>
+          <div style="border-top:1px dashed #e5e7eb; margin-top:8px; padding-top:8px; font-size:12px;">
+            ☁️ 真实上游：<b>deepseek-v4-flash</b> <span style="color:#6b7280;">（Codex++ 当前供应商，尽力探测）</span>
+          </div>
+          <div style="font-size:11px; color:#6b7280; margin-top:6px;">备份 8月20日 14:32 · <a style="color:#2563eb;">回退档案</a></div>
+        </div>
+        <div style="flex:1; background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <b>❓ Qwen Code</b>
+            <span style="background:#ecfdf5; color:#059669; border-radius:6px; padding:2px 8px; font-size:11px;">✓ 已接管</span>
+          </div>
+          <div style="font-size:12px; line-height:2; color:#374151;">
+            Qwen Code → <b>👁 8787</b> <span style="color:#059669;">●安全网</span> → <b>☁️ 直连</b>
+          </div>
+          <div style="border-top:1px dashed #e5e7eb; margin-top:8px; padding-top:8px; font-size:12px;">
+            ☁️ 真实上游：<b>dashscope.aliyuncs.com</b> <span style="color:#6b7280;">（本代理配置）</span>
+          </div>
+          <div style="font-size:11px; color:#6b7280; margin-top:6px;">无路由工具，始终一层直连</div>
+        </div>
+      </div>
+
+      <!-- 待处理 -->
+      <div style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px 16px;">
+        <div style="font-weight:700; margin-bottom:8px;">🔔 待处理</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; margin-bottom:6px;">
+          <span>🆕 检测到 <b>2 个新模型</b>（glm-5-air、glm-5-plus，来自 claude 配置）—— 换供应商带来的批量新模型</span>
+          <button style="background:#f59e0b; color:#fff; border:none; border-radius:6px; padding:4px 12px; cursor:pointer; font-size:12px;">去批量确认 →</button>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; margin-bottom:6px;">
+          <span>⚡ 14:32 codex base_url 被 Codex++ 改写为 :57321，已自动抢回（间隔内漏过 2 张图）</span>
+          <a style="color:#2563eb; font-size:12px;">查看事件</a>
+        </div>
+        <div style="color:#6b7280; font-size:12px; padding:4px 10px;">✓ VLM 连通正常 · 缓存命中 63% · 直连 relay 无缺 key · 今日识图 27 次（<a style="color:#2563eb;">识图记录</a>）</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="mockup">
+<div class="mockup-header">「诊断与修复」面板（点诊断按钮后弹出）— 把修复从魔法按钮变成透明清单</div>
+<div class="mockup-body" style="padding:0;">
+  <div style="background:#fff; font-family:system-ui,'Segoe UI',sans-serif; font-size:13px; color:#1f2937; padding:18px 22px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <b style="font-size:15px;">🩺 诊断与修复</b>
+      <span style="color:#6b7280; font-size:12px;">发现 2 个问题 · 上次全面诊断 1 分钟前</span>
+    </div>
+
+    <div style="border:1px solid #fecaca; background:#fef2f2; border-radius:8px; padding:12px 14px; margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <b>⚠ 僵尸接线：codex 的 base_url 仍指向 127.0.0.1:8787，但服务已停止</b>
+          <div style="color:#6b7280; font-size:12px; margin-top:4px;">服务上次异常退出（8月21日 09:14，进程被强杀），接线未还原。Codex 现在所有请求都会失败。</div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button style="background:#fff; border:1px solid #d1d5db; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer;">📄 打开配置文件该行</button>
+          <button style="background:#ef4444; color:#fff; border:none; border-radius:6px; padding:6px 14px; font-size:12px; cursor:pointer;">修复</button>
+        </div>
+      </div>
+      <div style="margin-top:8px; padding:8px 10px; background:#fff; border-radius:6px; font-size:12px; color:#374151;">
+        修复目标（点修复前可选）：<label><input type="radio" name="r1" checked> 恢复到备份 <span style="color:#6b7280;">→ http://127.0.0.1:57321/v1（8月20日 14:32 存）</span></label>　
+        <label><input type="radio" name="r1"> 我的回退档案 <span style="color:#6b7280;">→ https://api.deepseek.com（我保存的默认）</span></label>　
+        <label><input type="radio" name="r1"> 直接重启服务并保持接管</label>
+      </div>
+    </div>
+
+    <div style="border:1px solid #fde68a; background:#fffbeb; border-radius:8px; padding:12px 14px; margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <b>⚠ 直连 relay 缺 API key：qwen-code 当前无可用上游</b>
+          <div style="color:#6b7280; font-size:12px; margin-top:4px;">工具离线回落直连时，需要一个带 key 的直连上游。</div>
+        </div>
+        <button style="background:#f59e0b; color:#fff; border:none; border-radius:6px; padding:6px 14px; font-size:12px; cursor:pointer;">去配置</button>
+      </div>
+    </div>
+
+    <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px 14px; margin-bottom:8px; color:#374151; display:flex; justify-content:space-between;">
+      <span>✓ 服务进程状态（PID 存活、无僵尸 PID 文件）</span><span style="color:#059669;">正常</span>
+    </div>
+    <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px 14px; margin-bottom:8px; color:#374151; display:flex; justify-content:space-between;">
+      <span>✓ claude / qwen-code 接线与期望状态一致</span><span style="color:#059669;">正常</span>
+    </div>
+    <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px 14px; color:#374151; display:flex; justify-content:space-between;">
+      <span>✓ VLM 后端连通（qwen-vl-max，120ms）</span><span style="color:#059669;">正常</span>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
+      <button style="background:#fff; border:1px solid #d1d5db; border-radius:6px; padding:7px 14px; cursor:pointer;">重新诊断</button>
+      <button style="background:#2563eb; color:#fff; border:none; border-radius:6px; padding:7px 16px; cursor:pointer;">一键修复全部问题</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="v2-ok" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content"><h3>v2 OK</h3><p>开关、诊断面板、真实上游、批量确认、识图记录都符合预期，继续画下一屏（模型能力批量确认 + 识图记录）</p></div>
+  </div>
+  <div class="option" data-choice="v2-adjust" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content"><h3>还要改</h3><p>在终端里说具体哪里调整</p></div>
+  </div>
+</div>

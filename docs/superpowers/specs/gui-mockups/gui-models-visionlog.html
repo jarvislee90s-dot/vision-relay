@@ -1,0 +1,136 @@
+<h2>GUI Demo ③：模型能力页（批量确认）+ 识图记录页（harness → 会话 → 明细）</h2>
+<p class="subtitle">导航恢复左侧栏。识图记录一级按 harness、二级按会话（尽力识别会话 ID，识别不了归「未识别会话」），单次调用可看：发给 VLM 的提示词 / VLM 原始返回 / 最终注入文本。</p>
+
+<div class="mockup">
+<div class="mockup-header">「模型能力」页 — 换供应商带来的批量新模型，一次确认完</div>
+<div class="mockup-body" style="padding:0;">
+  <div style="display:flex; height:520px; font-family:system-ui,'Segoe UI',sans-serif; font-size:13px; color:#1f2937;">
+    <div style="width:170px; background:#111827; color:#9ca3af; padding:12px 0; flex-shrink:0;">
+      <div style="padding:8px 16px 14px; color:#fff; font-weight:700;">👁 vision-relay</div>
+      <div style="padding:8px 16px;">📊 总览</div>
+      <div style="padding:8px 16px;">🔌 接线管理</div>
+      <div style="padding:8px 16px; background:#1f2937; color:#fff; border-left:3px solid #10b981;">🧠 模型能力 <span style="background:#f59e0b; color:#fff; border-radius:8px; padding:0 6px; font-size:11px;">2</span></div>
+      <div style="padding:8px 16px;">🔍 VLM 设置</div>
+      <div style="padding:8px 16px;">🌐 上游转发</div>
+      <div style="padding:8px 16px;">🖼 识图记录</div>
+      <div style="padding:8px 16px;">📜 事件日志</div>
+      <div style="padding:8px 16px;">⚙️ 设置</div>
+    </div>
+    <div style="flex:1; background:#f5f6f8; padding:14px; overflow:auto;">
+      <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 14px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+        <span>🆕 <b>2 个新模型</b>待确认（glm-5-air、glm-5-plus，来自 ~/.claude/settings.json）—— 勾选后点「保存确认」生效</span>
+        <span style="font-size:12px; color:#6b7280;">批量： <a style="color:#2563eb;">全部纯文本</a> · <a style="color:#2563eb;">全部图片</a> · <a style="color:#2563eb;">按内置名单建议</a></span>
+      </div>
+      <div style="display:flex; gap:6px; margin-bottom:8px; font-size:12px;">
+        <div style="padding:5px 14px; background:#111827; color:#fff; border-radius:6px;">claude <span style="color:#9ca3af;">(5)</span></div>
+        <div style="padding:5px 14px; background:#fff; border:1px solid #d1d5db; border-radius:6px;">codex (3)</div>
+        <div style="padding:5px 14px; background:#fff; border:1px solid #d1d5db; border-radius:6px;">qwen-code (2)</div>
+        <div style="padding:5px 14px; background:#fff; border:1px solid #d1d5db; border-radius:6px;">relay (3)</div>
+      </div>
+      <div style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; overflow:hidden;">
+        <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <tr style="background:#f9fafb; color:#6b7280; text-align:left;">
+            <th style="padding:9px 14px;">模型</th><th style="padding:9px 14px;">来源</th><th style="padding:9px 14px;">内置名单建议</th><th style="padding:9px 14px;">看图能力</th><th style="padding:9px 14px;">状态</th>
+          </tr>
+          <tr style="background:#fffbeb;">
+            <td style="padding:9px 14px;"><b>glm-5-air</b></td><td style="padding:9px 14px; color:#6b7280;">claude · settings.json</td><td style="padding:9px 14px; color:#6b7280;">glm/* → 纯文本</td>
+            <td style="padding:9px 14px;"><span style="background:#e5e7eb; border-radius:6px; padding:2px 10px; color:#6b7280;">纯文本</span> ⇄ <span style="background:#10b981; border-radius:6px; padding:2px 10px; color:#fff;">图片</span></td>
+            <td style="padding:9px 14px;"><span style="background:#f59e0b; color:#fff; border-radius:6px; padding:1px 8px; font-size:11px;">新 · 待确认</span></td>
+          </tr>
+          <tr style="background:#fffbeb;">
+            <td style="padding:9px 14px;"><b>glm-5-plus</b></td><td style="padding:9px 14px; color:#6b7280;">claude · settings.json</td><td style="padding:9px 14px; color:#6b7280;">glm/* → 纯文本</td>
+            <td style="padding:9px 14px;"><span style="background:#e5e7eb; border-radius:6px; padding:2px 10px; color:#6b7280;">纯文本</span> ⇄ <span style="background:#10b981; border-radius:6px; padding:2px 10px; color:#fff;">图片</span></td>
+            <td style="padding:9px 14px;"><span style="background:#f59e0b; color:#fff; border-radius:6px; padding:1px 8px; font-size:11px;">新 · 待确认</span></td>
+          </tr>
+          <tr style="border-top:1px solid #f3f4f6;">
+            <td style="padding:9px 14px;">kimi-k2.7-code</td><td style="padding:9px 14px; color:#6b7280;">claude · settings.json</td><td style="padding:9px 14px; color:#6b7280;">kimi-k2.7-code* → 图片</td>
+            <td style="padding:9px 14px;"><span style="background:#10b981; border-radius:6px; padding:2px 10px; color:#fff;">图片 ✓</span></td>
+            <td style="padding:9px 14px; color:#9ca3af;">已确认</td>
+          </tr>
+          <tr style="border-top:1px solid #f3f4f6;">
+            <td style="padding:9px 14px;">deepseek-v4-flash</td><td style="padding:9px 14px; color:#6b7280;">claude · settings.json</td><td style="padding:9px 14px; color:#6b7280;">deepseek/* → 纯文本</td>
+            <td style="padding:9px 14px;"><span style="background:#e5e7eb; border-radius:6px; padding:2px 10px; color:#374151;">纯文本 ✓</span></td>
+            <td style="padding:9px 14px; color:#9ca3af;">已确认</td>
+          </tr>
+        </table>
+      </div>
+      <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+        <button style="background:#2563eb; color:#fff; border:none; border-radius:8px; padding:8px 20px; cursor:pointer;">保存确认（2 个新模型）</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="mockup">
+<div class="mockup-header">「识图记录」页 — 一级 harness、二级会话；单次调用三段可查</div>
+<div class="mockup-body" style="padding:0;">
+  <div style="display:flex; height:540px; font-family:system-ui,'Segoe UI',sans-serif; font-size:13px; color:#1f2937;">
+    <div style="width:170px; background:#111827; color:#9ca3af; padding:12px 0; flex-shrink:0;">
+      <div style="padding:8px 16px 14px; color:#fff; font-weight:700;">👁 vision-relay</div>
+      <div style="padding:8px 16px;">📊 总览</div>
+      <div style="padding:8px 16px;">🔌 接线管理</div>
+      <div style="padding:8px 16px;">🧠 模型能力</div>
+      <div style="padding:8px 16px;">🔍 VLM 设置</div>
+      <div style="padding:8px 16px;">🌐 上游转发</div>
+      <div style="padding:8px 16px; background:#1f2937; color:#fff; border-left:3px solid #10b981;">🖼 识图记录</div>
+      <div style="padding:8px 16px;">📜 事件日志</div>
+      <div style="padding:8px 16px;">⚙️ 设置</div>
+    </div>
+    <div style="width:210px; background:#f9fafb; border-right:1px solid #e5e7eb; padding:10px; overflow:auto; flex-shrink:0;">
+      <div style="font-weight:700; padding:4px 6px 8px;">按 harness</div>
+      <div style="padding:5px 8px; background:#eef2ff; border-radius:6px; font-weight:600;">🤖 Claude Code <span style="color:#6b7280; font-weight:400;">12</span></div>
+      <div style="padding:4px 8px 4px 22px; color:#374151; font-size:12px;">└ 今天 · 会话 a3f2e1 <span style="color:#9ca3af;">5</span></div>
+      <div style="padding:4px 8px 4px 22px; background:#e0e7ff; border-radius:5px; color:#1e3a8a; font-size:12px;">└ 昨天 · 会话 88c1d4 <span style="color:#6b7280;">5</span></div>
+      <div style="padding:4px 8px 4px 22px; color:#374151; font-size:12px;">└ 昨天 · 未识别会话 <span style="color:#9ca3af;">2</span></div>
+      <div style="padding:5px 8px; margin-top:6px;">💻 Codex <span style="color:#6b7280;">9</span></div>
+      <div style="padding:5px 8px;">❓ Qwen Code <span style="color:#6b7280;">6</span></div>
+    </div>
+    <div style="flex:1; background:#fff; padding:12px; overflow:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <b>🤖 Claude Code / 会话 88c1d4（昨天）— 5 次识图</b>
+        <span style="font-size:12px; color:#6b7280;">留存 7 天 · <a style="color:#2563eb;">留存设置</a> · <a style="color:#2563eb;">导出</a></span>
+      </div>
+      <div style="border:1px solid #e5e7eb; border-radius:8px; overflow:hidden; margin-bottom:10px;">
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <tr style="background:#f9fafb; color:#6b7280; text-align:left;"><th style="padding:7px 12px;">时间</th><th style="padding:7px 12px;">层级</th><th style="padding:7px 12px;">缓存</th><th style="padding:7px 12px;">耗时</th><th style="padding:7px 12px;">VLM</th></tr>
+          <tr style="border-top:1px solid #f3f4f6; background:#f0f9ff;"><td style="padding:7px 12px;">14:32:05</td><td style="padding:7px 12px;">Tier2 聚焦</td><td style="padding:7px 12px;">未命中</td><td style="padding:7px 12px;">2.4s</td><td style="padding:7px 12px;">qwen-vl-max</td></tr>
+          <tr style="border-top:1px solid #f3f4f6;"><td style="padding:7px 12px; color:#9ca3af;">13:18:44</td><td style="padding:7px 12px; color:#9ca3af;">Tier1 全面</td><td style="padding:7px 12px; color:#9ca3af;">命中</td><td style="padding:7px 12px; color:#9ca3af;">0ms</td><td style="padding:7px 12px; color:#9ca3af;">—</td></tr>
+        </table>
+      </div>
+      <b style="font-size:12.5px;">▸ 14:32:05 · Tier2 明细</b>
+      <div style="display:flex; gap:10px; margin-top:8px;">
+        <div style="width:110px; flex-shrink:0;">
+          <div style="width:110px; height:78px; background:linear-gradient(135deg,#c7d2fe,#fbcfe8); border-radius:8px; display:flex; align-items:center; justify-content:center; color:#6b7280; font-size:11px;">🖼 图片缩略图</div>
+          <div style="font-size:11px; color:#6b7280; margin-top:4px;">638 KB · png<br>内容哈希 8f3a…c2</div>
+        </div>
+        <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+          <div>
+            <div style="font-size:11px; color:#2563eb; font-weight:700; margin-bottom:3px;">① 发给 VLM 的提示词（含用户问题）</div>
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; font-family:Consolas,monospace; font-size:11px; color:#334155;">请详细描述这张图片，重点涵盖：文字（逐字）、UI 元素、错误信息、布局结构。用户问题：这个报错怎么修？…（有 uncertainty 请显式标注）</div>
+          </div>
+          <div>
+            <div style="font-size:11px; color:#7c3aed; font-weight:700; margin-bottom:3px;">② VLM 原始返回</div>
+            <div style="background:#faf5ff; border:1px solid #e9d5ff; border-radius:6px; padding:8px 10px; font-family:Consolas,monospace; font-size:11px; color:#334155;">截图为终端报错 Traceback (most recent call last): FileNotFoundError … 布局：三行堆栈 + 底部命令行。不确定项：第 2 行被截断。</div>
+          </div>
+          <div>
+            <div style="font-size:11px; color:#059669; font-weight:700; margin-bottom:3px;">③ 实际注入对话的文本</div>
+            <div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:6px; padding:8px 10px; font-family:Consolas,monospace; font-size:11px; color:#064e3b;">[图片描述 1] 截图为终端报错 Traceback…（预算内截断至 96 token）</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="demo3-ok" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content"><h3>两页都 OK</h3><p>批量确认和识图记录符合预期 —— GUI 设计定稿，回到终端过剩余设计节</p></div>
+  </div>
+  <div class="option" data-choice="demo3-adjust" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content"><h3>要调整</h3><p>在终端里说具体哪里改</p></div>
+  </div>
+</div>

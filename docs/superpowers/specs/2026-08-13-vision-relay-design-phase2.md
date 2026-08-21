@@ -2,9 +2,14 @@
 
 > 日期：2026-08-16
 > 前置：第一阶段见 [`2026-08-13-vision-relay-design.md`](2026-08-13-vision-relay-design.md)（本文件是它的第二阶段）
-> 状态：设计稿（待排期）
+> 状态：已重划（2026-08-21）——控制面项并入新 spec，数据面项移第三阶段
 > 范围：第一阶段完成后的全部延后项：**OpenCode 一等接入、DSH 兼容（provider 路由形态 + 准入声明）、Claude Code hooks、Web UI 控制面板、磁盘缓存与 Phase 2 后台深缓存、跨协议流式（Responses ↔ 其他）**，及可选方向（relay 轮转、TRAE/Kimi hooks、服务端部署、未知模型启发式学习）。
 > 移植注记（2026-08-19）：本稿撰写于上游 fork，路径与命名已按独立仓库适配；§11 为独立化后新增议题。
+>
+> **移交注记（2026-08-21，二期范围重划）**：
+> - §5（Web UI 控制面板）、§11（幽灵控制面）由 [`2026-08-21-vision-relay-phase2-control-plane-design.md`](2026-08-21-vision-relay-phase2-control-plane-design.md) **取代**——Web UI 方向改为 Tauri 桌面应用 + 核心 CLI JSON 契约；`ui_port` 从配置中移除（以"不需要它"结案）。
+> - §12（路由工具自动探测）的实施并入该 spec 的"工具档案"（§5），并升级（激活供应商读取、修复、对账引擎）。
+> - 其余各项（§2 OpenCode、§3 DSH、§4 hooks、§6 磁盘缓存、§7 跨协议流式、§8 可选方向）整体移**第三阶段（Phase 3）**，届时按本稿为基础重新排期。
 
 ---
 
