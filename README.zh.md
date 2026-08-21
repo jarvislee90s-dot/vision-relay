@@ -114,7 +114,31 @@ python -m pip install pytest httpx
 
 配置改写只在 `start` / `stop` 时发生(备份并改写三个 harness base_url,stop 时恢复)。运行时它从不监视或改写任何配置文件;改动下次 `start` 生效。
 
-**命令**: `start` / `stop` / `status` / `logs` / `check` / `models`(编辑模型能力) / `models-scan` / `test-image`。
+**命令**：
+
+| 命令 | 用途 |
+|---|---|
+| `start` | 启动服务并接线三个 harness（备份并改写 base_url）。 |
+| `start --detach` | 分离进程启动（GUI / 自动重启用）。 |
+| `stop` | 停止服务并恢复各 harness 原 base_url。 |
+| `status` | 查看服务 / 接线 / 意图状态。 |
+| `logs` | 跟踪代理日志。 |
+| `check` | 自检配置与上游。 |
+| `models` | 交互确认 / 编辑模型看图能力。 |
+| `models-scan` | 非交互打印模型能力草稿。 |
+| `test-image` | 用一张图测试 VLM 转述链路。 |
+| `refresh` | 手动对账：抢回被劫持的接线、吸收供应商变更、自动修复僵尸接线（刷新按钮的后端）。 |
+| `diagnose` | 只读诊断报告：观测 + 自动修复 + 仍需你处理的事。 |
+| `tools` | 探测路由工具端口并只读显示激活供应商。 |
+| `probe` | 模态探针：`--harness` / `--provider` / `--model`，或 `--all-untested`。 |
+| `events` | 跟踪事件日志。 |
+| `visionlog` | 查询识图留痕记录。 |
+
+全部管理动词支持 `--json`（输出形如 `{"contract_version": 1, "ok": ..., "data": ...}`，GUI 契约）：
+
+```bash
+vision-relay status --json
+```
 
 ## 配置
 

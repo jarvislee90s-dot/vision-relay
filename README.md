@@ -118,7 +118,31 @@ python -m pip install pytest httpx
 
 Config rewrites happen only on `start` / `stop` (backup + rewrite the three harness base_urls, restore on stop). While running it never watches or rewrites any config file; edits take effect on the next `start`.
 
-**Commands**: `start` / `stop` / `status` / `logs` / `check` / `models` (edit model capability) / `models-scan` / `test-image`.
+**Commands**:
+
+| Command | Purpose |
+|---|---|
+| `start` | Start the service and wire the three harnesses (backup + rewrite base_urls). |
+| `start --detach` | Start as a detached background process (for GUI / auto-restart). |
+| `stop` | Stop the service and restore the original harness base_urls. |
+| `status` | Show service / wiring / intent status. |
+| `logs` | Tail the proxy log. |
+| `check` | Self-check config and upstreams. |
+| `models` | Interactively review / edit model capabilities. |
+| `models-scan` | Non-interactively print the model capability draft. |
+| `test-image` | Test the VLM transcription path with one image. |
+| `refresh` | Manual reconcile: reclaim hijacked wiring, absorb vendor changes, auto-repair zombie wiring (backend of the refresh button). |
+| `diagnose` | Read-only diagnostic report: observations + auto-fixes applied + what still needs you. |
+| `tools` | Probe routing-tool ports and show the active provider (read-only). |
+| `probe` | Modality probe for one model: `--harness` / `--provider` / `--model`, or `--all-untested`. |
+| `events` | Tail the event log. |
+| `visionlog` | Query the vision call records. |
+
+All management verbs accept `--json` for machine-readable output shaped like `{"contract_version": 1, "ok": ..., "data": ...}` (the GUI contract):
+
+```bash
+vision-relay status --json
+```
 
 ## Configuration
 

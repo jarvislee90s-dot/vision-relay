@@ -12,6 +12,7 @@ These rules keep agent-driven changes consistent with the design in
 | Console command | `vision-relay` |
 | Config directory | `~/.vision-relay/` (config: `proxy.json`, logs: `logs/proxy.log`) |
 | Env vars | `VISION_RELAY_*` (`VISION_RELAY_CONFIG_DIR`, `VISION_RELAY_VLM_API_KEY`, ...) |
+| Capability values / runtime artifacts | `image` \| `text_only` (legacy `vision` read-compatible); state: `state.json`; events: `events.jsonl`; vision records: `visionlog/` |
 
 Legacy `QWEN_MM_*` env names and `~/.qwen-mm-plugins/proxy.json` are read-only
 compatibility fallbacks — never write to them, never use them in new code.
