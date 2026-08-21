@@ -54,3 +54,25 @@ def test_key_ref_probe_claude(tmp_path, monkeypatch):
     monkeypatch.setattr(snapshot, "HOME", str(home))
     assert "ANTHROPIC_AUTH_TOKEN" in snapshot.key_ref_for("claude")
     assert "sk-secret" not in snapshot.key_ref_for("claude")
+
+
+def test_load_tolerates_bad_entries(tmp_path, monkeypatch):
+    """残缺/多余字段的条目不得击穿 load：好条目保留，坏条目跳过，绝不抛。"""
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+    good_with_extra = {
+        "base_url": "https://a.example/api",
+        "key_ref": "env.ANTHROPIC_AUTH_TOKEN",
+        "model": "glm-5-air",
+        "ts": 1.0,
+        "unknown_field": "x",  # 多余字段：过滤后保留
+    }
+    bad_missing_model = {"base_url": "https://b.example", "key_ref": "k"}  # 缺必填 model：跳过
+    (tmp_path / "snapshots.json").write_text(
+        json.dumps({"claude": good_with_extra, "codex": bad_missing_model, "qwen-code": "not-a-dict"}),
+        encoding="utf-8",
+    )
+    loaded = snapshot.load()  # 不抛
+    assert loaded["claude"].base_url == "https://a.example/api"
+    assert loaded["claude"].model == "glm-5-air"
+    assert "codex" not in loaded
+    assert "qwen-code" not in loaded

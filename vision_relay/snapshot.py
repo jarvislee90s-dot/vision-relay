@@ -58,13 +58,25 @@ def save(harness: str, snap: Snapshot) -> None:
     os.replace(tmp, _path())
 
 
+_KNOWN_FIELDS = ("base_url", "key_ref", "model", "second_hop", "ts")
+
+
 def load() -> dict[str, Snapshot]:
     try:
         with open(_path(), encoding="utf-8") as f:
             raw = json.load(f)
     except (OSError, ValueError):
         return {}
-    return {h: Snapshot(**v) for h, v in raw.items() if isinstance(v, dict)}
+    out: dict[str, Snapshot] = {}
+    for h, v in raw.items():
+        if not isinstance(v, dict):
+            continue  # 坏条目（非对象）跳过，不击穿消费方
+        # 只按已知字段集重构：多余字段过滤掉；缺必填字段的条目跳过
+        try:
+            out[h] = Snapshot(**{k: v[k] for k in _KNOWN_FIELDS if k in v})
+        except TypeError:
+            continue
+    return out
 
 
 def key_ref_for(harness: str) -> str:

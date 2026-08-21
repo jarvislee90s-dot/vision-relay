@@ -128,10 +128,7 @@ def wiring_backup_and_rewrite(cfg) -> list[str]:
             # 接管前组合快照：base_url + key 位置 + 模型 + 第二跳归属（spec §5）
             second_hop = classify_base_url(original, cfg.bind_port)
             second_hop = second_hop if second_hop in TOOL_DOSSIERS else None
-            try:
-                model = _first_model(p)
-            except OSError:
-                model = ""
+            model = _first_model(p)  # 内部自吞读取失败（返回空串），无需再包
             try:
                 snapshot.save(
                     name,
@@ -139,7 +136,7 @@ def wiring_backup_and_rewrite(cfg) -> list[str]:
                         base_url=original, key_ref=snapshot.key_ref_for(name), model=model, second_hop=second_hop
                     ),
                 )
-            except OSError:
+            except Exception:  # 快照尽力而为，绝不打断接管（保护面不依赖 snapshot 内部实现）
                 pass
         if _find_bak(p) is None:  # 已有备份（含旧后缀）不覆盖，防止把代理地址存成"原始值"
             try:
@@ -165,7 +162,11 @@ def _first_model(path: str) -> str:
 
 
 def wiring_restore(cfg) -> list[str]:
-    """仅在当前 base_url 指向本代理时，从备份还原；返回改动描述。"""
+    """从整文件备份还原（start 的对称动作；仅当前 base_url 指向本代理时执行）。
+
+    与 wiring_restore_by_snapshot 的分工：本函数按"第一次接管前的原始文件"还原，
+    供正常 stop 使用；崩溃/漂移后的修复走 wiring_restore_by_snapshot（组合快照）。
+    """
     proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
     home = HOME
     restored: list[str] = []
@@ -268,7 +269,13 @@ def classify_base_url(url: str | None, bind_port: int) -> str:
 
 
 def wiring_restore_by_snapshot(cfg) -> list[str]:
-    """按接管组合快照还原（spec §5 修复：路由关-崩溃路径）。仅当前指向本代理时执行。"""
+    """按接管组合快照还原（spec §5 修复：路由关-崩溃路径）。仅当前指向本代理时执行。
+
+    与 wiring_restore 的分工：本函数按"接管前正确组合"还原（防外部工具档案污染），
+    供对账/修复使用；正常 stop 的整文件备份还原走 wiring_restore。还原成功后删掉
+    该 harness 的 .bak——防止后续 stop 走 wiring_restore 时用过期整文件备份覆盖掉
+    已按快照还原的状态。
+    """
     proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
     snaps = snapshot.load()
     restored: list[str] = []
@@ -282,6 +289,13 @@ def wiring_restore_by_snapshot(cfg) -> list[str]:
             restored.append(f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原")
             continue
         ok = write_base_url(p, HARNESS_CFG[name], snap.base_url)
+        if ok:
+            bak = _find_bak(p)
+            if bak is not None:  # 整文件备份已过期（快照才是真相），删除防误还原
+                try:
+                    os.unlink(bak)
+                except OSError:
+                    pass
         restored.append(f"{name}: restored to {snap.base_url} ({'ok' if ok else 'FAIL'})")
     return restored
 
@@ -306,7 +320,8 @@ def ensure_tool_relays(cfg, tool_states) -> list[str]:
             added.append(name)
         except Exception:  # 模板非法跳过（§12.3）
             continue
-    save_config(cfg)
+    if added:  # 无新增不落盘（幂等：无漂移不写文件）
+        save_config(cfg)
     return added
 
 
