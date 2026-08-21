@@ -22,8 +22,8 @@ def _lock_path() -> Path:
 
 
 @contextlib.contextmanager
-def config_lock(timeout_s: float | None = None):
-    """阻塞获取（默认）；同线程重入直接通过。"""
+def config_lock(timeout_s: float | None = 30.0):
+    """阻塞获取（默认 30s 超时，到期抛 TimeoutError）；同线程重入直接通过。"""
     token = getattr(_reentrant, "depth", 0)
     if token > 0:
         _reentrant.depth = token + 1
@@ -36,10 +36,12 @@ def config_lock(timeout_s: float | None = None):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        _os_lock(fd, blocking=True)
+        if not _os_lock(fd, blocking=True, timeout_s=timeout_s):
+            raise TimeoutError(f"config_lock: timeout after {timeout_s}s ({path})")
         _reentrant.depth = 1
         yield
     finally:
+        # 仅在真正拿到过锁（depth>0）时才解锁；TimeoutError 路径锁本来就没拿到
         if getattr(_reentrant, "depth", 0) > 0:
             _reentrant.depth = 0
             _os_unlock(fd)
@@ -68,7 +70,7 @@ def try_config_lock():
     return _held()
 
 
-def _os_lock(fd: int, blocking: bool) -> bool:
+def _os_lock(fd: int, blocking: bool, timeout_s: float | None = 30.0) -> bool:
     if os.name == "nt":
         import msvcrt
 
@@ -78,10 +80,10 @@ def _os_lock(fd: int, blocking: bool) -> bool:
         except OSError:
             if not blocking:
                 return False
-            # msvcrt.LK_LOCK 自身重试 10 次；再不行人工小睡重试
+            # msvcrt.LK_LOCK 自身重试 10 次；再不行人工小睡重试到 deadline
             import time
 
-            deadline = time.time() + 30
+            deadline = time.time() + (30.0 if timeout_s is None else timeout_s)
             while time.time() < deadline:
                 time.sleep(0.2)
                 try:
@@ -91,13 +93,23 @@ def _os_lock(fd: int, blocking: bool) -> bool:
                     continue
             return False
     import fcntl
+    import time
 
-    flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
-    try:
-        fcntl.flock(fd, flags)
-        return True
-    except OSError:
-        return False
+    if not blocking:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+    deadline = time.time() + (30.0 if timeout_s is None else timeout_s)
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.2)
 
 
 def _os_unlock(fd: int) -> None:
