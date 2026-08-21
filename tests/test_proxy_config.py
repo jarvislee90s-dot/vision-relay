@@ -328,3 +328,11 @@ class TestVisionLogConfig:
     def test_roundtrip(self):
         cfg = ProxyConfig.from_dict({"vision_log": {"enabled": False, "retention_days": 3}})
         assert cfg.to_dict()["vision_log"] == {"enabled": False, "retention_days": 3}
+
+    def test_retention_days_zero_rejected(self):
+        """retention_days=0 会让 cleanup 按整日 cutoff 误删当日文件；必须 >=1，关闭留存用 enabled=false。"""
+        with pytest.raises(ConfigError, match="retention_days"):
+            ProxyConfig.from_dict({"vision_log": {"retention_days": 0}})
+
+    def test_retention_days_one_is_minimum_valid(self):
+        assert ProxyConfig.from_dict({"vision_log": {"retention_days": 1}}).vision_log.retention_days == 1

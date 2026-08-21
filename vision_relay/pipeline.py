@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import random
 import threading
 import time
@@ -11,6 +12,7 @@ from .cache import DescriptionCache, image_key
 from .capability import CapabilityTable
 from .config import ProxyConfig
 from .ir import _DATA_URL_RE, ContentBlock, ImageBlock, IRRequest, Message, extract_data_urls
+from .visionlog import record as _vl_record
 from .vlm import VLMError, _is_retryable
 
 ANALYZE_DEPTH_LIMIT = 50
@@ -23,6 +25,26 @@ AVG_DESC_BUDGET = 100  # tokens
 VLM_MAX_ATTEMPTS = 3
 VLM_BACKOFF_BASE = 3.0
 VLM_BACKOFF_JITTER = 1.0
+
+
+def record_vision_call(row: dict, cfg: ProxyConfig) -> None:
+    """留痕入口（独立函数便于测试 monkeypatch；fail-open 永不抛）。"""
+    _vl_record(row, enabled=cfg.vision_log.enabled, retention_days=cfg.vision_log.retention_days)
+
+
+def _describe_accepts_detail(vlm) -> bool:
+    """vlm.describe 是否带 detail 出参（Task10 VLMClient 契约）。老式 vlm / 测试替身的
+    describe 没有该参数——硬传会 TypeError 被 fail-open 吞成剥离；因此仅在其支持时
+    捕获 prompt/raw 并留痕（生产路径恒为 VLMClient，恒支持）。"""
+    try:
+        sig = inspect.signature(vlm.describe)
+    except (TypeError, ValueError):  # 拿不到签名（C 扩展等）按不支持处理
+        return False
+    param = sig.parameters.get("detail")
+    return param is not None and param.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
 
 
 @dataclass
@@ -70,9 +92,15 @@ class Pipeline:
         self.cache = cache
         self.semaphore = semaphore or threading.Semaphore(5)
         self.table = CapabilityTable()
+        self._recorder = record_vision_call  # 独立引用，测试 monkeypatch 模块级函数后重建即可替换
 
     def process(
-        self, ir: IRRequest, cfg: ProxyConfig, harness: str | None = None, provider: str | None = None
+        self,
+        ir: IRRequest,
+        cfg: ProxyConfig,
+        harness: str | None = None,
+        provider: str | None = None,
+        session_id: str | None = None,
     ) -> ProcessResult:
         if self.table.judge(ir.model, cfg, harness, provider) == "image":
             return ProcessResult(ir=ir)  # image model: zero overhead passthrough
@@ -100,7 +128,7 @@ class Pipeline:
         # 当前轮不限量：全部同步描述并注入；有用户问题则用 Tier2 聚焦（spec §5.4）
         question = self._current_question(ir)
         for target in current_targets:
-            outcome = self._handle_one(target, result, question)
+            outcome = self._handle_one(target, result, question, cfg, harness, provider, session_id)
             if outcome == "stripped":
                 result.stripped += 1
 
@@ -154,37 +182,79 @@ class Pipeline:
         )
         current.content.insert(0, ContentBlock(type="text", text=note))
 
-    def _handle_one(self, target: _ImageTarget, result: ProcessResult, question: str | None = None) -> str:
+    def _handle_one(
+        self,
+        target: _ImageTarget,
+        result: ProcessResult,
+        question: str | None = None,
+        cfg: ProxyConfig | None = None,
+        harness: str | None = None,
+        provider: str | None = None,
+        session_id: str | None = None,
+    ) -> str:
         # spec §5.4：当前轮带用户问题时用 Tier2 聚焦（URL+问题缓存键），否则 Tier1。
+        # cfg 透传时才留痕（spec §6）：历史轮（黄金窗口/深层）调用不传 cfg，即不留痕。
         key = target.key
         cached = self.cache.get(key, question)
         if cached is not None:
             self._inject(target, cached, result)
             return "injected"
+        recordable = cfg is not None and _describe_accepts_detail(self.vlm)
+        detail: dict = {}
+        started = time.time()
         try:
             tier = 2 if question else 1
-            desc = self._describe_with_retry(target.image, question, tier, result)
+            desc = self._describe_with_retry(
+                target.image, question, tier, result, detail=detail if recordable else None
+            )
             self.cache.put(key, question, desc)
         except Exception as exc:  # noqa: BLE001 - fail-open on ANY VLM failure
             self._strip_target(target, self._fail_open_text(exc))
             result.fail_open = getattr(exc, "reason", "VLM_FAILED")
             return "stripped"
+        if recordable:
+            try:
+                self._recorder(
+                    {
+                        "ts": time.time(),
+                        "harness": harness,
+                        "session": session_id,
+                        "tier": tier,
+                        "question": question,
+                        "prompt": detail.get("prompt"),
+                        "raw": detail.get("raw"),
+                        "injected": self._format_desc(desc, target),
+                        "duration_ms": int((time.time() - started) * 1000),
+                        "cache_hit": False,
+                        "image_hash": key[:64],
+                        "vlm_model": getattr(getattr(self.vlm, "cfg", None), "model", None),
+                    },
+                    cfg,
+                )
+            except Exception:  # 留痕绝不影响主链路（fail-open 铁律）
+                pass
         self._inject(target, desc, result)
         return "injected"
 
-    def _describe_with_retry(self, image, question: str | None, tier: int, result: ProcessResult) -> str:
+    def _describe_with_retry(
+        self, image, question: str | None, tier: int, result: ProcessResult, detail: dict | None = None
+    ) -> str:
         """VLM 调用 + spec §5.4 重试退避：可重试错误按指数退避重试，
-        耗尽或不可重试错误抛给外层 fail-open。"""
+        耗尽或不可重试错误抛给外层 fail-open。detail 非 None 时透传给 describe
+        回填 prompt/raw（Task10 出参契约，供留痕）。"""
         last: VLMError | None = None
         for attempt in range(VLM_MAX_ATTEMPTS):
             try:
                 with self.semaphore:
-                    desc = self.vlm.describe(image, question=question, tier=tier)
+                    if detail is None:
+                        desc = self.vlm.describe(image, question=question, tier=tier)
+                    else:
+                        desc = self.vlm.describe(image, question=question, tier=tier, detail=detail)
                     result.vlm_calls += 1
                 return desc
             except VLMError as exc:
                 last = exc
-                if attempt == VLM_MAX_ATTEMPTS - 1 or not _is_retryable(exc):
+                if attempt is VLM_MAX_ATTEMPTS - 1 or not _is_retryable(exc):
                     raise
                 time.sleep(self._backoff(attempt))
             except Exception:

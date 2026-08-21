@@ -92,6 +92,14 @@ class VisionLogConfig:
     enabled: bool = True
     retention_days: int = 7
 
+    def __post_init__(self) -> None:
+        # retention_days=0 会让 cleanup 按整日 cutoff 误删当日文件；要关闭留存请用 enabled=false。
+        if self.retention_days < 1:
+            raise ConfigError(
+                f"vision_log.retention_days must be >= 1, got {self.retention_days!r}; "
+                "to disable retention, set vision_log.enabled=false"
+            )
+
 
 @dataclass
 class ProxyConfig:

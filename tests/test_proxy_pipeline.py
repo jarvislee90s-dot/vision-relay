@@ -6,7 +6,7 @@ import pytest
 
 from vision_relay.cache import DescriptionCache
 from vision_relay.config import ProxyConfig
-from vision_relay.ir import parse_chat
+from vision_relay.ir import ContentBlock, ImageBlock, IRRequest, Message, parse_chat
 from vision_relay.pipeline import (
     VLM_BACKOFF_BASE,
     VLM_BACKOFF_JITTER,
@@ -457,3 +457,62 @@ def test_followup_not_injected_current_turn_has_image():
     ir = IRRequest(model="deepseek-v4-pro", messages=[history, current])
     result = Pipeline(FakeVLM(), DescriptionCache()).process(ir, ProxyConfig())
     assert "需要重新查看原始图片" not in _all_text(result.ir)
+
+
+# ---- Phase2 M1: per-harness VLM + session/provider + vision log hook ----
+
+
+class TestVisionLogHook:
+    def test_vlm_call_recorded_with_three_segments(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "k"
+        recorded = []
+        monkeypatch.setattr(
+            "vision_relay.pipeline.record_vision_call",
+            lambda row, cfg_: recorded.append(row),
+        )
+
+        class FakeVLM:
+            def describe(self, image, question=None, tier=1, detail=None):
+                if detail is not None:
+                    detail["prompt"] = "P"
+                    detail["raw"] = "RAW"
+                return "a red truck"
+
+        pl = Pipeline(FakeVLM(), DescriptionCache())
+        msg = Message(
+            role="user",
+            content=[
+                ContentBlock(type="text", text="what?"),
+                ContentBlock(type="image", image=ImageBlock(base64="aGk=", media_type="image/png")),
+            ],
+        )
+        ir = IRRequest(model="deepseek-v4", messages=[msg])
+        pl.process(ir, cfg, "claude", "bigmodel", session_id="sess-9")
+        assert recorded, "VLM 调用必须留痕"
+        row = recorded[0]
+        assert row["harness"] == "claude" and row["session"] == "sess-9"
+        assert row["prompt"] == "P" and row["raw"] == "RAW"
+        assert row["injected"].startswith("[图片描述]")
+        assert row["cache_hit"] is False
+
+
+class TestPerHarnessVlmSelection:
+    def test_server_builds_vlm_client_per_harness(self):
+        from vision_relay.server import build_vlm_clients
+
+        cfg = ProxyConfig.from_dict({"vlm_by_harness": {"claude": {"model": "qwen3.5-omni-plus"}}})
+        clients = build_vlm_clients(cfg)
+        assert clients["claude"].cfg.model == "qwen3.5-omni-plus"
+        assert clients["codex"].cfg.model == cfg.vlm.model  # 未覆盖回落全局
+        assert clients["_default"].cfg.model == cfg.vlm.model
+
+
+class TestSessionExtraction:
+    def test_anthropic_user_id_suffix(self):
+        from vision_relay.server import extract_session_id
+
+        assert extract_session_id("anthropic", {"metadata": {"user_id": "user_abc__session-77"}}) == "session-77"
+        assert extract_session_id("anthropic", {"metadata": {"user_id": "plain"}}) == "plain"
+        assert extract_session_id("chat", {}) is None

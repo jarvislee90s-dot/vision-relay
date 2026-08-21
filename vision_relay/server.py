@@ -31,6 +31,32 @@ _PROTO_BY_PATH = {"/v1/messages": "anthropic", "/v1/responses": "responses", "/v
 _HARNESS_BY_PROTO = {"anthropic": "claude", "responses": "codex", "chat": "qwen-code"}
 
 
+def build_vlm_clients(cfg: ProxyConfig) -> dict:
+    """按 harness 预建 VLM 客户端（vlm_for 合并覆盖；三 harness 一律建 + _default 兜底）。"""
+    clients = {"_default": VLMClient(cfg.vlm)}
+    for harness in ("claude", "codex", "qwen-code"):
+        clients[harness] = VLMClient(cfg.vlm_for(harness))
+    return clients
+
+
+def extract_session_id(proto: str, body: dict) -> str | None:
+    """尽力而为的会话标识（spec §6 识图记录）：anthropic metadata.user_id（常含 __sessionId 后缀）。"""
+    if proto != "anthropic":
+        return None
+    metadata = body.get("metadata")
+    user_id = metadata.get("user_id") if isinstance(metadata, dict) else None
+    if not isinstance(user_id, str) or not user_id:
+        return None
+    return user_id.rsplit("__", 1)[-1]
+
+
+def _resolve_provider(cfg: ProxyConfig, relay: RelayConfig, tool_states_cache: dict) -> str | None:
+    """请求期 provider 解析（尽力而为）：两层=工具激活供应商；一层=relay 名。"""
+    if getattr(relay, "via", None):
+        return tool_states_cache.get(relay.via) or relay.via  # 激活供应商名未取到时退工具名
+    return relay.name if relay.name != "default" else None
+
+
 def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "") -> RelayConfig:
     """按 spec §6.3 选 relay：先 (model, protocol) 匹配，再仅 protocol，最后默认 relay。"""
     import fnmatch
@@ -138,8 +164,19 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         started = time.time()
         try:
             ir = _PARSERS[proto](body)
-            result = self._pipeline.process(ir, self._cfg, _HARNESS_BY_PROTO.get(proto), None)
+            harness = _HARNESS_BY_PROTO.get(proto)
             relay = _select_relay(self._cfg, proto, ir.model)
+            # 按 harness 切 VLM（spec §7.1）：vlm_clients 与 run_server 建的 pipeline 配套；
+            # pipeline 被整体替换（测试注入替身）时不越权覆盖，尊重替换者自带的 vlm。
+            clients = getattr(self.server, "vlm_clients", None)
+            if clients and getattr(self.server, "vlm_clients_pipeline", None) is self._pipeline:
+                vlm_client = clients.get(harness) or clients.get("_default")
+                if vlm_client is not None and vlm_client is not self._pipeline.vlm:
+                    self._pipeline.vlm = vlm_client
+            provider = _resolve_provider(self._cfg, relay, getattr(self.server, "tool_provider_cache", {}))
+            result = self._pipeline.process(
+                ir, self._cfg, harness, provider, session_id=extract_session_id(proto, body)
+            )
             out_body = _SERIALIZERS[proto](result.ir)
             status, text = _forward(relay, out_body, ir.stream)
             log_json(
@@ -196,4 +233,9 @@ def run_server(cfg: ProxyConfig | None = None, handler_cls=ProxyHandler):
     server = http.server.ThreadingHTTPServer((cfg.bind_host, cfg.bind_port), handler_cls)
     server.cfg = cfg  # type: ignore[attr-defined]
     server.pipeline = pipeline  # type: ignore[attr-defined]
+    # per-harness VLM 客户端（spec §7.1）+ 请求期 provider 解析缓存。
+    # vlm_clients_pipeline 标记配套关系：pipeline 被替换后 handler 不再越权切 VLM。
+    server.vlm_clients = build_vlm_clients(cfg)  # type: ignore[attr-defined]
+    server.vlm_clients_pipeline = pipeline  # type: ignore[attr-defined]
+    server.tool_provider_cache = {}  # type: ignore[attr-defined]
     return server
