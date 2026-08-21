@@ -186,9 +186,9 @@ def test_onboarding_confirm_default_text_only():
 
 def test_onboarding_confirm_toggle_vision_second():
     groups = [_grp("claude", "cfg", ["minimax-m3", "deepseek-v4-flash"])]
-    keys = iter(["down", "space", "enter"])  # 到第二个并切 vision
+    keys = iter(["down", "space", "enter"])  # 到第二个并切为支持图片
     cap = onboarding.confirm_models(groups, key_source=lambda: next(keys), out=io.StringIO())
-    assert cap["claude"]["deepseek-v4-flash"] == "vision"
+    assert cap["claude"]["deepseek-v4-flash"] == "image"
     assert cap["claude"]["minimax-m3"] == "text_only"
 
 
@@ -315,7 +315,7 @@ def test_edit_all_rewrites(tmp_path, monkeypatch):
     cfg.routing.relay_templates = {"r1": {"protocol": "chat", "base_url": "http://x", "models": ["a"]}}
     assert onboarding.edit_all(cfg, key_source=lambda: "enter", out=io.StringIO()) is True
     assert isinstance(cfg.model_capabilities.get("relay"), dict)
-    assert "a" in cfg.model_capabilities["relay"]
+    assert cfg.model_capabilities["relay"]["legacy"]["a"] == "text_only"  # 三层 legacy 桶（I3）
 
 
 # ── 独立化兼容层：旧后缀备份还原 ──────────────────────────────────────

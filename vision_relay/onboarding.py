@@ -171,7 +171,7 @@ def _read_key_from_tty():
 
 
 def confirm_models(groups, key_source=None, out=None) -> dict | None:
-    """按组分组的交互确认；返回 {group: {model: vision|text_only}}；取消返回 None。"""
+    """按组分组的交互确认；返回 {group: {model: image|text_only}}；取消返回 None。"""
     out = out or sys.stdout
     key_source = key_source or _read_key_from_tty
     items = []  # (group, ModelEntry)
@@ -180,7 +180,8 @@ def confirm_models(groups, key_source=None, out=None) -> dict | None:
             items.append((g, ent))
     if not items:
         return {}
-    vision = {(id(g), ent.model): (_default_cap(ent.model) == "image") for g, ent in items}
+    # 三态默认：未标注一律不勾选（纯文本最安全，spec §5）；内置建议只在 models_scan_report 展示，不作预勾选。
+    vision = {(id(g), ent.model): False for g, ent in items}
     idx = 0
     n = len(items)
     last_group = None
@@ -217,18 +218,20 @@ def confirm_models(groups, key_source=None, out=None) -> dict | None:
         last_group = None  # 强制下轮重绘组头
     result: dict = {}
     for g, ent in items:
-        result.setdefault(g.group, {})[ent.model] = "vision" if vision.get((id(g), ent.model)) else "text_only"
+        result.setdefault(g.group, {})[ent.model] = "image" if vision.get((id(g), ent.model)) else "text_only"
     return result
 
 
 def _merge(cfg, result) -> None:
+    """结果写三层 legacy provider 桶 {group: {"legacy": {model: cap}}}。
+
+    与 config.from_dict 的旧两层迁移固定点一致（from_dict 会把两层 {group:{model:cap}} 迁到
+    {group:{"legacy":{...}}}）；直接写三层避免存出混深度 dict、load→save→load 再变形。
+    """
     for group, mm in result.items():
-        bucket = cfg.model_capabilities.get(group)
-        if not isinstance(bucket, dict):
-            bucket = {}
-            cfg.model_capabilities[group] = bucket
+        legacy = cfg.model_capabilities.setdefault(group, {}).setdefault("legacy", {})
         for m, cap in mm.items():
-            bucket[m] = cap
+            legacy[m] = cap
 
 
 def _stored_models(cfg) -> set:

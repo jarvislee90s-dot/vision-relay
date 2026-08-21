@@ -693,3 +693,47 @@ class TestJsonVerbsCli:
         payload = _json.loads(capsys.readouterr().out)
         assert payload["contract_version"] == 1 and payload["ok"] is False
         assert "bad json" in payload["data"]["error"]
+
+
+# ---- Phase2 M1: onboarding tri-state default ----
+
+
+class _Sink:
+    def write(self, s):
+        pass
+
+    def flush(self):
+        pass
+
+
+class TestOnboardingTriState:
+    def test_confirm_defaults_to_text_only_and_uses_image_value(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.onboarding import ModelEntry, ModelGroup, confirm_models
+
+        groups = [ModelGroup(group="claude", path="x", entries=[ModelEntry(model="qwen-vl-max")])]
+        keys = iter(["enter"])  # 直接回车 = 接受默认（未勾选=纯文本）
+        result = confirm_models(groups, key_source=lambda: next(keys), out=_Sink())
+        assert result["claude"]["qwen-vl-max"] == "text_only"
+
+    def test_toggle_marks_image(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.onboarding import ModelEntry, ModelGroup, confirm_models
+
+        groups = [ModelGroup(group="claude", path="x", entries=[ModelEntry(model="kimi-k2.7-code")])]
+        keys = iter(["space", "enter"])
+        result = confirm_models(groups, key_source=lambda: next(keys), out=_Sink())
+        assert result["claude"]["kimi-k2.7-code"] == "image"  # 内部值 image（非 vision）
+
+
+def test_onboarding_merge_writes_legacy_provider_bucket(tmp_path, monkeypatch):
+    """I3 回归：onboarding 直接写三层 legacy provider 桶，与 config.from_dict 迁移固定点一致。"""
+    from vision_relay.config import ProxyConfig
+    from vision_relay.onboarding import _merge
+
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+    cfg = ProxyConfig()
+    _merge(cfg, {"claude": {"qwen-vl-max": "image"}})
+    assert cfg.model_capabilities["claude"]["legacy"]["qwen-vl-max"] == "image"
+    reloaded = ProxyConfig.from_dict({"model_capabilities": cfg.model_capabilities})
+    assert reloaded.model_capabilities == cfg.model_capabilities  # 迁移固定点：不再变形
