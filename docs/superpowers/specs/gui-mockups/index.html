@@ -366,7 +366,7 @@
     <div class="subtab" data-stab="s2">VLM</div>
     <div class="subtab" data-stab="s3">上游转发</div>
     <div class="subtab" data-stab="s4">高级</div>
-    <span class="dim small" style="margin-left:auto;">所有编辑类设置集中在本页</span>
+    <span class="dim small" style="margin-left:auto;">编辑集中在本页 · 四个分区共用底部一条「保存」</span>
   </div>
 
   <!-- 服务 -->
@@ -427,19 +427,22 @@
         </div>
       </div>
     </div>
-    <div class="row" style="justify-content:flex-end;"><button class="btn primary lg">💾 保存本页全部 VLM 设置</button></div>
+    <div class="row" style="justify-content:flex-end;">
+      <span class="dim small" style="margin-right:10px;">统一保存见本页底部</span>
+    </div>
   </div>
 
   <!-- 上游转发 -->
   <div data-spage="s3" style="display:none;">
-    <div class="hint">图例：<b>停用转发</b> = 该 relay 不参与请求匹配转发（所有 relay 均可停，含自动探测项；停用自动项记入压制名单，探测不再自动加回）；<b>来源</b> = 生成方式（自动探测=工具档案命中 / 手工=用户添加）；<b>匹配模型</b> = 请求的模型名命中这些模式才走这条转发。</div>
+    <div class="hint">relay = 「模型名匹配 → 转发到某上游」的规则。<b>全部由系统自动生成，无需手工创建</b>：路由工具在线 → 自动探测生成两层 relay；接管 / 换供应商 → 按接管快照吸收生成直连 relay。本页只读 + 两个轻操作：<b>停用转发</b>（该规则不参与匹配；停用自动项记入压制名单）、<b>🔑 补填 key</b>（快照吸收的直连 relay 缺 key 时）。完全自定义转发规则属高级用法：直接编辑 <span class="mono">~/.vision-relay/proxy.json</span>（见文档）。</div>
     <div class="card" style="padding:0;">
-      <div class="row between" style="padding:12px 14px 0;"><h3>relay 列表（本代理 → 上游）</h3><button class="btn primary">＋ 添加直连 relay</button></div>
+      <div class="row between" style="padding:12px 14px 0;"><h3>relay 列表（本代理 → 上游，自动生成）</h3><span class="small dim">匹配模型 = 请求的模型名命中该列模式才走这条转发</span></div>
       <table>
         <tr><th>名称</th><th>协议</th><th>base_url</th><th>拓扑</th><th>来源</th><th>匹配模型</th><th>操作</th></tr>
         <tr><td>cc-anthropic</td><td>anthropic</td><td class="mono">http://127.0.0.1:15721</td><td><span class="tag info">两层 · 经 CC Switch</span></td><td><span class="tag gray">自动探测</span></td><td>*</td><td><a href="#">停用转发</a></td></tr>
         <tr><td>codex-plus</td><td>responses</td><td class="mono">http://127.0.0.1:57321/v1</td><td><span class="tag info">两层 · 经 Codex++</span></td><td><span class="tag gray">自动探测</span></td><td>*</td><td><a href="#">停用转发</a></td></tr>
-        <tr><td>qwen-direct</td><td>chat</td><td class="mono">https://dashscope.aliyuncs.com/compatible-mode/v1</td><td><span class="tag gray">一层直连</span></td><td><span class="tag gray">手工</span></td><td>qwen-*</td><td><a href="#">编辑</a> · <a href="#">停用转发</a></td></tr>
+        <tr><td>qwen-direct</td><td>chat</td><td class="mono">https://dashscope.aliyuncs.com/compatible-mode/v1</td><td><span class="tag gray">一层直连</span></td><td><span class="tag gray">快照吸收</span></td><td>qwen-*</td><td><a href="#">停用转发</a></td></tr>
+        <tr style="background:#fffbeb;"><td>glm-direct</td><td>anthropic</td><td class="mono">https://open.bigmodel.cn/api/anthropic</td><td><span class="tag gray">一层直连</span></td><td><span class="tag gray">快照吸收</span></td><td>glm-*</td><td><a href="#">🔑 补填 key</a> · <a href="#">停用转发</a></td></tr>
       </table>
     </div>
     <div class="cols3">
@@ -453,15 +456,6 @@
         <div class="small dim" style="margin-top:4px;">读取：settings.json（只读）</div></div>
       <div class="card"><h3>＋ 未来工具</h3><div class="dim small" style="margin-top:6px;">工具档案 = 名字 + 端口 + 支持的 harness + relay 模板 + 激活供应商读取方式。TRAE / Kimi 加条目即接入。</div></div>
     </div>
-    <div class="card">
-      <h3>添加直连 relay（手工指定一条真实上游转发）</h3>
-      <div class="field"><label>名称</label><input class="input" value="deepseek-direct" style="min-width:150px;"></div>
-      <div class="field"><label>协议</label><span class="subtab active">chat</span><span class="subtab">anthropic</span><span class="subtab">responses</span></div>
-      <div class="field"><label>base URL</label><input class="input" value="https://api.deepseek.com" style="min-width:280px;"></div>
-      <div class="field"><label>API key</label><input class="input" type="password" placeholder="sk-…" style="min-width:170px;"></div>
-      <div class="field"><label>匹配模型</label><input class="input" value="deepseek-*" style="min-width:150px;"></div>
-      <button class="btn primary">添加</button>
-    </div>
   </div>
 
   <!-- 高级 -->
@@ -471,6 +465,15 @@
       <div class="field"><label>识图留痕</label><label><input type="checkbox" checked> 记录</label>　留存 <input class="input" value="7 天" style="width:64px;">　<span class="dim small">仅存本机；<a href="#">整体关闭（敏感环境）</a></span></div>
       <div class="field"><label>语言</label><span class="subtab active">中文</span><span class="subtab">English</span></div>
       <div class="field"><label>关于</label><span class="dim">版本 0.3.0 · 通信契约 v1 · 核心与 GUI 同包（冻结分发）· <a href="#">pip 通道说明</a></span></div>
+    </div>
+  </div>
+
+  <!-- 统一保存栏：设置页四个分区共用，所有输入类控件（含开关/勾选）一律由此保存 -->
+  <div class="card row between" style="position:sticky; bottom:0; box-shadow:0 -2px 8px rgba(0,0,0,.06); margin-bottom:0;">
+    <span class="dim small">● 2 处未保存修改（服务 1 · VLM 1）——输入类修改（含开关、勾选）统一由这里保存生效；离开本页前未保存会提示</span>
+    <div class="row">
+      <button class="btn">放弃修改</button>
+      <button class="btn primary lg">💾 保存设置（2 处）</button>
     </div>
   </div>
 
