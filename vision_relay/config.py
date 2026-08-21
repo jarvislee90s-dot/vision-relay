@@ -118,6 +118,9 @@ class ProxyConfig:
         vlh = data.get("vlm_by_harness", {})
         if not isinstance(vlh, dict):
             raise ConfigError(f"vlm_by_harness: expected an object, got {type(vlh).__name__}")
+        for hk, hv in vlh.items():
+            if not isinstance(hv, dict):
+                raise ConfigError(f"vlm_by_harness[{hk}]: expected an object, got {type(hv).__name__}")
         probe_results = data.get("probe_results", {})
         if not isinstance(probe_results, dict):
             raise ConfigError(f"probe_results: expected an object, got {type(probe_results).__name__}")
@@ -151,9 +154,10 @@ class ProxyConfig:
         }
 
     def vlm_for(self, harness: str | None) -> VLMConfig:
-        """按 harness 合成生效 VLM 配置：显式覆盖字段 > 全局默认（spec §7.1）。"""
+        """按 harness 合成生效 VLM 配置：显式覆盖字段 > 全局默认（spec §7.1）。
+        None/空串视为未覆盖（回落全局）；False 等显式值必须生效。"""
         override = self.vlm_by_harness.get(harness or "", {})
-        merged = {**self.vlm.__dict__, **{k: v for k, v in override.items() if v}}
+        merged = {**self.vlm.__dict__, **{k: v for k, v in override.items() if v is not None and v != ""}}
         return VLMConfig(**{k: v for k, v in merged.items() if k in VLMConfig.__dataclass_fields__})
 
 
@@ -183,7 +187,11 @@ def _parse_capabilities(raw: dict) -> tuple[dict, bool]:
         elif isinstance(v, dict):
             for k2, v2 in v.items():
                 if isinstance(v2, str):  # 旧两层 group -> model
-                    caps.setdefault(k, {}).setdefault("legacy", {})[k2] = _normalize_cap(v2)
+                    if k == "global":
+                        # global 组吸收为两层 {pattern:cap}（与旧扁平迁移同形）：load→save→load 幂等固定点
+                        caps.setdefault(k, {})[k2] = _normalize_cap(v2)
+                    else:
+                        caps.setdefault(k, {}).setdefault("legacy", {})[k2] = _normalize_cap(v2)
                 elif isinstance(v2, dict):  # 新三层 harness -> provider -> model
                     bucket = caps.setdefault(k, {}).setdefault(k2, {})
                     for k3, v3 in v2.items():

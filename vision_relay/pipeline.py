@@ -72,7 +72,7 @@ class Pipeline:
         self.table = CapabilityTable()
 
     def process(self, ir: IRRequest, cfg: ProxyConfig, harness: str | None = None) -> ProcessResult:
-        if self.table.judge(ir.model, cfg, harness) == "vision":
+        if self.table.judge(ir.model, cfg, harness) in ("vision", "image"):  # 过渡期双词汇，Task2 统一为 image
             return ProcessResult(ir=ir)  # vision model: zero overhead passthrough
         result = ProcessResult(ir=ir)
         budget = self._budget(ir, cfg)

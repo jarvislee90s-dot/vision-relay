@@ -258,6 +258,13 @@ class TestTriStateCapabilities:
         cfg = ProxyConfig.from_dict({"probe_results": {"prov": {"m": {"result": "image", "ts": 1}}}})
         assert cfg.probe_results["prov"]["m"]["result"] == "image"
 
+    def test_flat_migration_idempotent_across_save_load(self):
+        """I1：load→save→load 两轮后形状稳定（global 组吸收为固定点，不再二次套 'legacy'）。"""
+        cfg = ProxyConfig.from_dict({"model_capabilities": {"deepseek/*": "text_only"}})
+        for _ in range(2):
+            cfg = ProxyConfig.from_dict(cfg.to_dict())
+        assert cfg.model_capabilities == {"global": {"deepseek/*": "text_only"}}
+
 
 class TestUnknownDefault:
     def test_accepts_image_alias(self):
@@ -294,6 +301,22 @@ class TestVlmByHarness:
         merged = cfg.vlm_for("codex")
         assert merged.model == "m"
         assert merged.base_url == cfg.vlm.base_url  # 未填回落全局
+
+    def test_false_override_takes_effect(self):
+        """I2：None/空串回落全局，False 等显式覆盖必须生效（不被 falsy 过滤吞掉）。"""
+        cfg = ProxyConfig.from_dict({"vlm": {"cache_disk": True}, "vlm_by_harness": {"codex": {"cache_disk": False}}})
+        assert cfg.vlm_for("codex").cache_disk is False
+        assert cfg.vlm_for("codex").auto_local_ollama is True  # 未覆盖字段回落全局默认
+
+    def test_empty_string_override_falls_back(self):
+        cfg = ProxyConfig.from_dict({"vlm_by_harness": {"codex": {"model": ""}}})
+        assert cfg.vlm_for("codex").model == cfg.vlm.model  # 空串视为未覆盖
+
+    def test_non_object_harness_value_rejected(self):
+        import pytest
+
+        with pytest.raises(ConfigError):
+            ProxyConfig.from_dict({"vlm_by_harness": {"codex": "nope"}})
 
 
 class TestVisionLogConfig:
