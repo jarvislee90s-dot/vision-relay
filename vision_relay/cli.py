@@ -3,45 +3,62 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import socket
 import sys
 
-from . import __version__
+from . import __version__, verbs
 from .env_util import config_dir
 from .reconcile import reconcile as reconcile_reconcile
 
 PID_FILE = "proxy.pid"
 LOG_FILE = "proxy.log"
 
+# --json 动词分发表（spec §4 通信契约：envelope + contract_version，GUI 只消费这个）。
+_JSON_MAP = {
+    "status": verbs.status,
+    "refresh": verbs.refresh,
+    "diagnose": verbs.diagnose,
+    "models-scan": verbs.models_scan,
+    "config": verbs.config_get,
+    "tools": verbs.tools,
+    "events": verbs.events,
+    "visionlog": verbs.visionlog,
+}
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="vision-relay")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
+    # 公共 parent：管理动词统一可挂 --json（子命令后置 flag 也可用）。
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true", help="machine-readable output (contract_version pinned)")
     st = sub.add_parser("start")
     st.add_argument("--detach", action="store_true", help="分离进程启动（GUI/自动重试用）")
-    sub.add_parser("stop")
-    sub.add_parser("status")
-    sub.add_parser("logs")
+    sub.add_parser("stop", parents=[common])
+    sub.add_parser("status", parents=[common])
+    sub.add_parser("logs", parents=[common])
     ti = sub.add_parser("test-image")
     ti.add_argument("path")
     ti.add_argument("--question", default=None)
-    sub.add_parser("check")
-    sub.add_parser("models-scan")  # 非交互打印模型能力草稿
-    sub.add_parser("models")  # 显式交互入口：重新确认/编辑 model_capabilities
-    sub.add_parser("refresh")  # M1: 手动对账（= 刷新按钮后端）
-    sub.add_parser("diagnose")  # M1: 观测 + 自动修复 + 报告
-    sub.add_parser("tools")  # M1: 工具档案探测
+    sub.add_parser("check", parents=[common])
+    sub.add_parser("models-scan", parents=[common])  # 非交互打印模型能力草稿
+    sub.add_parser("models", parents=[common])  # 显式交互入口：重新确认/编辑 model_capabilities
+    sub.add_parser("refresh", parents=[common])  # M1: 手动对账（= 刷新按钮后端）
+    sub.add_parser("diagnose", parents=[common])  # M1: 观测 + 自动修复 + 报告
+    sub.add_parser("tools", parents=[common])  # M1: 工具档案探测
     pr = sub.add_parser("probe")  # M1: 模态探针
     pr.add_argument("--harness")
     pr.add_argument("--provider")
     pr.add_argument("--model")
     pr.add_argument("--all-untested", action="store_true")
-    sub.add_parser("events")  # M1: 事件日志 tail
-    vl = sub.add_parser("visionlog")  # M1: 识图记录查询
+    sub.add_parser("events", parents=[common])  # M1: 事件日志 tail
+    vl = sub.add_parser("visionlog", parents=[common])  # M1: 识图记录查询
     vl.add_argument("--harness")
+    sub.add_parser("config", parents=[common])  # Task 14: --json 配置读取（打码）
     return parser.parse_args(argv)
 
 
@@ -315,8 +332,6 @@ def _probe_target_for(cfg, harness: str, provider: str, tool_by_name: dict) -> t
 
 
 def cmd_events(cfg) -> int:
-    import json
-
     from .reconcile import tail_events
 
     for row in tail_events(50):
@@ -518,8 +533,10 @@ def _safe_stdio() -> None:
 def main(argv: list[str] | None = None) -> int:
     _safe_stdio()
     args = parse_args(argv)
+    as_json = getattr(args, "json", False) and args.command in _JSON_MAP
     # stop/status/logs 只读 PID/日志，不依赖配置——损坏的 proxy.json 不能锁死这些生命周期命令。
-    if args.command in ("stop", "status", "logs"):
+    # 例外：status --json 走 verbs（需要完整配置观测），必须等 cfg 加载后统一分发。
+    if args.command in ("stop", "status", "logs") and not as_json:
         return {"stop": cmd_stop, "status": cmd_status, "logs": cmd_logs}[args.command]()
     from .config import ConfigError, load_config
 
@@ -528,6 +545,10 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+    if as_json:
+        kw = {"harness": getattr(args, "harness", None)} if args.command == "visionlog" else {}
+        print(json.dumps(_JSON_MAP[args.command](cfg, **kw), ensure_ascii=False))
+        return 0
     if args.command == "start" and getattr(args, "detach", False):
         return cmd_start_detach(cfg)
     if args.command == "start":

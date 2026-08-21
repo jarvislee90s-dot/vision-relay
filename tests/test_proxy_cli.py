@@ -648,3 +648,31 @@ class TestStartReconcileNeedsYou:
         out = capsys.readouterr().out
         assert "[需要你]" in out
         assert "补 key" in out
+
+
+# ---- Task 14: --json verbs（spec §4 通信契约：envelope + contract_version）----
+
+
+class TestJsonVerbsCli:
+    def test_parse_args_json_flag_after_subcommand(self):
+        """--json 挂在公共 parent parser 上：子命令后置 flag 可用。"""
+        args = parse_args(["status", "--json"])
+        assert args.command == "status" and args.json is True
+
+    def test_main_config_json_envelope_and_masking(self, tmp_path, monkeypatch, capsys):
+        """config --json：单行 JSON envelope（contract_version:1），且明文 key 绝不外泄。"""
+        import json as _json
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "sk-secret"
+        monkeypatch.setattr("vision_relay.config.load_config", lambda *a, **k: cfg)
+        assert cli.main(["config", "--json"]) == 0
+        out = capsys.readouterr().out
+        assert '"contract_version": 1' in out
+        assert "sk-secret" not in out
+        assert "●●●●" in out
+        payload = _json.loads(out)
+        assert payload["ok"] is True and payload["data"]["vlm"]["api_key"] == "●●●●"
