@@ -23,7 +23,6 @@ def test_default_config_defaults():
     cfg = default_config()
     assert cfg.bind_host == "127.0.0.1"
     assert cfg.bind_port == 8787
-    assert cfg.ui_port == 8788
     assert cfg.vlm.model  # 非空默认
     assert cfg.vlm.format == "chat"
 
@@ -222,3 +221,87 @@ def test_load_config_reads_legacy_dir_and_save_migrates(tmp_path: Path, monkeypa
     saved = json.loads((new_dir / "proxy.json").read_text(encoding="utf-8"))
     assert saved["server"]["bind_port"] == 9300
     assert not (old_dir / "proxy.json.tmp").exists()
+
+
+# ---- Phase2 M1: tri-state capabilities / migration / vlm_by_harness / ui_port ----
+
+
+class TestTriStateCapabilities:
+    def test_legacy_vision_normalized_to_image(self):
+        cfg = ProxyConfig.from_dict({"model_capabilities": {"claude": {"prov": {"m1": "vision", "m2": "text_only"}}}})
+        assert cfg.model_capabilities["claude"]["prov"]["m1"] == "image"
+
+    def test_legacy_flat_migrated_to_global_bucket(self):
+        cfg = ProxyConfig.from_dict({"model_capabilities": {"deepseek/*": "text_only"}})
+        assert cfg.model_capabilities["global"]["deepseek/*"] == "text_only"
+
+    def test_legacy_grouped_kept(self):
+        cfg = ProxyConfig.from_dict({"model_capabilities": {"claude": {"m1": "vision"}}})
+        assert cfg.model_capabilities["claude"]["legacy"]["m1"] == "image"  # 旧两层→provider 记 'legacy'
+
+    def test_absent_means_unannotated(self):
+        cfg = ProxyConfig.from_dict({})
+        assert "claude" not in cfg.model_capabilities  # 未标注 = 键缺失
+
+    def test_invalid_value_rejected(self):
+        import pytest
+
+        with pytest.raises(ConfigError):
+            ProxyConfig.from_dict({"model_capabilities": {"claude": {"p": {"m": "movie"}}}})
+
+    def test_sources_roundtrip(self):
+        cfg = ProxyConfig.from_dict({"capability_sources": {"claude": {"prov": {"m1": "probe"}}}})
+        assert cfg.capability_sources["claude"]["prov"]["m1"] == "probe"
+        assert cfg.to_dict()["capability_sources"] == {"claude": {"prov": {"m1": "probe"}}}
+
+    def test_probe_results_roundtrip(self):
+        cfg = ProxyConfig.from_dict({"probe_results": {"prov": {"m": {"result": "image", "ts": 1}}}})
+        assert cfg.probe_results["prov"]["m"]["result"] == "image"
+
+
+class TestUnknownDefault:
+    def test_accepts_image_alias(self):
+        assert ProxyConfig.from_dict({"routing": {"unknown_default": "image"}}).routing.unknown_default == "image"
+
+    def test_accepts_legacy_vision(self):
+        assert ProxyConfig.from_dict({"routing": {"unknown_default": "vision"}}).routing.unknown_default == "image"
+
+    def test_rejects_other(self):
+        import pytest
+
+        with pytest.raises(ConfigError):
+            ProxyConfig.from_dict({"routing": {"unknown_default": "movie"}})
+
+
+class TestUiPortRemoved:
+    def test_to_dict_has_no_ui_port(self):
+        assert "ui_port" not in ProxyConfig.from_dict({}).to_dict()["server"]
+
+    def test_from_dict_ignores_ui_port(self):
+        cfg = ProxyConfig.from_dict({"server": {"ui_port": 8788}})
+        assert not hasattr(cfg, "ui_port")
+
+
+class TestVlmByHarness:
+    def test_default_empty_and_roundtrip(self):
+        cfg = ProxyConfig.from_dict({})
+        assert cfg.vlm_by_harness == {}
+        cfg.vlm_by_harness["claude"] = {"model": "qwen3.5-omni-plus", "api_key": "k"}
+        assert cfg.to_dict()["vlm_by_harness"]["claude"]["model"] == "qwen3.5-omni-plus"
+
+    def test_partial_fields_fill_from_defaults(self):
+        cfg = ProxyConfig.from_dict({"vlm_by_harness": {"codex": {"model": "m"}}})
+        merged = cfg.vlm_for("codex")
+        assert merged.model == "m"
+        assert merged.base_url == cfg.vlm.base_url  # 未填回落全局
+
+
+class TestVisionLogConfig:
+    def test_defaults(self):
+        cfg = ProxyConfig.from_dict({})
+        assert cfg.vision_log.enabled is True
+        assert cfg.vision_log.retention_days == 7
+
+    def test_roundtrip(self):
+        cfg = ProxyConfig.from_dict({"vision_log": {"enabled": False, "retention_days": 3}})
+        assert cfg.to_dict()["vision_log"] == {"enabled": False, "retention_days": 3}

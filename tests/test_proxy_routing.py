@@ -43,13 +43,13 @@ def test_routing_config_parse_and_roundtrip(tmp_path, monkeypatch):
     assert cfg.routing.auto_wire is False
     assert cfg.routing.harnesses == ["claude"]
     assert cfg.routing.capability_confirmed is True
-    assert cfg.routing.unknown_default == "vision"
+    assert cfg.routing.unknown_default == "image"  # 旧值 'vision' 加载时归一为 'image'
     assert cfg.routing.relay_templates == {"r1": {"protocol": "chat", "base_url": "http://x"}}
     # save_config roundtrip 保留 routing
     save_config(cfg)
     cfg2 = load_config(str(p))
     assert cfg2.routing.auto_wire is False
-    assert cfg2.routing.unknown_default == "vision"
+    assert cfg2.routing.unknown_default == "image"
 
 
 def test_routing_bad_harness_and_unknown_default_raise():

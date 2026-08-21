@@ -235,7 +235,11 @@ def _stored_models(cfg) -> set:
     out = set()
     for v in cfg.model_capabilities.values():
         if isinstance(v, dict):
-            out.update(v.keys())
+            for k2, v2 in v.items():
+                if isinstance(v2, dict):  # 新三层 {provider:{model:cap}}（from_dict 迁移产物）
+                    out.update(v2.keys())
+                else:  # 旧两层 {model:cap}
+                    out.add(k2)
         elif isinstance(v, str):
             out.add(v)
     return out

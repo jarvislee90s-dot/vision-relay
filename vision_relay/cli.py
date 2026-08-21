@@ -71,7 +71,7 @@ def cmd_start(cfg) -> int:
     from .server import run_server
 
     server = run_server(cfg)
-    print(f"vision-relay listening on {cfg.bind_host}:{cfg.bind_port} (data) / {cfg.ui_port} (control)")
+    print(f"vision-relay listening on {cfg.bind_host}:{cfg.bind_port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -235,7 +235,7 @@ def cmd_models_scan(cfg) -> int:
 
 def cmd_check(cfg) -> int:
     problems = []
-    for port in (cfg.bind_port, cfg.ui_port):
+    for port in (cfg.bind_port,):
         with socket.socket() as s:
             if s.connect_ex(("127.0.0.1", port)) == 0:
                 problems.append(f"port {port} already in use")

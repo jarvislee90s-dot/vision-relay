@@ -43,8 +43,8 @@ class RoutingConfig:
             raise ConfigError(
                 f"routing.harnesses: unknown harness {','.join(map(repr, bad))}; must be in {list(HARNESSES)}"
             )
-        if self.unknown_default not in ("text_only", "vision"):
-            raise ConfigError(f"routing.unknown_default must be 'text_only' or 'vision', got {self.unknown_default!r}")
+        if self.unknown_default not in ("text_only", "image", "vision"):
+            raise ConfigError(f"routing.unknown_default must be 'text_only' or 'image', got {self.unknown_default!r}")
 
 
 class ConfigError(Exception):
@@ -84,39 +84,115 @@ class RelayConfig:
             )
 
 
+CAPABILITY_VALUES = ("image", "text_only")
+
+
+@dataclass
+class VisionLogConfig:
+    enabled: bool = True
+    retention_days: int = 7
+
+
 @dataclass
 class ProxyConfig:
     bind_host: str = "127.0.0.1"
     bind_port: int = 8787
-    ui_port: int = 8788
     relays: list[RelayConfig] = field(default_factory=list)
     vlm: VLMConfig = field(default_factory=VLMConfig)
-    model_capabilities: dict[str, str] = field(default_factory=dict)
+    vlm_by_harness: dict[str, dict] = field(default_factory=dict)  # harness -> 覆盖字段
+    model_capabilities: dict[str, dict] = field(default_factory=dict)  # {harness:{provider:{model:cap}}}
+    capability_sources: dict[str, dict] = field(default_factory=dict)  # 同构，值 user|probe|catalog
+    probe_results: dict[str, dict] = field(default_factory=dict)  # {provider:{model:{result,ts}}}
+    vision_log: VisionLogConfig = field(default_factory=VisionLogConfig)
+    model_capabilities_legacy_flat_seen: bool = False  # 迁移标记（只读提示用）
     routing: RoutingConfig = field(default_factory=RoutingConfig)
 
     @classmethod
     def from_dict(cls, data: dict) -> "ProxyConfig":
         server = data.get("server", {})
         vlm = data.get("vlm", {})
-        routing = data.get("routing", {})
+        routing = dict(data.get("routing", {}))
+        if routing.get("unknown_default") == "vision":
+            routing["unknown_default"] = "image"
+        caps, legacy_flat = _parse_capabilities(data.get("model_capabilities", {}))
+        vlh = data.get("vlm_by_harness", {})
+        if not isinstance(vlh, dict):
+            raise ConfigError(f"vlm_by_harness: expected an object, got {type(vlh).__name__}")
+        probe_results = data.get("probe_results", {})
+        if not isinstance(probe_results, dict):
+            raise ConfigError(f"probe_results: expected an object, got {type(probe_results).__name__}")
         return cls(
             bind_host=server.get("bind_host", "127.0.0.1"),
             bind_port=int(server.get("bind_port", 8787)),
-            ui_port=int(server.get("ui_port", 8788)),
             relays=_parse_relays(data.get("relays", [])),
             vlm=VLMConfig(**{k: v for k, v in vlm.items() if k in VLMConfig.__dataclass_fields__}),
-            model_capabilities=data.get("model_capabilities", {}),
+            vlm_by_harness=vlh,
+            model_capabilities=caps,
+            capability_sources=data.get("capability_sources", {}),
+            probe_results=probe_results,
+            vision_log=VisionLogConfig(
+                **{k: v for k, v in data.get("vision_log", {}).items() if k in VisionLogConfig.__dataclass_fields__}
+            ),
+            model_capabilities_legacy_flat_seen=legacy_flat,
             routing=RoutingConfig(**{k: v for k, v in routing.items() if k in RoutingConfig.__dataclass_fields__}),
         )
 
     def to_dict(self) -> dict:
         return {
-            "server": {"bind_host": self.bind_host, "bind_port": self.bind_port, "ui_port": self.ui_port},
+            "server": {"bind_host": self.bind_host, "bind_port": self.bind_port},
             "relays": [r.__dict__ for r in self.relays],
             "vlm": self.vlm.__dict__,
+            "vlm_by_harness": self.vlm_by_harness,
             "model_capabilities": self.model_capabilities,
+            "capability_sources": self.capability_sources,
+            "probe_results": self.probe_results,
+            "vision_log": self.vision_log.__dict__,
             "routing": self.routing.__dict__,
         }
+
+    def vlm_for(self, harness: str | None) -> VLMConfig:
+        """按 harness 合成生效 VLM 配置：显式覆盖字段 > 全局默认（spec §7.1）。"""
+        override = self.vlm_by_harness.get(harness or "", {})
+        merged = {**self.vlm.__dict__, **{k: v for k, v in override.items() if v}}
+        return VLMConfig(**{k: v for k, v in merged.items() if k in VLMConfig.__dataclass_fields__})
+
+
+def _normalize_cap(value: object) -> str:
+    if value == "vision":
+        return "image"
+    if value in CAPABILITY_VALUES:
+        return str(value)
+    raise ConfigError(
+        f"model_capabilities: value must be one of {CAPABILITY_VALUES} (or legacy 'vision'), got {value!r}"
+    )
+
+
+def _parse_capabilities(raw: dict) -> tuple[dict, bool]:
+    """三种历史形态归一为 {harness:{provider:{model:cap}}}：
+    1) 新三层嵌套（provider 层可能是 'global' 等旧组名→视为 provider 名保留）；
+    2) 旧两层 {group:{model:cap}}（onboarding 产物）→ group 作 harness、provider 记 'legacy'；
+    3) 旧扁平 {pattern:cap} → 迁到 global 组（harness='global'，pattern 直接作键，
+       与 capability.py 现有 caps['global'][model] 两层读法兼容）。
+    返回 (caps, legacy_flat_seen)。"""
+    caps: dict[str, dict] = {}
+    legacy_flat = False
+    for k, v in raw.items():
+        if isinstance(v, str):  # 旧扁平 pattern -> cap
+            legacy_flat = True
+            caps.setdefault("global", {})[k] = _normalize_cap(v)
+        elif isinstance(v, dict):
+            for k2, v2 in v.items():
+                if isinstance(v2, str):  # 旧两层 group -> model
+                    caps.setdefault(k, {}).setdefault("legacy", {})[k2] = _normalize_cap(v2)
+                elif isinstance(v2, dict):  # 新三层 harness -> provider -> model
+                    bucket = caps.setdefault(k, {}).setdefault(k2, {})
+                    for k3, v3 in v2.items():
+                        bucket[k3] = _normalize_cap(v3)
+                else:
+                    raise ConfigError(f"model_capabilities[{k}][{k2}]: expected str or object")
+        else:
+            raise ConfigError(f"model_capabilities[{k}]: expected str or object")
+    return caps, legacy_flat
 
 
 def _parse_relays(raw: object) -> list[RelayConfig]:
