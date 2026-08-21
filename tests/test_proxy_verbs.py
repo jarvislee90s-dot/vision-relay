@@ -45,6 +45,7 @@ def test_diagnose(cfg, monkeypatch):
     )
     data = verbs.diagnose(cfg)
     assert data["data"]["needs_you"][0]["type"] == "missing_key"
+    assert data["ok"] is False  # needs_you 非空 -> ok=False（GUI 据此亮黄条）
 
 
 def test_models_scan(cfg, monkeypatch):
@@ -64,6 +65,49 @@ def test_config_get_masks_secrets(cfg):
     text = json.dumps(data)
     assert "sk-secret" not in text
     assert "api_key" in text and data["data"]["vlm"]["api_key"] == "●●●●"
+
+
+def test_config_get_masks_relay_template_keys(cfg):
+    """Major-1: 手编 relay_templates 的 api_key 会被 wiring 展开真实用于上游认证——必须打码。"""
+    cfg.vlm.api_key = "sk-keep"
+    cfg.routing.relay_templates["relay-x"] = {
+        "protocol": "chat",
+        "base_url": "https://up.example",
+        "api_key": "sk-hidden",
+        "models": ["*"],
+    }
+    data = verbs.config_get(cfg)
+    text = json.dumps(data)
+    assert "sk-hidden" not in text
+    tpl = data["data"]["routing"]["relay_templates"]["relay-x"]
+    assert tpl["api_key"] == "●●●●" and tpl["base_url"] == "https://up.example"
+    # 回归守卫（裁决 2）：打码是输出层拷贝，绝不改调用方 cfg
+    assert cfg.vlm.api_key == "sk-keep"
+    assert cfg.routing.relay_templates["relay-x"]["api_key"] == "sk-hidden"
+
+
+def test_models_scan_probes_tools_once_per_scan(cfg, monkeypatch):
+    """Minor-1: 工具探测按 scan 提升为一次（原每组一次，3 组就放大 3x 端口超时）。"""
+    from vision_relay.onboarding import ModelEntry, ModelGroup
+
+    calls = []
+
+    def _count():
+        calls.append(1)
+        return []
+
+    monkeypatch.setattr(
+        "vision_relay.onboarding.scan_model_groups",
+        lambda c: [
+            ModelGroup(group="claude", path="a", entries=[ModelEntry("m1")]),
+            ModelGroup(group="codex", path="b", entries=[ModelEntry("m2")]),
+            ModelGroup(group="qwen-code", path="c", entries=[ModelEntry("m3")]),
+        ],
+    )
+    monkeypatch.setattr(verbs, "_probe_tools", _count)
+    data = verbs.models_scan(cfg)
+    assert len(data["data"]["models"]) == 3
+    assert len(calls) == 1
 
 
 def test_tools(cfg, monkeypatch):

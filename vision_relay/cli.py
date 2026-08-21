@@ -543,6 +543,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = load_config()
     except ConfigError as exc:
+        if as_json:
+            # GUI 统一解析：--json 下错误也走 envelope（ok=False），rc 仍 2。
+            print(json.dumps(verbs.envelope(False, {"error": str(exc)}), ensure_ascii=False))
+            return 2
         print(f"config error: {exc}", file=sys.stderr)
         return 2
     if as_json:

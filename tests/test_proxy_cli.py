@@ -676,3 +676,20 @@ class TestJsonVerbsCli:
         assert "●●●●" in out
         payload = _json.loads(out)
         assert payload["ok"] is True and payload["data"]["vlm"]["api_key"] == "●●●●"
+
+    def test_main_json_config_error_envelope(self, tmp_path, monkeypatch, capsys):
+        """Minor-2: --json 下配置损坏也要给 GUI 可统一解析的 envelope（ok=False，rc 仍 2）。"""
+        import json as _json
+
+        from vision_relay.config import ConfigError
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+
+        def _boom(*a, **k):
+            raise ConfigError("bad json")
+
+        monkeypatch.setattr("vision_relay.config.load_config", _boom)
+        assert cli.main(["config", "--json"]) == 2
+        payload = _json.loads(capsys.readouterr().out)
+        assert payload["contract_version"] == 1 and payload["ok"] is False
+        assert "bad json" in payload["data"]["error"]

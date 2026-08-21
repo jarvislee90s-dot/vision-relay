@@ -44,9 +44,10 @@ def _scan_triples(cfg: ProxyConfig) -> list[dict]:
     """扫描 harness 配置 -> 三元组 + 当前标注值/来源（未标注= value None）。"""
     from .onboarding import scan_model_groups
 
+    states = _probe_tools()  # 一次探测全 scan 复用（每组一次会把端口超时放大 N 倍）
     rows: list[dict] = []
     for g in scan_model_groups(cfg):
-        provider = _provider_hint(g.group)
+        provider = _provider_hint(g.group, states)
         for ent in g.entries:
             value = cfg.model_capabilities.get(g.group, {}).get(provider, {}).get(ent.model)
             source = cfg.capability_sources.get(g.group, {}).get(provider, {}).get(ent.model)
@@ -63,12 +64,14 @@ def _scan_triples(cfg: ProxyConfig) -> list[dict]:
     return rows
 
 
-def _provider_hint(harness: str) -> str:
-    """harness -> 当前 provider 名：在线路由工具的激活供应商，其次快照第二跳，未知 '?'。"""
+def _provider_hint(harness: str, states: list | None = None) -> str:
+    """harness -> 当前 provider 名：在线路由工具的激活供应商，其次快照第二跳，未知 '?'。
+
+    states 由调用方注入（_scan_triples 一次探测全组复用）；None 时自行探测。"""
     from . import snapshot
     from .tools import TOOL_DOSSIERS
 
-    for s in _probe_tools():
+    for s in states if states is not None else _probe_tools():
         d = TOOL_DOSSIERS.get(s.name)
         if d and harness in d.harnesses and s.online and s.active_provider:
             return s.active_provider
@@ -112,6 +115,14 @@ def config_get(cfg: ProxyConfig) -> dict:
         for h, over in data.get("vlm_by_harness", {}).items()
     }
     data["relays"] = [{**r, "api_key": "●●●●"} if r.get("api_key") else r for r in data.get("relays", [])]
+    # 手编 relay_templates 的 api_key 会被 wiring 展开进 RelayConfig 真实用于上游认证——同样打码。
+    data["routing"] = {
+        **data["routing"],
+        "relay_templates": {
+            name: ({**spec, "api_key": "●●●●"} if isinstance(spec, dict) and spec.get("api_key") else spec)
+            for name, spec in data["routing"].get("relay_templates", {}).items()
+        },
+    }
     return envelope(True, data)
 
 
