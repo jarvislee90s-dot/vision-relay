@@ -49,9 +49,12 @@ def config_lock(timeout_s: float | None = 30.0):
 
 
 def try_config_lock():
-    """非阻塞尝试；拿不到返回 None（不抛异常，方便轮询方使用）。"""
-    if getattr(_reentrant, "depth", 0) > 0:
-        return contextlib.nullcontext(True)
+    """非阻塞尝试；拿不到返回 None（不抛异常，方便轮询方使用）。
+
+    故意不做同线程重入短路：总是真实尝试 OS 级锁——config_lock 持锁期间，同线程
+    经第二个 fd 的尝试同样会被字节锁挡住（Windows msvcrt / Unix flock 均如此），
+    因此可用于断言"锁确被持有"。同线程重入放行语义只在 config_lock() 里保留。
+    """
     path = _lock_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o600)
