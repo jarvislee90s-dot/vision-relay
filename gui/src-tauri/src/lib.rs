@@ -19,20 +19,27 @@ fn which_core() -> Option<String> {
     None
 }
 
-fn spawn_core(core: &str, args: &[String], stdin: Option<String>) -> Result<String, String> {
+fn core_command(core: &str) -> Command {
     let mut cmd = Command::new(core);
-    cmd.args(args)
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env("PYTHONIOENCODING", "utf-8"); // Windows GBK 控制台下强制 UTF-8（spec 风险 4）
+    // Windows GBK 控制台下强制子进程 UTF-8（spec 风险 4）；CREATE_NO_WINDOW 隐藏控制台闪窗。
+    // 只用 CREATE_NO_WINDOW：与 DETACHED_PROCESS 属同类"控制台创建"标志（reconcile.py 亦注明
+    // 互斥），对等待型/分离型子进程各自单独使用即可。
+    cmd.env("PYTHONIOENCODING", "utf-8");
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    cmd
+}
+
+fn spawn_core(core: &str, args: &[String], stdin: Option<String>) -> Result<String, String> {
+    let mut cmd = core_command(core);
+    cmd.args(args)
+        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("spawn {core}: {e}"))?;
     if let Some(data) = stdin {
         use std::io::Write;
@@ -57,17 +64,10 @@ fn run_core(core_path: String, args: Vec<String>, stdin: Option<String>) -> Resu
 
 #[tauri::command]
 fn start_core_detached(core_path: String) -> Result<(), String> {
-    let mut cmd = Command::new(core_path);
+    let mut cmd = core_command(&core_path);
     cmd.args(["start", "--detach"])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .env("PYTHONIOENCODING", "utf-8");
-    #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+        .stderr(Stdio::null());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
