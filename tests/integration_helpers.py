@@ -148,6 +148,13 @@ def wait_port(port: int, up: bool = True, timeout: float = 10.0) -> bool:
 
 # ---------- 本地 mock 上游（http.server，不依赖外部网络） ----------
 
+# mock 上游收到的请求体（G8 断言“注入文本真的到达上游”用）
+upstream_requests: list[dict] = []
+
+
+def reset_upstream_requests() -> None:
+    upstream_requests.clear()
+
 
 class _UpstreamHandler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # 静默
@@ -168,9 +175,13 @@ class _UpstreamHandler(BaseHTTPRequestHandler):
             self._send({"error": "not found"}, 404)
 
     def do_POST(self):
+        length = int(self.headers.get("content-length", 0))
+        raw = self.rfile.read(length)
+        try:
+            upstream_requests.append(json.loads(raw))
+        except ValueError:
+            pass
         if self.path.endswith("/chat/completions"):
-            length = int(self.headers.get("content-length", 0))
-            self.rfile.read(length)
             self._send({"choices": [{"message": {"content": "红色 red"}}]})
         else:
             self._send({"error": "not found"}, 404)

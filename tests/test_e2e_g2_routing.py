@@ -1,0 +1,63 @@
+"""E2E G2：路由开关（M2 Plan 附录 A 场景 G2）。
+
+手动步骤：总览滑动开关 → 开（服务启动、拓扑链 relay 节点激活）→ 关（服务停止、
+relay 节点置灰、harness 还原）。
+CLI 等效序列：start --detach（=GUI RoutingToggle 的 startService / Tauri
+start_core_detached 同参数）→ status → stop → status。
+"""
+
+from __future__ import annotations
+
+import pytest
+from integration_helpers import (
+    envelope_of,
+    free_port,
+    read_harness_base_url,
+    run_cli,
+    wait_port,
+    write_harness_configs,
+    write_proxy_json,
+)
+
+ORIGIN = "https://origin.example/api"
+
+
+@pytest.fixture()
+def env(tmp_path):
+    home = tmp_path / "home"
+    cfg_dir = tmp_path / "cfg"
+    write_harness_configs(home, ORIGIN)
+    cfg_dir.mkdir()
+    port = free_port()
+    write_proxy_json(cfg_dir, server={"bind_host": "127.0.0.1", "bind_port": port})
+    return home, cfg_dir, port
+
+
+def test_routing_on_then_off_full_lifecycle(env):
+    home, cfg_dir, port = env
+    proxy_url = f"http://127.0.0.1:{port}"
+
+    # ---- 开：start --detach（GUI 开关的 on 分支） ----
+    proc = run_cli(["start", "--detach"], cfg_dir, home)
+    assert proc.returncode == 0
+    assert "started (detached)" in proc.stdout
+    assert wait_port(port, up=True, timeout=20), "分离启动后服务端口必须监听"
+
+    d = envelope_of(run_cli(["status", "--json"], cfg_dir, home))["data"]
+    assert d["service_alive"] is True
+    assert d["routing_on"] is True  # start 记录开启意图（崩溃修复依据）
+    for harness in ("claude", "codex", "qwen-code"):
+        assert read_harness_base_url(home, harness) == proxy_url
+        assert d["harnesses"][harness]["ownership"] == "ours"  # 拓扑卡「已接管」
+
+    # ---- 关：stop（GUI 开关的 off 分支） ----
+    proc = run_cli(["stop"], cfg_dir, home)
+    assert proc.returncode == 0
+    assert wait_port(port, up=False, timeout=20), "stop 后端口必须关闭"
+    d = envelope_of(run_cli(["status", "--json"], cfg_dir, home))["data"]
+    assert d["service_alive"] is False
+    assert d["routing_on"] is False  # stop 记录关闭意图
+    for harness in ("claude", "codex", "qwen-code"):
+        assert read_harness_base_url(home, harness) == ORIGIN  # 还原为接管前原值
+        assert d["harnesses"][harness]["ownership"] != "ours"  # 拓扑卡 relay 置灰
+    assert not (cfg_dir / "proxy.pid").exists()
