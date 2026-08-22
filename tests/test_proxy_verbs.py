@@ -486,3 +486,11 @@ class TestWizardConfirm:
         assert cfg.routing.capability_confirmed is False
         verbs.models_set(cfg)
         assert cfg.routing.capability_confirmed is True
+
+    def test_nonempty_models_set_also_marks_confirmed(self, tmp_path, monkeypatch):
+        """向导「完成（过目）」路径发非空行——任何一次成功的 models-set 都是显式确认（spec §6）。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        _set_stdin(monkeypatch, [{"harness": "codex", "provider": "?", "model": "m", "value": "image"}])
+        cfg = ProxyConfig()
+        verbs.models_set(cfg)
+        assert cfg.routing.capability_confirmed is True
