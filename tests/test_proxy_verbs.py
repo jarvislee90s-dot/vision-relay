@@ -1,11 +1,17 @@
 """--json management verbs (spec §4/§8): envelope + contract_version on every verb."""
 
+import io
 import json
 
 import pytest
 
 from vision_relay import verbs
 from vision_relay.config import ProxyConfig, RelayConfig
+
+
+def _set_stdin(monkeypatch, payload) -> None:
+    """写动词共用：把 payload 作为 JSON 塞进 sys.stdin。"""
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
 
 
 @pytest.fixture()
@@ -155,15 +161,10 @@ def test_every_verb_has_contract_version(cfg, monkeypatch):
 
 
 class TestModelsSet:
-    def _stdin(self, monkeypatch, payload):
-        import io as _io
-
-        monkeypatch.setattr("sys.stdin", _io.StringIO(json.dumps(payload)))
-
     def test_write_user_override_and_clear(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
-        self._stdin(
+        _set_stdin(
             monkeypatch,
             [
                 {"harness": "claude", "provider": "bigmodel", "model": "m1", "value": "image"},
@@ -182,30 +183,23 @@ class TestModelsSet:
     def test_invalid_value_rejected_without_partial_write(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
-        self._stdin(monkeypatch, [{"harness": "c", "provider": "p", "model": "m", "value": "movie"}])
+        _set_stdin(monkeypatch, [{"harness": "c", "provider": "p", "model": "m", "value": "movie"}])
         out = verbs.models_set(cfg)
         assert out["ok"] is False and "movie" in json.dumps(out)
         assert cfg.model_capabilities == {}  # 校验失败不落盘
 
     def test_bad_json_rejected(self, tmp_path, monkeypatch):
-        import io as _io
-
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
-        monkeypatch.setattr("sys.stdin", _io.StringIO("not-json"))
+        monkeypatch.setattr("sys.stdin", io.StringIO("not-json"))
         out = verbs.models_set(ProxyConfig())
         assert out["ok"] is False
 
 
 class TestVlmSet:
-    def _stdin(self, monkeypatch, payload):
-        import io as _io
-
-        monkeypatch.setattr("sys.stdin", _io.StringIO(json.dumps(payload)))
-
     def test_set_global_and_group_and_prompts(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
-        self._stdin(
+        _set_stdin(
             monkeypatch,
             {
                 "vlm": {"model": "qwen3.5-omni-plus", "base_url": "https://x/v1"},
@@ -225,23 +219,23 @@ class TestVlmSet:
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
         cfg.vlm.api_key = "sk-old"
-        self._stdin(monkeypatch, {"vlm": {"model": "m2"}, "vlm_by_harness": {"codex": {"api_key": ""}}})
+        _set_stdin(monkeypatch, {"vlm": {"model": "m2"}, "vlm_by_harness": {"codex": {"api_key": ""}}})
         verbs.vlm_set(cfg)
         assert cfg.vlm.api_key == "sk-old"  # 未提供/空串 = 不修改（GUI 看不到 key，无法回显）
 
     def test_masked_placeholder_rejected_as_key(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
-        self._stdin(monkeypatch, {"vlm": {"api_key": "●●●●"}})
+        _set_stdin(monkeypatch, {"vlm": {"api_key": "●●●●"}})
         out = verbs.vlm_set(cfg)
         assert out["ok"] is False
 
     def test_non_dict_sections_rejected(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
-        self._stdin(monkeypatch, {"vlm": [1, 2]})
+        _set_stdin(monkeypatch, {"vlm": [1, 2]})
         assert verbs.vlm_set(cfg)["ok"] is False
-        self._stdin(monkeypatch, {"vlm_by_harness": "abc"})
+        _set_stdin(monkeypatch, {"vlm_by_harness": "abc"})
         assert verbs.vlm_set(cfg)["ok"] is False
 
 
@@ -270,15 +264,10 @@ class TestVlmTest:
 
 
 class TestSettingsSet:
-    def _stdin(self, monkeypatch, payload):
-        import io as _io
-
-        monkeypatch.setattr("sys.stdin", _io.StringIO(json.dumps(payload)))
-
     def test_set_unknown_default_and_vision_log(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
-        self._stdin(
+        _set_stdin(
             monkeypatch,
             {"routing": {"unknown_default": "image"}, "vision_log": {"enabled": False, "retention_days": 3}},
         )
@@ -289,16 +278,11 @@ class TestSettingsSet:
 
     def test_rejects_bad_values(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
-        self._stdin(monkeypatch, {"routing": {"unknown_default": "movie"}})
+        _set_stdin(monkeypatch, {"routing": {"unknown_default": "movie"}})
         assert verbs.settings_set(ProxyConfig())["ok"] is False
 
 
 class TestRelaySet:
-    def _stdin(self, monkeypatch, payload):
-        import io as _io
-
-        monkeypatch.setattr("sys.stdin", _io.StringIO(json.dumps(payload)))
-
     def test_suppress_and_unsuppress(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
@@ -307,10 +291,10 @@ class TestRelaySet:
                 name="cc-claude", protocol="anthropic", base_url="http://127.0.0.1:15721", via="cc-switch", models=["*"]
             )
         )
-        self._stdin(monkeypatch, {"name": "cc-claude", "suppressed": True})
+        _set_stdin(monkeypatch, {"name": "cc-claude", "suppressed": True})
         assert verbs.relay_set(cfg)["ok"] is True
         assert cfg.routing.suppressed_relays == ["cc-claude"]
-        self._stdin(monkeypatch, {"name": "cc-claude", "suppressed": False})
+        _set_stdin(monkeypatch, {"name": "cc-claude", "suppressed": False})
         verbs.relay_set(cfg)
         assert cfg.routing.suppressed_relays == []
 
@@ -318,13 +302,13 @@ class TestRelaySet:
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
         cfg.relays.append(RelayConfig(name="direct-claude", protocol="anthropic", base_url="https://x", models=["*"]))
-        self._stdin(monkeypatch, {"name": "direct-claude", "api_key": "sk-fill"})
+        _set_stdin(monkeypatch, {"name": "direct-claude", "api_key": "sk-fill"})
         assert verbs.relay_set(cfg)["ok"] is True
         assert cfg.relays[0].api_key == "sk-fill"
 
     def test_unknown_relay_rejected(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
-        self._stdin(monkeypatch, {"name": "ghost", "suppressed": True})
+        _set_stdin(monkeypatch, {"name": "ghost", "suppressed": True})
         assert verbs.relay_set(ProxyConfig())["ok"] is False
 
     def test_suppressed_relay_not_re_added(self, tmp_path, monkeypatch):
@@ -416,40 +400,30 @@ class TestModelsFetch:
 
 
 class TestSettingsSetHardening:
-    def _stdin(self, monkeypatch, payload):
-        import io as _io
-
-        monkeypatch.setattr("sys.stdin", _io.StringIO(json.dumps(payload)))
-
     def test_non_dict_payload_rejected(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
-        self._stdin(monkeypatch, [1, 2])
+        _set_stdin(monkeypatch, [1, 2])
         assert verbs.settings_set(ProxyConfig())["ok"] is False
 
     def test_non_dict_section_rejected(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
-        self._stdin(monkeypatch, {"routing": [{"unknown_default": "image"}]})
+        _set_stdin(monkeypatch, {"routing": [{"unknown_default": "image"}]})
         assert verbs.settings_set(ProxyConfig())["ok"] is False
 
     def test_non_bool_values_rejected(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
-        self._stdin(monkeypatch, {"vision_log": {"enabled": "false"}})
+        _set_stdin(monkeypatch, {"vision_log": {"enabled": "false"}})
         assert verbs.settings_set(ProxyConfig())["ok"] is False
 
     def test_retention_days_zero_rejected(self, tmp_path, monkeypatch):
         """retention_days=0 能过动词校验但会被 VisionLogConfig 拒绝——落盘即成
         下次 load_config 必炸 ConfigError 的砖头文件，入口必须挡住。"""
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
-        self._stdin(monkeypatch, {"vision_log": {"retention_days": 0}})
+        _set_stdin(monkeypatch, {"vision_log": {"retention_days": 0}})
         assert verbs.settings_set(ProxyConfig())["ok"] is False
 
 
 class TestRelaySetBool:
-    def _stdin(self, monkeypatch, payload):
-        import io as _io
-
-        monkeypatch.setattr("sys.stdin", _io.StringIO(json.dumps(payload)))
-
     def test_non_bool_suppressed_rejected(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
@@ -458,7 +432,7 @@ class TestRelaySetBool:
                 name="cc-claude", protocol="anthropic", base_url="http://127.0.0.1:15721", via="cc-switch", models=["*"]
             )
         )
-        self._stdin(monkeypatch, {"name": "cc-claude", "suppressed": "false"})
+        _set_stdin(monkeypatch, {"name": "cc-claude", "suppressed": "false"})
         assert verbs.relay_set(cfg)["ok"] is False
 
 
@@ -506,10 +480,8 @@ class TestStatusRich:
 
 class TestWizardConfirm:
     def test_empty_models_set_marks_confirmed(self, tmp_path, monkeypatch):
-        import io as _io
-
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
-        monkeypatch.setattr("sys.stdin", _io.StringIO("[]"))
+        monkeypatch.setattr("sys.stdin", io.StringIO("[]"))
         cfg = ProxyConfig()
         assert cfg.routing.capability_confirmed is False
         verbs.models_set(cfg)

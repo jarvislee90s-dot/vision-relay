@@ -96,28 +96,27 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
           <div className="alert-err row between" key={i}><span>🔑 {n.harness ?? ""} {n.hint ?? ""}</span></div>
         ))}
       </div>
-      {p.showDiag && (diag ? (
+      {p.showDiag && (
         <div className="modal show" onClick={() => p.setShowDiag(false)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <div className="row between"><b style={{ fontSize: 15 }}>📋 诊断报告（自动运行，只读）</b><button className="btn" onClick={() => p.setShowDiag(false)}>✕</button></div>
-            <div className="alert-ok">✅ 已自动修复：{diag.actions.map((a) => `${a.harness ?? ""} ${a.type}${a.fix ? `(${a.fix})` : ""}`).join(" · ") || "（本次无）"}</div>
-            <table><tbody>
-              <tr><td>✓ 服务进程 / 端口</td><td style={{ textAlign: "right", color: "#059669" }}>{diag.observed.service_alive ? "运行中" : "未运行"}</td></tr>
-              {diag.observed.tools.map((t) => (
-                <tr key={t.name}><td>✓ 工具 {t.name} :{t.port}</td><td style={{ textAlign: "right", color: t.online ? "#059669" : "#b91c1c" }}>{t.online ? `在线${t.active_provider ? " · " + t.active_provider : ""}` : "离线"}</td></tr>
-              ))}
-            </tbody></table>
-            {diag.needs_you.map((n, i) => <div className="alert-err" key={i}>⚠ {n.harness} {n.hint}</div>)}
+            {diag ? (
+              <>
+                <div className="alert-ok">✅ 已自动修复：{diag.actions.map((a) => `${a.harness ?? ""} ${a.type}${a.fix ? `(${a.fix})` : ""}`).join(" · ") || "（本次无）"}</div>
+                <table><tbody>
+                  <tr><td>✓ 服务进程 / 端口</td><td style={{ textAlign: "right", color: "#059669" }}>{diag.observed.service_alive ? "运行中" : "未运行"}</td></tr>
+                  {diag.observed.tools.map((t) => (
+                    <tr key={t.name}><td>✓ 工具 {t.name} :{t.port}</td><td style={{ textAlign: "right", color: t.online ? "#059669" : "#b91c1c" }}>{t.online ? `在线${t.active_provider ? " · " + t.active_provider : ""}` : "离线"}</td></tr>
+                  ))}
+                </tbody></table>
+                {diag.needs_you.map((n, i) => <div className="alert-err" key={i}>⚠ {n.harness} {n.hint}</div>)}
+              </>
+            ) : (
+              <div className="dim small" style={{ padding: 8 }}>诊断中…</div>
+            )}
           </div>
         </div>
-      ) : (
-        <div className="modal show" onClick={() => p.setShowDiag(false)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <div className="row between"><b style={{ fontSize: 15 }}>📋 诊断报告（自动运行，只读）</b><button className="btn" onClick={() => p.setShowDiag(false)}>✕</button></div>
-            <div className="dim small" style={{ padding: 8 }}>诊断中…</div>
-          </div>
-        </div>
-      ))}
+      )}
     </>
   );
 }
