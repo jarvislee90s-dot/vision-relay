@@ -1,0 +1,76 @@
+/* ============================================================
+   vision-relay 控制台 — 样式（移植自 docs/superpowers/specs/gui-mockups/index.html）
+   类名与 mockup 一一对应；仅 .app 高度改为 100vh、去掉文档页 body padding。
+   ============================================================ */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 13px; color: #1f2937; background: #eef0f3; }
+  h1 { font-size: 17px; margin-bottom: 4px; }
+  .note { color: #6b7280; font-size: 12px; margin-bottom: 10px; }
+  .doc-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .doc-tab { padding: 6px 14px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; cursor: pointer; font-size: 12.5px; }
+  .doc-tab.active { background: #111827; color: #fff; border-color: #111827; }
+  .page { display: none; } .page.active { display: block; }
+  .app { display: flex; height: 100vh; background: #fff; border: 1px solid #d1d5db; border-radius: 12px; overflow: hidden; position: relative; }
+  .side { width: 160px; background: #111827; color: #9ca3af; padding: 12px 0; flex-shrink: 0; }
+  .side .logo { padding: 6px 16px 14px; color: #fff; font-weight: 700; font-size: 14px; }
+  .side-item { padding: 8px 16px; } .side-item.active { background: #1f2937; color: #fff; border-left: 3px solid #10b981; }
+  .main { flex: 1; background: #f5f6f8; padding: 14px; overflow: auto; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .card h3 { font-size: 13.5px; margin-bottom: 8px; }
+  .row { display: flex; align-items: center; gap: 10px; } .row.between { justify-content: space-between; }
+  .btn { background: #fff; border: 1px solid #d1d5db; border-radius: 7px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
+  .btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .btn.lg { padding: 9px 16px; font-size: 13px; }
+  .tag { border-radius: 6px; padding: 2px 8px; font-size: 11px; }
+  .tag.ok { background: #ecfdf5; color: #059669; } .tag.warn { background: #fffbeb; color: #b45309; }
+  .tag.info { background: #eff6ff; color: #1d4ed8; } .tag.gray { background: #f3f4f6; color: #6b7280; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { background: #f9fafb; color: #6b7280; text-align: left; padding: 8px 12px; }
+  td { padding: 8px 12px; border-top: 1px solid #f3f4f6; }
+  .input { border: 1px solid #d1d5db; border-radius: 7px; padding: 6px 10px; font-size: 12px; background: #fff; }
+  .dim { color: #6b7280; font-size: 12px; } .small { font-size: 11px; } .mono { font-family: Consolas, monospace; font-size: 11.5px; }
+  .switch { display: flex; align-items: center; gap: 8px; }
+  .switch .track { width: 50px; height: 26px; background: #10b981; border-radius: 13px; position: relative; cursor: pointer; }
+  .switch .track.off { background: #d1d5db; }
+  .switch .knob { width: 20px; height: 20px; background: #fff; border-radius: 50%; position: absolute; top: 3px; right: 3px; }
+  .switch .track.off .knob { right: auto; left: 3px; }
+  .chain { margin: 8px 0 4px 4px; font-size: 12px; color: #374151; }
+  .hop { font-weight: 600; padding: 2px 0 2px 12px; border-left: 2px solid #10b981; margin-left: 6px; }
+  .hop.bypass { border-left-color: #d1d5db; color: #9ca3af; font-weight: 400; }
+  .hop .bz { font-size: 10px; color: #9ca3af; background: #f3f4f6; border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+  .arrow { color: #9ca3af; font-size: 11px; padding-left: 14px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; }
+  .dot.g { background: #10b981; } .dot.r { background: #ef4444; } .dot.gray { background: #d1d5db; }
+  .cols3 { display: flex; gap: 12px; } .cols3 > div { flex: 1; }
+  .alert-warn { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; }
+  .alert-err { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; }
+  .alert-ok { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; }
+  .pin { background: #fffbeb; border: 1.5px dashed #f59e0b; border-radius: 10px; padding: 10px 12px; font-size: 12px; margin: 10px 0; color: #78350f; line-height: 1.7; }
+  .pin b.n { display: inline-block; background: #f59e0b; color: #fff; border-radius: 50%; width: 18px; height: 18px; text-align: center; line-height: 18px; font-size: 11px; margin-right: 6px; }
+  .pin .was { color: #92400e; text-decoration: line-through; }
+  .pin .now { color: #065f46; font-weight: 700; }
+  .cap { display: inline-block; border-radius: 6px; padding: 2px 10px; }
+  .cap.text { background: #e5e7eb; color: #374151; } .cap.image { background: #10b981; color: #fff; }
+  .field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .field label { width: 80px; color: #6b7280; font-size: 12px; flex-shrink: 0; text-align: right; }
+  .modal { display: none; position: absolute; inset: 0; background: rgba(17,24,39,.45); z-index: 10; align-items: flex-start; justify-content: center; padding: 30px 40px; }
+  .modal.show { display: flex; }
+  .modal-box { background: #fff; border-radius: 12px; padding: 18px 20px; width: 620px; max-height: 540px; overflow: auto; }
+  .steps { display: flex; gap: 8px; margin-bottom: 14px; }
+  .step { flex: 1; text-align: center; padding: 8px; border-radius: 8px; background: #f3f4f6; color: #6b7280; font-size: 12px; }
+  .step.on { background: #2563eb; color: #fff; } .step.done { background: #ecfdf5; color: #059669; }
+  .drawer { margin-top: 8px; border-top: 1px dashed #e5e7eb; padding-top: 8px; }
+  textarea.prompt { width: 100%; min-height: 46px; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; font-size: 11.5px; font-family: Consolas, monospace; }
+
+/* ---- 本任务追加：让壳层铺满窗口 ---- */
+html, body, #root { height: 100%; }
+.app { display: flex; height: 100vh; }
+
+/* 滚动条微调（自然风即可） */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 关闭确认弹层：危险按钮（Task 7 追加） */
+.btn.red { background: #dc2626; color: #fff; border-color: #dc2626; }

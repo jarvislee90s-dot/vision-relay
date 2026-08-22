@@ -1,4 +1,8 @@
 use std::process::{Command, Stdio};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::Emitter;
+use tauri::Manager;
 
 #[tauri::command]
 fn which_core() -> Option<String> {
@@ -74,6 +78,26 @@ fn start_core_detached(core_path: String) -> Result<(), String> {
 
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            let open = MenuItem::with_id(app, "open", "打开主界面", true, None::<&str>)?;
+            let toggle = MenuItem::with_id(app, "toggle", "路由：开/关", true, None::<&str>)?;
+            let diag = MenuItem::with_id(app, "diag", "诊断报告", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出（停止服务）", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &toggle, &diag, &quit])?;
+            TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    match event.id().as_ref() {
+                        "open" => { if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); } }
+                        "toggle" | "diag" => { if let Some(w) = app.get_webview_window("main") { let _ = w.emit("tray", event.id().as_ref()); let _ = w.show(); } }
+                        "quit" => { if let Some(core) = which_core() { let _ = spawn_core(&core, &["stop".into()], None); } app.exit(0); }
+                        _ => {}
+                    }
+                })
+                .build(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![which_core, run_core, start_core_detached])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
