@@ -160,6 +160,24 @@ All management verbs accept `--json` for machine-readable output shaped like `{"
 vision-relay status --json
 ```
 
+## GUI (Preview)
+
+A desktop console (Tauri 2 + React) for vision-relay ships as an **M2 preview** — packaged distribution follows with M3. It covers 5 pages (overview, model capabilities, vision log, event log, settings) plus a two-step onboarding wizard, system tray, and close confirmation.
+
+> **Requirement**: during M2 the GUI needs the `vision-relay` command on `PATH`. Installing the package with `pip install -e .` provides it; packaged distribution is planned for M3.
+
+Install the GUI dependencies:
+
+```bash
+pnpm -C gui install
+```
+
+Run the GUI in development mode:
+
+```bash
+pnpm -C gui tauri dev
+```
+
 ## Configuration
 
 Shared config lives in `~/.vision-relay/config` (fallback for env vars); proxy settings in `~/.vision-relay/proxy.json`. Env overrides: `VISION_RELAY_BIND_PORT`, `VISION_RELAY_VLM_MODEL`, `VISION_RELAY_VLM_BASE_URL`, `VISION_RELAY_VLM_API_KEY`, `VISION_RELAY_VLM_FORMAT` (config dir: `VISION_RELAY_CONFIG_DIR`).

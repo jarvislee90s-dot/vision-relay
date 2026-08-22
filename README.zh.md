@@ -156,6 +156,24 @@ python -m pip install pytest httpx
 vision-relay status --json
 ```
 
+## GUI（预览）
+
+vision-relay 的桌面控制台（Tauri 2 + React）随 **M2** 以预览形式提供——打包分发随 M3 提供。包含 5 个页面（总览、模型能力、识图记录、事件日志、设置）外加两步首次向导、系统托盘与关闭确认。
+
+> **要求**：M2 阶段 GUI 需要 `vision-relay` 命令在 PATH 上。用 `pip install -e .` 安装即可提供；打包分发计划随 M3。
+
+安装 GUI 依赖：
+
+```bash
+pnpm -C gui install
+```
+
+以开发模式启动 GUI：
+
+```bash
+pnpm -C gui tauri dev
+```
+
 ## 配置
 
 共享配置在 `~/.vision-relay/config`(作为环境变量的回退);代理设置在 `~/.vision-relay/proxy.json`。环境变量覆盖:`VISION_RELAY_BIND_PORT`、`VISION_RELAY_VLM_MODEL`、`VISION_RELAY_VLM_BASE_URL`、`VISION_RELAY_VLM_API_KEY`、`VISION_RELAY_VLM_FORMAT`(配置目录:`VISION_RELAY_CONFIG_DIR`)。
