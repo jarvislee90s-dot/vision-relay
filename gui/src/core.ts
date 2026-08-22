@@ -9,7 +9,7 @@ export interface Envelope<T = unknown> {
 }
 
 export function parseEnvelope<T>(raw: unknown): T {
-  if (typeof raw !== "object" || raw === null) throw new Error("core output is not JSON");
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error("core output is not JSON");
   const e = raw as Envelope;
   if (e.contract_version !== CONTRACT_VERSION)
     throw new Error(`contract mismatch: core=${e.contract_version}, gui=${CONTRACT_VERSION}（请升级另一侧）`);
