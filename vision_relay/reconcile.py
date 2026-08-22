@@ -10,7 +10,7 @@ import json
 import os
 import time
 
-from . import snapshot, tools
+from . import pid_util, snapshot, tools
 from .config import ProxyConfig, RelayConfig, save_config
 from .env_util import config_dir
 from .locking import config_lock
@@ -94,39 +94,19 @@ def _service_alive(cfg: ProxyConfig) -> bool:
         s.settimeout(0.3)
         if s.connect_ex(("127.0.0.1", cfg.bind_port)) == 0:
             return True
-    pid_file = os.path.join(config_dir(), "proxy.pid")
-    try:
-        with open(pid_file, encoding="utf-8") as f:
-            pid = int(f.read().strip())
-    except (OSError, ValueError):
+    pid, token = pid_util.read_pid_file()
+    if pid == -1:
         return False
-    return _pid_alive(pid)
+    if token is None:
+        return _pid_alive(pid)
+    actual = pid_util.process_token(pid)
+    return _pid_alive(pid) and actual is not None and actual == token
 
 
 def _pid_alive(pid: int) -> bool:
-    # Windows 上 os.kill(pid, 0) 会真杀进程（TerminateProcess 语义）——绝不能用；
-    # 用 OpenProcess 探测。Unix 用信号 0 探测。
-    if os.name == "nt":
-        import ctypes
-
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False
-        try:
-            exit_code = ctypes.c_ulong()
-            if ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                return exit_code.value == 259  # STILL_ACTIVE
-            return False
-        finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-        return True
-    except PermissionError:
-        return True  # Unix EPERM＝进程存在但属他人＝活着（须排在 OSError 之前）
-    except OSError:
-        return False
+    """薄包装：跨平台存活判定（Windows GetExitCodeProcess / Unix 信号 0 且 EPERM=活着）。
+    决策⑤ 后与 pid_util.pid_alive 同一实现，保留此名供既有测试直接断言真实进程。"""
+    return pid_util.pid_alive(pid)
 
 
 def observe(cfg: ProxyConfig, tool_states: list | None = None) -> dict:

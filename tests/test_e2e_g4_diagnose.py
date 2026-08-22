@@ -38,7 +38,11 @@ def env(tmp_path):
 
 
 def _pid_of(cfg_dir) -> int:
-    return int((cfg_dir / "proxy.pid").read_text(encoding="utf-8").strip())
+    # 决策⑤：pid 文件升级为 JSON {pid, token}；老格式纯数字仍兼容。
+    raw = (cfg_dir / "proxy.pid").read_text(encoding="utf-8").strip()
+    if raw.startswith("{"):
+        return int(json.loads(raw)["pid"])
+    return int(raw)
 
 
 def _hard_kill(cfg_dir) -> None:

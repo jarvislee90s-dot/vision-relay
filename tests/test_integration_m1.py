@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from integration_helpers import (
     run_cli,
     start_mock_upstream,
     stop_mock_upstream,
+    wait_port,
     write_harness_configs,
     write_proxy_json,
 )
@@ -404,3 +406,44 @@ class TestTakeoverSnapshotRotation:
             assert any(r["type"] == "reclaim" and r["harness"] == "claude" for r in rows)
         finally:
             listener.close()
+
+
+# ---------- 决策⑤：PID 复用防护（pid 文件带进程身份指纹） ----------
+
+
+class TestPidReuseHardening:
+    def test_reused_pid_never_reported_alive_never_killed(self, tmp_path):
+        """强杀后 pid 文件伪造为复用进程（token 对不上）：status 不误报、stop 不误杀。"""
+        home = tmp_path / "home"
+        cfg_dir = tmp_path / "cfg"
+        write_harness_configs(home, ORIGIN)
+        cfg_dir.mkdir()
+        port = free_port()
+        write_proxy_json(cfg_dir, server={"bind_host": "127.0.0.1", "bind_port": port})
+        try:
+            assert run_cli(["start", "--detach"], cfg_dir, home).returncode == 0
+            assert wait_port(port, up=True, timeout=20)
+            pid = int(json.loads((cfg_dir / "proxy.pid").read_text(encoding="utf-8"))["pid"])
+            assert "token" in json.loads((cfg_dir / "proxy.pid").read_text(encoding="utf-8"))
+            os.kill(pid, 9)
+            assert wait_port(port, up=False, timeout=20)
+
+            dummy = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                (cfg_dir / "proxy.pid").write_text(
+                    json.dumps({"pid": dummy.pid, "token": 1234567890}), encoding="utf-8"
+                )
+                d = envelope_of(run_cli(["status", "--json"], cfg_dir, home))["data"]
+                assert d["service_alive"] is False
+                proc = run_cli(["stop"], cfg_dir, home)
+                assert proc.returncode == 1 and "not running" in proc.stdout
+                assert dummy.poll() is None  # dummy 还活着！
+            finally:
+                dummy.kill()
+                dummy.wait()
+        finally:
+            run_cli(["stop"], cfg_dir, home, timeout=60)

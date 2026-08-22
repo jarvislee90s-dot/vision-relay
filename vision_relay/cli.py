@@ -9,7 +9,7 @@ import signal
 import socket
 import sys
 
-from . import __version__, verbs
+from . import __version__, pid_util, verbs
 from .env_util import config_dir
 from .reconcile import reconcile as reconcile_reconcile
 
@@ -84,20 +84,15 @@ def _log_path() -> str:
 
 
 def _write_pid() -> None:
-    os.makedirs(config_dir(), exist_ok=True)
-    with open(_pid_path(), "w", encoding="utf-8") as f:
-        f.write(str(os.getpid()))
+    pid_util.write_pid_file(_pid_path())
 
 
 def cmd_start(cfg) -> int:
     # L1: pid 文件存在但进程已死（硬崩溃残留）-> 清掉继续启动（与 cmd_stop 对称），而非拒绝。
-    try:
-        with open(_pid_path(), encoding="utf-8") as f:
-            pid = int(f.read().strip())
-    except (OSError, ValueError):
-        pid = -1
+    # 决策⑤：pid 文件带进程身份指纹——文件里的 pid 活着但指纹对不上（PID 复用）同样清掉。
+    pid, token = pid_util.read_pid_file(_pid_path())
     if pid != -1:
-        if _pid_running(pid):
+        if _pid_matches_ours(pid, token):
             print(f"already running (pid {pid})")
             return 1
         try:
@@ -155,14 +150,8 @@ def cmd_start(cfg) -> int:
 
 
 def cmd_stop() -> int:
-    try:
-        with open(_pid_path(), encoding="utf-8") as f:
-            pid = int(f.read().strip())
-    except (FileNotFoundError, ValueError):
-        print("not running")
-        return 1
-    if not _pid_running(pid):
-        # 过期 pid（进程已死）残留：清理 pid 文件，避免 stop/start 卡在坏 pid 上
+    pid, token = pid_util.read_pid_file(_pid_path())
+    if pid == -1 or not _pid_matches_ours(pid, token):
         try:
             os.unlink(_pid_path())
         except OSError:
@@ -377,38 +366,32 @@ def _terminate(pid: int) -> bool:
 
 
 def _pid_running(pid: int) -> bool:
-    """跨平台判断 PID 是否存活。Windows 上 os.kill(pid, 0) 抛 WinError 87 而非
-    ProcessLookupError，需用 OpenProcess 复核，否则 status 永远误报 not running。"""
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except OSError:
-        if os.name == "nt":
-            import ctypes
+    """薄包装：跨平台存活判定（Windows 用 OpenProcess/GetExitCodeProcess，
+    Unix 信号 0 且 EPERM=活着）。决策⑤ 后与 pid_util.pid_alive 同一实现，
+    保留此名供既有测试 monkeypatch。"""
+    return pid_util.pid_alive(pid)
 
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if handle:
-                ctypes.windll.kernel32.CloseHandle(handle)
-                return True
-            return False
+
+def _pid_matches_ours(pid: int, token: int | None) -> bool:
+    """pid 存活 且（文件带 token 时）进程身份指纹匹配，才认定是我们的进程。
+
+    token=None（老格式 pid 文件/取不到指纹）退回仅存活检查——迁移期兼容，
+    不改变既有行为；token 对不上（残留 pid 撞上 PID 复用）则视为非我进程。"""
+    if not _pid_running(pid):
         return False
+    if token is None:
+        return True
+    actual = pid_util.process_token(pid)
+    return actual is not None and actual == token
 
 
 def cmd_status() -> int:
-    try:
-        with open(_pid_path(), encoding="utf-8") as f:
-            pid = int(f.read().strip())
-        if _pid_running(pid):
-            print(f"running (pid {pid})")
-            return 0
-        print("not running")
-        return 1
-    except FileNotFoundError:
-        print("not running")
-        return 1
+    pid, token = pid_util.read_pid_file(_pid_path())
+    if pid != -1 and _pid_matches_ours(pid, token):
+        print(f"running (pid {pid})")
+        return 0
+    print("not running")
+    return 1
 
 
 def cmd_logs() -> int:
