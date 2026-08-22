@@ -66,8 +66,12 @@ class VLMClient:
         return self._parse_response(resp, self._chat_text)
 
     # -- prompt ---------------------------------------------------------------
-    def _prompt(self, question: str | None, tier: int) -> str:
-        return TIER2_PROMPT.format(q=question) if tier == 2 and question else TIER1_PROMPT
+    def _prompt(self, question: str | None, tier: int, override: str | None = None) -> str:
+        if override:
+            return override
+        if tier == 2 and question:
+            return self.cfg.custom_tier2 or TIER2_PROMPT.format(q=question)
+        return self.cfg.custom_tier1 or TIER1_PROMPT
 
     def _image_content(self, img: ImageBlock) -> dict:
         if img.url:
@@ -77,9 +81,14 @@ class VLMClient:
 
     # -- calls ----------------------------------------------------------------
     def describe(
-        self, image: ImageBlock, question: str | None = None, tier: int = 1, detail: dict | None = None
+        self,
+        image: ImageBlock,
+        question: str | None = None,
+        tier: int = 1,
+        detail: dict | None = None,
+        prompt_override: str | None = None,
     ) -> str:
-        prompt = self._prompt(question, tier)
+        prompt = self._prompt(question, tier, override=prompt_override)
         if self._resolve_local_model() is not None:
             try:
                 desc = self._describe_local(image, prompt)

@@ -148,3 +148,22 @@ class TestDescribeDetail:
         assert desc == "红色卡车"
         assert "Describe the image" in detail["prompt"]
         assert detail["raw"] == "红色卡车"
+
+
+class TestCustomPrompts:
+    def test_custom_tier1_used_when_set(self):
+        from vision_relay.config import VLMConfig
+        from vision_relay.vlm import VLMClient
+
+        cfg = VLMConfig(api_key="k", custom_tier1="CT1")
+        client = VLMClient(cfg)
+        # 直接验证 _prompt 选择逻辑（不起 HTTP）
+        assert client._prompt(None, 1) == "CT1"
+        assert client._prompt("q", 2).startswith("Answer the question")  # tier2 未自定义走默认
+
+    def test_prompt_override_wins_all(self):
+        from vision_relay.config import VLMConfig
+        from vision_relay.vlm import VLMClient
+
+        client = VLMClient(VLMConfig(custom_tier1="CT1"))
+        assert client._prompt(None, 1, override="OV") == "OV"

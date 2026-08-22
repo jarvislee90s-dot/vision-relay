@@ -194,3 +194,76 @@ class TestModelsSet:
         monkeypatch.setattr("sys.stdin", _io.StringIO("not-json"))
         out = verbs.models_set(ProxyConfig())
         assert out["ok"] is False
+
+
+class TestVlmSet:
+    def _stdin(self, monkeypatch, payload):
+        import io as _io
+
+        monkeypatch.setattr("sys.stdin", _io.StringIO(json.dumps(payload)))
+
+    def test_set_global_and_group_and_prompts(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        self._stdin(
+            monkeypatch,
+            {
+                "vlm": {"model": "qwen3.5-omni-plus", "base_url": "https://x/v1"},
+                "vlm_by_harness": {"claude": {"model": "m-c", "api_key": "sk-new"}},
+                "custom_tier1": "自定义 T1",
+                "custom_tier2": None,
+            },
+        )
+        out = verbs.vlm_set(cfg)
+        assert out["ok"] is True
+        assert cfg.vlm.model == "qwen3.5-omni-plus"
+        assert cfg.vlm_by_harness["claude"]["model"] == "m-c"
+        assert cfg.vlm.custom_tier1 == "自定义 T1"
+        assert cfg.vlm.custom_tier2 is None  # null = 恢复默认
+
+    def test_absent_fields_unchanged_and_api_key_blank_keeps_old(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "sk-old"
+        self._stdin(monkeypatch, {"vlm": {"model": "m2"}, "vlm_by_harness": {"codex": {"api_key": ""}}})
+        verbs.vlm_set(cfg)
+        assert cfg.vlm.api_key == "sk-old"  # 未提供/空串 = 不修改（GUI 看不到 key，无法回显）
+
+    def test_masked_placeholder_rejected_as_key(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        self._stdin(monkeypatch, {"vlm": {"api_key": "●●●●"}})
+        out = verbs.vlm_set(cfg)
+        assert out["ok"] is False
+
+    def test_non_dict_sections_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        self._stdin(monkeypatch, {"vlm": [1, 2]})
+        assert verbs.vlm_set(cfg)["ok"] is False
+        self._stdin(monkeypatch, {"vlm_by_harness": "abc"})
+        assert verbs.vlm_set(cfg)["ok"] is False
+
+
+class TestVlmTest:
+    def test_four_modes_use_overrides(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        calls = []
+
+        class FakeClient:
+            def __init__(self, vlm_cfg):
+                self.cfg = vlm_cfg
+
+            def describe(self, image, question=None, tier=1, detail=None, prompt_override=None):
+                calls.append({"tier": tier, "q": question, "ov": prompt_override, "model": self.cfg.model})
+                if detail is not None:
+                    detail["prompt"] = prompt_override or "default-prompt"
+                    detail["raw"] = "RAW"
+                return "红色"
+
+        monkeypatch.setattr(verbs, "_VLMClient", FakeClient)
+        payload = {"mode": "tier2", "question": "图里几个字", "custom_prompt": "我的自定义提示词", "harness": "claude"}
+        out = verbs.vlm_test(ProxyConfig(), payload=payload)
+        assert out["ok"] is True and out["data"]["desc"] == "红色"
+        assert calls[0]["ov"] == "我的自定义提示词"
+        assert calls[0]["q"] == "图里几个字" and calls[0]["tier"] == 2

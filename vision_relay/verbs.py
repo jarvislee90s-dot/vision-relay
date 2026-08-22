@@ -185,3 +185,121 @@ def models_set(cfg: ProxyConfig) -> dict:
 
         save_config(cfg)
     return envelope(True, {"updated": len(rows)})
+
+
+def vlm_set(cfg: ProxyConfig) -> dict:
+    """stdin: {"vlm":{...}, "vlm_by_harness":{h:{...}}, "custom_tier1":str|null, "custom_tier2":str|null}
+    规则：缺省字段不修改；api_key 空串 = 不修改、打码占位 = 拒绝（GUI 看不到 key，无法回显）；
+    custom_tierX null = 恢复默认。"""
+    import json
+    import sys
+
+    from .locking import config_lock
+
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError as exc:
+        return envelope(False, {"error": f"invalid stdin json: {exc}"})
+    if not isinstance(payload, dict):
+        return envelope(False, {"error": "expected a JSON object"})
+    for key in ("vlm", "vlm_by_harness"):
+        v = payload.get(key)
+        if v is not None and not isinstance(v, dict):
+            return envelope(False, {"error": f"{key} must be an object"})
+    MASK = "●●●●"
+
+    def apply(target: dict, updates: dict) -> str | None:
+        for k, v in updates.items():
+            if k == "api_key" and v == "":
+                continue  # 空串 = 不修改
+            if v == MASK:
+                return f"masked placeholder not allowed for {k}"
+            if k in ("custom_tier1", "custom_tier2"):
+                continue  # 顶层单独处理（全局字段，不走 vlm.__dict__ 直写）
+            target[k] = v
+        return None
+
+    err = apply(cfg.vlm.__dict__, payload.get("vlm") or {})
+    if err is None:
+        for k in ("custom_tier1", "custom_tier2"):
+            if k in payload:
+                setattr(cfg.vlm, k, payload[k] or None)
+    if err is None:
+        for h, over in (payload.get("vlm_by_harness") or {}).items():
+            if over is None:
+                cfg.vlm_by_harness.pop(h, None)  # null = 改回跟随全局
+                continue
+            if not isinstance(over, dict):
+                err = f"vlm_by_harness[{h}] must be object or null"
+                break
+            bucket = cfg.vlm_by_harness.setdefault(h, {})
+            err = apply(bucket, over) or None
+            if err:
+                break
+    if err is not None:
+        return envelope(False, {"error": err})
+    from .config import save_config
+
+    with config_lock():
+        save_config(cfg)
+    return envelope(True, {"saved": True})
+
+
+def _VLMClient(vlm_cfg):
+    from .vlm import VLMClient
+
+    return VLMClient(vlm_cfg)
+
+
+def vlm_test(cfg: ProxyConfig, payload: dict | None = None) -> dict:
+    """与生产同一调用路径的连通测试（spec §6 设置·VLM）。
+    payload: {mode: tier1|tier2, question?, custom_prompt?, harness?, image_base64?, media_type?}
+    payload 缺省时（CLI 入口）从 stdin 读 JSON。"""
+    import base64
+    import json
+    import sys
+    import time
+
+    if payload is None:
+        try:
+            payload = json.load(sys.stdin)
+        except ValueError as exc:
+            return envelope(False, {"error": f"invalid stdin json: {exc}"})
+        if not isinstance(payload, dict):
+            return envelope(False, {"error": "expected a JSON object"})
+    mode = payload.get("mode", "tier1")
+    if mode not in ("tier1", "tier2"):
+        return envelope(False, {"error": "mode must be tier1|tier2"})
+    harness = payload.get("harness")
+    merged = cfg.vlm_for(harness) if harness else cfg.vlm
+    client = _VLMClient(merged)
+    from .ir import ImageBlock
+
+    img_b64 = payload.get("image_base64")
+    img = (
+        ImageBlock(base64=img_b64, media_type=payload.get("media_type") or "image/png")
+        if img_b64
+        else ImageBlock(base64=base64.b64encode(b"i").decode(), media_type="image/png")
+    )
+    detail: dict = {}
+    started = time.time()
+    try:
+        desc = client.describe(
+            img,
+            question=payload.get("question"),
+            tier=2 if mode == "tier2" else 1,
+            detail=detail,
+            prompt_override=payload.get("custom_prompt"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        reason = getattr(exc, "reason", type(exc).__name__)
+        return envelope(False, {"error": str(exc), "reason": reason})
+    return envelope(
+        True,
+        {
+            "desc": desc,
+            "prompt_used": detail.get("prompt"),
+            "model": merged.model,
+            "duration_ms": int((time.time() - started) * 1000),
+        },
+    )

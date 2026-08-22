@@ -27,6 +27,8 @@ _JSON_MAP = {
     "tools": verbs.tools,
     "events": verbs.events,
     "visionlog": verbs.visionlog,
+    "vlm-set": verbs.vlm_set,  # Task 2: stdin JSON 写全局/分组/自定义提示词
+    "vlm-test": verbs.vlm_test,  # Task 2: 与生产同一调用路径的连通测试（stdin JSON）
 }
 
 
@@ -61,6 +63,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     vl = sub.add_parser("visionlog", parents=[common])  # M1: 识图记录查询
     vl.add_argument("--harness")
     sub.add_parser("config", parents=[common])  # Task 14: --json 配置读取（打码）
+    sub.add_parser("vlm-set", parents=[common])  # Task 2: stdin JSON 写 VLM 全局/分组/自定义提示词
+    sub.add_parser("vlm-test", parents=[common])  # Task 2: stdin JSON VLM 连通测试（共享生产路径）
     return parser.parse_args(argv)
 
 

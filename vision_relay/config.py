@@ -61,6 +61,8 @@ class VLMConfig:
     auto_local_ollama: bool = True
     timeout_ms: int = 120_000
     max_tokens: int = 4096
+    custom_tier1: str | None = None  # 自定义 Tier1 提示词（None=默认；spec §7.4）
+    custom_tier2: str | None = None  # 自定义 Tier2 提示词（None=默认；spec §7.4）
 
 
 @dataclass
