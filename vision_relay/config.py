@@ -36,6 +36,7 @@ class RoutingConfig:
     capability_confirmed: bool = False  # 首次是否已显式确认过各模型看图能力
     unknown_default: str = "text_only"  # 未归类模型默认：text_only(安全) | vision
     activated_relays: list[str] = field(default_factory=list)  # start 激活、stop 还原的 relay name 记录
+    suppressed_relays: list[str] = field(default_factory=list)  # 用户停用的自动 relay（压制名单，spec §7.5）
 
     def __post_init__(self) -> None:
         bad = [h for h in self.harnesses if h not in HARNESSES]

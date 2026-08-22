@@ -313,6 +313,10 @@ def ensure_tool_relays(cfg, tool_states) -> list[str]:
         name = _relay_name(tool_name, harness, tpl)
         if any(r.name == name for r in cfg.relays):
             continue
+        if name in cfg.routing.suppressed_relays or (
+            tool_name == "cc-switch" and f"cc-{harness}" in cfg.routing.suppressed_relays
+        ):
+            continue  # 用户显式停用 > 自动探测（spec §7.5；兼容规范名 cc-<harness>）
         try:
             cfg.relays.append(RelayConfig(name=name, **dict(tpl)))
             if name not in cfg.routing.activated_relays:

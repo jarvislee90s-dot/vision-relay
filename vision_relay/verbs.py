@@ -5,6 +5,8 @@ GUI（M2）只消费这些动词的输出；结构变更必须升 contract_versi
 
 from __future__ import annotations
 
+import httpx
+
 from .config import ProxyConfig
 from .reconcile import observe as _observe_impl
 from .reconcile import reconcile as _reconcile_impl
@@ -303,3 +305,118 @@ def vlm_test(cfg: ProxyConfig, payload: dict | None = None) -> dict:
             "duration_ms": int((time.time() - started) * 1000),
         },
     )
+
+
+def settings_set(cfg: ProxyConfig) -> dict:
+    """stdin: {"routing": {...白名单键...}, "vision_log": {...}}。白名单外键拒绝。"""
+    import json
+    import sys
+
+    from .locking import config_lock
+
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError as exc:
+        return envelope(False, {"error": f"invalid stdin json: {exc}"})
+    if not isinstance(payload, dict):
+        return envelope(False, {"error": "expected a JSON object"})
+    routing_ok = {"unknown_default"}
+    log_ok = {"enabled", "retention_days"}
+    r = payload.get("routing") or {}
+    v = payload.get("vision_log") or {}
+    if not isinstance(payload.get("routing", {}), dict) or not isinstance(payload.get("vision_log", {}), dict):
+        return envelope(False, {"error": "routing/vision_log must be objects"})
+    if not set(r).issubset(routing_ok) or not set(v).issubset(log_ok):
+        return envelope(False, {"error": "unsupported settings key"})
+    if "unknown_default" in r and r["unknown_default"] not in ("text_only", "image"):
+        return envelope(False, {"error": "unknown_default must be text_only|image"})
+    if "retention_days" in v and (not isinstance(v["retention_days"], int) or v["retention_days"] < 0):
+        return envelope(False, {"error": "retention_days must be a non-negative int"})
+    cfg.routing.unknown_default = r.get("unknown_default", cfg.routing.unknown_default)
+    if "enabled" in v:
+        enabled = v["enabled"]
+        if not isinstance(enabled, bool):
+            return envelope(False, {"error": "enabled must be a boolean"})
+        cfg.vision_log.enabled = enabled
+    if "retention_days" in v:
+        cfg.vision_log.retention_days = v["retention_days"]
+    from .config import save_config
+
+    with config_lock():
+        save_config(cfg)
+    return envelope(True, {"saved": True})
+
+
+def relay_set(cfg: ProxyConfig) -> dict:
+    """stdin: {"name", "suppressed": bool} 或 {"name", "api_key": str}（补 key，spec §6 需要你区唯一动作）。"""
+    import json
+    import sys
+
+    from .locking import config_lock
+
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError as exc:
+        return envelope(False, {"error": f"invalid stdin json: {exc}"})
+    if not isinstance(payload, dict):
+        return envelope(False, {"error": "expected a JSON object"})
+    name = payload.get("name")
+    relay = next((r for r in cfg.relays if r.name == name), None)
+    if relay is None:
+        return envelope(False, {"error": f"unknown relay {name!r}"})
+    if "suppressed" in payload:
+        suppressed = payload["suppressed"]
+        if not isinstance(suppressed, bool):
+            return envelope(False, {"error": "suppressed must be a boolean"})
+        if suppressed:
+            if name not in cfg.routing.suppressed_relays:
+                cfg.routing.suppressed_relays.append(name)
+        else:
+            cfg.routing.suppressed_relays = [n for n in cfg.routing.suppressed_relays if n != name]
+    if "api_key" in payload:
+        key = payload["api_key"]
+        if not isinstance(key, str) or not key or key == "●●●●":
+            return envelope(False, {"error": "api_key must be a non-empty string"})
+        relay.api_key = key
+    from .config import save_config
+
+    with config_lock():
+        save_config(cfg)
+    return envelope(True, {"name": name})
+
+
+def _run_probe(cfg: ProxyConfig, harness: str, provider: str, model: str) -> str | None:
+    from .annotate import run_probe as _rp
+    from .cli import _probe_target_for
+    from .reconcile import observe
+
+    tool_by_name = {t["name"]: t for t in observe(cfg)["tools"]}
+    base, key, proto = _probe_target_for(cfg, harness, provider, tool_by_name)
+    return _rp(cfg, harness, provider, model, base, key, proto)
+
+
+def probe_one(cfg: ProxyConfig, harness: str, provider: str, model: str) -> dict:
+    result = _run_probe(cfg, harness, provider, model)
+    return envelope(result is not None, {"result": result})
+
+
+def models_fetch(cfg: ProxyConfig) -> dict:
+    """可选：从上游 /v1/models 拉模型 ID 清单（spec §5；只补清单，能力以探针/目录为准）。"""
+    providers: dict[str, list[str]] = {}
+    errors: dict[str, str] = {}
+    for r in cfg.relays:
+        if r.name in cfg.routing.suppressed_relays or not r.base_url or r.base_url.startswith("http://127.0.0.1"):
+            continue  # 工具端口两层不拉（清单在工具自己界面上）；只拉直连上游
+        url = r.base_url.rstrip("/") + "/models"
+        headers = {"Authorization": f"Bearer {r.api_key}"} if r.api_key else {}
+        try:
+            resp = httpx.get(url, headers=headers, timeout=8.0, trust_env=False)
+            data = resp.json() if resp.status_code == 200 else {}
+            ids = [m.get("id") for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+            if not ids and isinstance(data, list):
+                ids = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
+            providers[r.name] = ids
+        except Exception as exc:  # noqa: BLE001 - 单个上游失败不致命
+            providers[r.name] = []
+            errors[r.name] = str(exc)[:120]
+    return envelope(True, {"providers": providers, "errors": errors})

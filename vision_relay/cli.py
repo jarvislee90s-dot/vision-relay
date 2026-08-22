@@ -29,6 +29,10 @@ _JSON_MAP = {
     "visionlog": verbs.visionlog,
     "vlm-set": verbs.vlm_set,  # Task 2: stdin JSON 写全局/分组/自定义提示词
     "vlm-test": verbs.vlm_test,  # Task 2: 与生产同一调用路径的连通测试（stdin JSON）
+    "settings-set": verbs.settings_set,  # Task 3: stdin 白名单设置（unknown_default / vision_log）
+    "relay-set": verbs.relay_set,  # Task 3: 停用压制 / 补 key
+    "probe": verbs.probe_one,  # Task 3: --json 探针（main 特判补 harness/provider/model）
+    "models-fetch": verbs.models_fetch,  # Task 3: 拉上游模型 ID 清单（spec §5）
 }
 
 
@@ -54,7 +58,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sub.add_parser("refresh", parents=[common])  # M1: 手动对账（= 刷新按钮后端）
     sub.add_parser("diagnose", parents=[common])  # M1: 观测 + 自动修复 + 报告
     sub.add_parser("tools", parents=[common])  # M1: 工具档案探测
-    pr = sub.add_parser("probe")  # M1: 模态探针
+    pr = sub.add_parser("probe", parents=[common])  # M1: 模态探针（--json 走 probe_one）
     pr.add_argument("--harness")
     pr.add_argument("--provider")
     pr.add_argument("--model")
@@ -65,6 +69,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sub.add_parser("config", parents=[common])  # Task 14: --json 配置读取（打码）
     sub.add_parser("vlm-set", parents=[common])  # Task 2: stdin JSON 写 VLM 全局/分组/自定义提示词
     sub.add_parser("vlm-test", parents=[common])  # Task 2: stdin JSON VLM 连通测试（共享生产路径）
+    sub.add_parser("settings-set", parents=[common])  # Task 3: stdin 白名单设置（unknown_default / vision_log）
+    sub.add_parser("relay-set", parents=[common])  # Task 3: 停用压制 / 补 key
+    sub.add_parser("models-fetch", parents=[common])  # Task 3: 拉上游模型 ID 清单（spec §5）
     return parser.parse_args(argv)
 
 
@@ -556,8 +563,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
     if as_json:
-        kw = {"harness": getattr(args, "harness", None)} if args.command == "visionlog" else {}
-        print(json.dumps(_JSON_MAP[args.command](cfg, **kw), ensure_ascii=False))
+        if args.command == "probe":  # probe_one 需 harness/provider/model（--json 特判补参）
+            out = verbs.probe_one(
+                cfg,
+                harness=getattr(args, "harness", None),
+                provider=getattr(args, "provider", None),
+                model=getattr(args, "model", None),
+            )
+        else:
+            kw = {"harness": getattr(args, "harness", None)} if args.command == "visionlog" else {}
+            out = _JSON_MAP[args.command](cfg, **kw)
+        print(json.dumps(out, ensure_ascii=False))
         return 0
     if args.command == "start" and getattr(args, "detach", False):
         return cmd_start_detach(cfg)
