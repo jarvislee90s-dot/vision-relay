@@ -32,6 +32,8 @@ _JSON_MAP = {
     "settings-set": verbs.settings_set,  # Task 3: stdin 白名单设置（unknown_default / vision_log）
     "relay-set": verbs.relay_set,  # Task 3: 停用压制 / 补 key
     "probe": verbs.probe_one,  # Task 3: --json 探针（main 特判补 harness/provider/model）
+    # Task 9: --json 批量探测未测（内部调度键，非子命令——只被 main() probe 分支引用）
+    "probe-all-untested": verbs.probe_all_untested,
     "models-fetch": verbs.models_fetch,  # Task 3: 拉上游模型 ID 清单（spec §5）
 }
 
@@ -563,13 +565,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
     if as_json:
-        if args.command == "probe":  # probe_one 需 harness/provider/model（--json 特判补参）
-            out = verbs.probe_one(
-                cfg,
-                harness=getattr(args, "harness", None),
-                provider=getattr(args, "provider", None),
-                model=getattr(args, "model", None),
-            )
+        if args.command == "probe":  # --json 特判补参；--all-untested 走批量探测（Task 9）
+            if getattr(args, "all_untested", False):
+                out = _JSON_MAP["probe-all-untested"](cfg)
+            else:
+                out = _JSON_MAP["probe"](
+                    cfg,
+                    harness=getattr(args, "harness", None),
+                    provider=getattr(args, "provider", None),
+                    model=getattr(args, "model", None),
+                )
         else:
             kw = {"harness": getattr(args, "harness", None)} if args.command == "visionlog" else {}
             out = _JSON_MAP[args.command](cfg, **kw)

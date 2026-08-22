@@ -346,6 +346,41 @@ class TestProbeJson:
         assert out == {"contract_version": 1, "ok": True, "data": {"result": "image"}}
 
 
+class TestProbeAllUntested:
+    def test_probes_only_uncached(self, tmp_path, monkeypatch):
+        """批量探测只测无探针缓存的组合；m1/m2 有缓存 -> 跳过，仅 m3/m4 被探测。
+
+        无真实 harness 配置时 scan_model_groups 返回空组，会导致 called 为空——
+        monkeypatch 固定 ModelGroup 保证稳定（与 TestModelsScan 同源做法）。"""
+        from vision_relay.onboarding import ModelEntry, ModelGroup
+        from vision_relay.tools import ToolState
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        monkeypatch.setattr(
+            "vision_relay.onboarding.scan_model_groups",
+            lambda c: [
+                ModelGroup(
+                    group="claude",
+                    path="fake",
+                    entries=[ModelEntry("m1"), ModelEntry("m2"), ModelEntry("m3"), ModelEntry("m4")],
+                )
+            ],
+        )
+        # provider 提示 -> bigmodel（cc-switch 在线 + 激活供应商）
+        monkeypatch.setattr(
+            verbs, "_probe_tools", lambda: [ToolState("cc-switch", 15721, True, "bigmodel", "https://x")]
+        )
+        called = []
+        monkeypatch.setattr(verbs, "_run_probe", lambda cfg, h, p, m: called.append((h, p, m)) or "image")
+        cfg.probe_results.setdefault("bigmodel", {})["m1"] = {"result": "text_only", "ts": 1}
+        cfg.probe_results.setdefault("bigmodel", {})["m2"] = {"result": "image", "ts": 1}
+        out = verbs.probe_all_untested(cfg)
+        assert out["ok"] is True
+        assert out["data"]["probed"] == 2
+        assert set(x[2] for x in called) == {"m3", "m4"}  # 只测无缓存的
+
+
 class TestModelsFetch:
     def test_fetch_lists_model_ids(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))

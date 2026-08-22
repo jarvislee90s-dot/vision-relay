@@ -446,6 +446,23 @@ def probe_one(cfg: ProxyConfig, harness: str, provider: str, model: str) -> dict
     return envelope(result is not None, {"result": result})
 
 
+def probe_all_untested(cfg: ProxyConfig) -> dict:
+    """批量探测所有未测的 (harness, provider, model) 组合（probe_results 无缓存）。返回汇总。"""
+    from .onboarding import scan_model_groups
+
+    state = _probe_tools()
+    probed: list[dict] = []
+    for g in scan_model_groups(cfg):
+        provider = _provider_hint(g.group, state)
+        for ent in g.entries:
+            cached = (cfg.probe_results.get(provider, {}).get(ent.model) or {}).get("result")
+            if cached:
+                continue
+            result = _run_probe(cfg, g.group, provider, ent.model)
+            probed.append({"harness": g.group, "provider": provider, "model": ent.model, "result": result})
+    return envelope(True, {"probed": len(probed), "results": probed})
+
+
 def models_fetch(cfg: ProxyConfig) -> dict:
     """可选：从上游 /v1/models 拉模型 ID 清单（spec §5；只补清单，能力以探针/目录为准）。"""
     providers: dict[str, list[str]] = {}
