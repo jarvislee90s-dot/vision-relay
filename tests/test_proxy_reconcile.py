@@ -110,6 +110,22 @@ class TestMatrix:
         assert any(a["type"] == "auto_fix" and a["fix"] == "restart" for a in report["actions"])
         assert spawned
 
+    def test_multiple_zombie_harnesses_restart_once_with_per_harness_actions(self, env, monkeypatch):
+        """服务级修复只 spawn 一次；每个僵尸 harness 各留一条 auto_fix 动作（可见性补位）。"""
+        home, cfgdir = env
+        for h in ("claude", "codex", "qwen-code"):
+            _write_harness(home, h, "http://127.0.0.1:8787")
+        cfg = ProxyConfig()
+        _set_running(monkeypatch, cfgdir, False)
+        reconcile.set_routing_on(True)
+        calls = []
+        monkeypatch.setattr(reconcile, "_restart_service", lambda cfg: calls.append(1) or True)
+        report = reconcile.reconcile(cfg, tool_states=[])
+        assert len(calls) == 1
+        fixes = [a for a in report["actions"] if a["type"] == "auto_fix" and a["fix"] == "restart"]
+        assert {a["harness"] for a in fixes} == {"claude", "codex", "qwen-code"}
+        assert all(a["ok"] is True for a in fixes)
+
     def test_dead_and_wired_with_routing_off_restores_snapshot(self, env, monkeypatch):
         home, cfgdir = env
         _write_harness(home, "claude", "http://127.0.0.1:8787")

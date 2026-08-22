@@ -197,8 +197,10 @@ def _absorb(cfg: ProxyConfig, harness: str, new_base: str) -> None:
     append_event("absorb", harness, {"new_base_url": new_base, "needs_key": True, "ok": ok})
 
 
-def _wait_port_online(port: int, timeout_s: float = 2.0, interval_s: float = 0.2) -> bool:
-    """短轮询本机端口直到通或超时（重启诚实化用；测试可 monkeypatch）。"""
+def _wait_port_online(port: int, timeout_s: float = 8.0, interval_s: float = 0.2) -> bool:
+    """短轮询本机端口直到通或超时（重启诚实化用；测试可 monkeypatch）。
+    窗口 8s：Windows 冷启动 `python -m vision_relay start`（导入+接线+对账）实测可超 2s，
+    过短会把成功重启谎报为 ok=False（G4 E2E 实测）。"""
     import socket
 
     deadline = time.monotonic() + timeout_s
@@ -210,6 +212,18 @@ def _wait_port_online(port: int, timeout_s: float = 2.0, interval_s: float = 0.2
         if time.monotonic() >= deadline:
             return False
         time.sleep(interval_s)
+
+
+def _clear_stale_pid() -> None:
+    """僵尸接线场景清掉硬崩溃残留的 pid 文件。
+
+    observe 已用「端口 + PID」双信号判定服务死亡；残留 pid 在 Windows 上可能撞上
+    PID 复用（新进程恰好拿到同号且存活）→ 重启子进程 cmd_start 误判 already running
+    直接退出、端口永不恢复（G4 E2E 间歇实测）。清掉后子进程自然重建 pid。"""
+    try:
+        os.unlink(os.path.join(config_dir(), "proxy.pid"))
+    except OSError:
+        pass
 
 
 def _restart_service(cfg: ProxyConfig) -> bool:
@@ -254,6 +268,7 @@ def reconcile(
     expected_wired = expected_wired if expected_wired is not None else set(cfg.routing.harnesses)
     actions: list[dict] = []
     needs_you: list[dict] = []
+    pending_restart: list[str] = []  # 服务级修复（spawn）必须移出锁外执行，见下方注释
     with config_lock():
         obs = observe(cfg, tool_states)
         # 0) 在线工具 → 自动 relay（name 去重不覆盖，离线不加；§12 只增不覆盖）
@@ -288,9 +303,7 @@ def reconcile(
             elif not obs["service_alive"] and owner == "ours":
                 # 僵尸接线：按崩溃前意图推导（spec §5 修复流程）
                 if obs["routing_on"]:
-                    ok = _restart_service(cfg)
-                    append_event("auto_fix", name, {"fix": "restart", "ok": ok})
-                    actions.append({"type": "auto_fix", "harness": name, "fix": "restart", "ok": ok})
+                    pending_restart.append(name)
                 elif name in snapshot.load():
                     wiring.wiring_restore_by_snapshot(cfg)
                     append_event("auto_fix", name, {"fix": "restore"})
@@ -301,4 +314,14 @@ def reconcile(
                     )
         if actions:
             save_config(cfg)  # relay 增删/吸收落盘（持锁内）
+    # 服务重启必须在 config_lock 之外 spawn：子进程 cmd_start 内部的
+    # reconcile(trigger="start") 要拿同一把锁——持锁等端口会与被等者互等（锁倒置
+    # 死锁，G4 E2E 实测：ok 永远 False、端口在窗口内永不出现）。只 spawn 一次，
+    # 多个僵尸 harness 共享结果、各自留痕（可见性补位）。
+    if pending_restart:
+        _clear_stale_pid()
+        restarted = _restart_service(cfg)
+        for name in pending_restart:
+            append_event("auto_fix", name, {"fix": "restart", "ok": restarted})
+            actions.append({"type": "auto_fix", "harness": name, "fix": "restart", "ok": restarted})
     return {"trigger": trigger, "actions": actions, "needs_you": needs_you, "observed": obs}
