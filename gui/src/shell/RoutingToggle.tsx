@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { startService, stopService } from "../core";
-export function RoutingToggle(props: { on: boolean; onChangeDone: () => void }) {
+import { t, Lang } from "../i18n";
+export function RoutingToggle(props: { on: boolean; onChangeDone: () => void; lang: Lang }) {
   const [busy, setBusy] = useState(false);
   const toggle = async () => {
     setBusy(true);
@@ -12,11 +13,11 @@ export function RoutingToggle(props: { on: boolean; onChangeDone: () => void }) 
   };
   return (
     <div className="switch">
-      <span className="dim">路由关闭</span>
+      <span className="dim">{t(props.lang, "routingOffLabel")}</span>
       <div className={"track" + (props.on ? "" : " off")} onClick={busy ? undefined : toggle}>
         <div className="knob" />
       </div>
-      <b style={{ color: props.on ? "#059669" : "#6b7280" }}>{props.on ? "路由开启" : "路由已关"}</b>
+      <b style={{ color: props.on ? "#059669" : "#6b7280" }}>{props.on ? t(props.lang, "routingOn") : t(props.lang, "routingOff")}</b>
     </div>
   );
 }

@@ -3,11 +3,12 @@ import { core } from "../core";
 import { RoutingToggle } from "../shell/RoutingToggle";
 import { chainHops, toolFor } from "../lib/chain";
 import type { StatusData } from "../shell/useStatus";
+import { t, Lang } from "../i18n";
 
 interface EventRow { ts: number; type: string; harness: string | null; [k: string]: unknown }
 interface DiagReport { actions: { type: string; harness?: string; fix?: string; ok?: boolean }[]; needs_you: { type: string; harness?: string; hint?: string }[]; observed: StatusData }
 
-export function Overview(p: { status: StatusData | null; refresh: () => void; lang: string; showDiag: boolean; setShowDiag: (b: boolean) => void }) {
+export function Overview(p: { status: StatusData | null; refresh: () => void; lang: Lang; showDiag: boolean; setShowDiag: (b: boolean) => void }) {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [diag, setDiag] = useState<DiagReport | null>(null);
   const [drawer, setDrawer] = useState<string | null>(null);
@@ -37,9 +38,9 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
             <span className="dim">127.0.0.1:8787 · 自动对账中</span>
           </div>
         </div>
-        <RoutingToggle on={s.routing_on && s.service_alive} onChangeDone={p.refresh} />
-        <button className="btn lg" onClick={p.refresh}>🔄 刷新（便捷动作）</button>
-        <button className="btn lg" onClick={() => p.setShowDiag(true)}>📋 诊断报告</button>
+        <RoutingToggle on={s.routing_on && s.service_alive} onChangeDone={p.refresh} lang={p.lang} />
+        <button className="btn lg" onClick={p.refresh}>🔄 {t(p.lang, "refresh")}</button>
+        <button className="btn lg" onClick={() => p.setShowDiag(true)}>📋 {t(p.lang, "diag")}</button>
       </div>
       <div className="cols3">
         {Object.keys(s.harnesses).map((h) => {

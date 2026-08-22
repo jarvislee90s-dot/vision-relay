@@ -36,7 +36,7 @@ export default function App() {
         ))}
       </div>
       <div className="main">
-        {error && <div className="alert-err">核心不可用：{error}</div>}
+        {error && <div className="alert-err">{t(lang, "coreUnavailable")}：{error}</div>}
         {page === "overview" && <Overview status={status} refresh={refresh} lang={lang} showDiag={showDiag} setShowDiag={setShowDiag} />}
         {page === "models" && <ModelsPage lang={lang} refresh={refresh} />}
         {page === "visionlog" && <VisionLogPage lang={lang} />}
