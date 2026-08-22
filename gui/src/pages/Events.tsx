@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { core } from "../core";
 
 interface EventRow { ts: number; type: string; harness: string | null; [k: string]: unknown }
-const TYPES = ["all", "reclaim", "absorb", "auto_fix", "auto_annotate", "relay_added", "takeover", "restore"];
+const TYPES = ["all", "reclaim", "absorb", "auto_fix", "auto_annotate", "relay_added"];
 
 export function EventsPage(p: { lang: string }) {
   void p;
@@ -26,7 +26,7 @@ export function EventsPage(p: { lang: string }) {
     }
   };
   const shown = useMemo(() => (filter === "all" ? rows : rows.filter((r) => r.type === filter)), [rows, filter]);
-  const label: Record<string, string> = { reclaim: "自动抢回", absorb: "自动吸收", auto_fix: "自动修复", auto_annotate: "自动标注", relay_added: "生成转发", takeover: "接管", restore: "还原" };
+  const label: Record<string, string> = { reclaim: "自动抢回", absorb: "自动吸收", auto_fix: "自动修复", auto_annotate: "自动标注", relay_added: "生成转发" };
   return (
     <div className="card" style={{ padding: 0 }}>
       <div className="row between" style={{ padding: "12px 14px 0" }}>

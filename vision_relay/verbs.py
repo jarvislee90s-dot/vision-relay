@@ -440,7 +440,8 @@ def _run_probe(
 
 def probe_one(cfg: ProxyConfig, harness: str, provider: str, model: str) -> dict:
     result = _run_probe(cfg, harness, provider, model)
-    return envelope(result is not None, {"result": result})
+    # 无结论（None）= 含糊不下结论（spec §5 合法三态），不是错误；GUI 重测后显示"未测"
+    return envelope(True, {"result": result})
 
 
 def probe_all_untested(cfg: ProxyConfig) -> dict:

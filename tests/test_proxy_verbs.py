@@ -329,6 +329,13 @@ class TestProbeJson:
         out = verbs.probe_one(ProxyConfig(), harness="claude", provider="bigmodel", model="m1")
         assert out == {"contract_version": 1, "ok": True, "data": {"result": "image"}}
 
+    def test_inconclusive_is_ok_with_null_result(self, tmp_path, monkeypatch):
+        """含糊不下结论是合法结果（spec §5），不是错误：ok 恒 True，GUI 重测静默显示"未测"。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(verbs, "_run_probe", lambda cfg, h, p, m, tb=None: None)
+        out = verbs.probe_one(ProxyConfig(), harness="claude", provider="p", model="m")
+        assert out["ok"] is True and out["data"]["result"] is None
+
 
 class TestProbeAllUntested:
     def test_probes_only_uncached(self, tmp_path, monkeypatch):
