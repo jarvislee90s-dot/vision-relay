@@ -68,6 +68,9 @@ class TestCliSubprocessVerbs:
         ):
             assert key in data["data"], f"status missing {key}"
         assert data["data"]["harnesses"]["claude"]["base_url"] == ORIGIN
+        # 决策③/⑥c：顶层 bind_port + harness config_path（只读增量，contract v1）
+        assert data["data"]["bind_port"] == 8787
+        assert data["data"]["harnesses"]["claude"]["config_path"].endswith(os.path.join(".claude", "settings.json"))
 
     def test_models_set_writes_user_source_and_null_clears(self, env):
         """models-set：stdin 数组写 user 覆盖；value=null 清除回未标注（spec §7 三态）。"""

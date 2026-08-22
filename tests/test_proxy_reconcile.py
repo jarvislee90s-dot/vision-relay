@@ -315,3 +315,16 @@ class TestPidAlive:
         monkeypatch.setattr(reconcile.os, "name", "posix")
         monkeypatch.setattr(reconcile.os, "kill", deny)
         assert reconcile._pid_alive(4242) is True
+
+
+class TestObserveContractFields:
+    """决策③/⑥c：status 契约增量——harnesses.*.config_path + 顶层 bind_port（只读，不写）。"""
+
+    def test_harness_rows_expose_config_path_and_bind_port(self, env):
+        home, cfgdir = env
+        cfg = ProxyConfig()
+        obs = reconcile.observe(cfg, tool_states=[])
+        assert obs["bind_port"] == cfg.bind_port
+        row = obs["harnesses"]["claude"]
+        assert row["config_path"].endswith(os.path.join(".claude", "settings.json"))
+        assert row["config_path"].startswith(str(home))  # 隔离 home 生效（HOME 被 monkeypatch）

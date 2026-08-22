@@ -124,9 +124,11 @@ def observe(cfg: ProxyConfig, tool_states: list | None = None) -> dict:
             "ownership": wiring.classify_base_url(cur, cfg.bind_port),
             "has_snapshot": name in snapshot.load(),
             "config_exists": exists,  # 区分"文件不存在"与"文件在但读不到 base_url"（后者仍走 reclaim）
+            "config_path": p,  # GUI 详情抽屉「配置文件」入口（2026-08-23 决策③）
         }
     return {
         "service_alive": _service_alive(cfg),
+        "bind_port": cfg.bind_port,  # GUI 拓扑卡/横幅不再硬编码 8787（决策⑥c）
         "harnesses": harness_rows,
         "tools": [
             {
