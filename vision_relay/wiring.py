@@ -333,3 +333,51 @@ def _relay_name(tool_name: str, harness: str, tpl: dict) -> str:
     if tool_name == "cc-switch":
         return "cc-anthropic" if tpl["protocol"] == "anthropic" else "cc-codex"
     return "codex-plus"
+
+
+def wiring_restore_on_stop(cfg) -> list[str]:
+    """stop 的统一还原（spec §5 + 2026-08-23 决策）：按最新接管组合快照；快照缺失的
+    harness 退回第一次接管前的整文件 .bak 兜底。
+
+    每 harness 独立决策：有快照 → 只写回 base_url（运行期间用户对配置文件的其他
+    修改原样保留），并删除已过期的 .bak；无快照 → .bak 整文件还原（含 key 位置等
+    完整原始状态）。两者都要求当前 base_url 指向本代理才动文件（与 wiring_restore
+    同守卫）。崩溃修复路径不走这里（reconcile 仍用 wiring_restore_by_snapshot）。
+    """
+    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
+    snaps = snapshot.load()
+    msgs: list[str] = []
+    for name in cfg.routing.harnesses:
+        h = HARNESS_CFG[name]
+        p = _path(HOME, name)
+        if not os.path.exists(p):
+            continue
+        cur = read_base_url(p, h)
+        if cur is None or (cur != proxy_url and not cur.startswith(proxy_url + "/")):
+            msgs.append(f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原")
+            continue
+        snap = snaps.get(name)
+        if snap is not None:
+            ok = write_base_url(p, h, snap.base_url)
+            if ok:
+                bak = _find_bak(p)
+                if bak is not None:
+                    try:
+                        os.unlink(bak)
+                    except OSError:
+                        pass
+            msgs.append(f"{name}: snapshot restored to {snap.base_url} ({'ok' if ok else 'FAIL'})")
+            continue
+        bak = _find_bak(p)
+        if bak is None:
+            msgs.append(f"{name}: 无快照且无备份，跳过")
+            continue
+        try:
+            import shutil
+
+            shutil.copyfile(bak, p)
+            os.unlink(bak)
+            msgs.append(f"{name}: bak restored")
+        except OSError as exc:
+            msgs.append(f"{name}: restore FAIL {exc}")
+    return msgs

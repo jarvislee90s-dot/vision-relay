@@ -447,7 +447,7 @@ class TestStopIntent:
         monkeypatch.setattr(cli, "_pid_running", lambda pid: True)
         monkeypatch.setattr(cli, "_terminate", lambda pid: True)
         monkeypatch.setattr("vision_relay.config.load_config", lambda *a, **k: ProxyConfig())
-        monkeypatch.setattr(wiring, "wiring_restore", lambda c: [])
+        monkeypatch.setattr(wiring, "wiring_restore_on_stop", lambda c: [])
         monkeypatch.setattr(wiring, "relays_restore", lambda c: [])
         reconcile.set_routing_on(True)
         assert cli.cmd_stop() == 0

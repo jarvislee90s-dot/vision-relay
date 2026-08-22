@@ -180,11 +180,11 @@ def cmd_stop() -> int:
     # 接线回滚（配置损坏则跳过，保证 stop 不锁死）
     try:
         from .config import load_config
-        from .wiring import relays_restore, wiring_restore
+        from .wiring import relays_restore, wiring_restore_on_stop
 
         c = load_config()
         if c.routing.auto_wire:
-            for msg in wiring_restore(c):
+            for msg in wiring_restore_on_stop(c):
                 print(f"  [restore] {msg}")
             for msg in relays_restore(c):
                 print(f"  [restore] {msg}")

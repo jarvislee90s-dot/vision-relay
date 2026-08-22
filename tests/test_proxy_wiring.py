@@ -139,3 +139,72 @@ class TestToolRelays:
 
         wiring.ensure_tool_relays(cfg, [ToolState("cc-switch", 15721, False)])
         assert not (tmp_path / "proxy.json").exists()
+
+
+class TestRestoreOnStop:
+    """stop 统一还原（spec §5 + 2026-08-23 决策）：最新快照优先，.bak 兜底。"""
+
+    def _env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+
+    def test_snapshot_preferred_over_stale_bak(self, tmp_path, monkeypatch):
+        """absorb 更新过快照后 stop：还原到快照值（最新），不是 .bak 里的最早原值。"""
+        self._env(tmp_path, monkeypatch)
+        import shutil
+
+        for h, content in {
+            "claude": json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://A.example"}}),
+            "codex": 'model = "m"\nbase_url = "https://A.example"\n',
+        }.items():
+            p = wiring._path(str(tmp_path), h)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            open(p, "w", encoding="utf-8").write(content)
+            shutil.copyfile(p, p + wiring.BAK_SUFFIX)
+        wiring.write_base_url(
+            wiring._path(str(tmp_path), "claude"), wiring.HARNESS_CFG["claude"], "http://127.0.0.1:8787"
+        )
+        wiring.write_base_url(
+            wiring._path(str(tmp_path), "codex"), wiring.HARNESS_CFG["codex"], "http://127.0.0.1:8787"
+        )
+        snapshot.save("claude", snapshot.Snapshot(base_url="https://B.example", key_ref="k", model="m"))
+        snapshot.save("codex", snapshot.Snapshot(base_url="https://B.example", key_ref="k", model="m"))
+
+        msgs = wiring.wiring_restore_on_stop(ProxyConfig())
+        assert msgs  # 两条 harness 均产生快照还原消息
+        assert (
+            wiring.read_base_url(wiring._path(str(tmp_path), "claude"), wiring.HARNESS_CFG["claude"])
+            == "https://B.example"
+        )
+        assert (
+            wiring.read_base_url(wiring._path(str(tmp_path), "codex"), wiring.HARNESS_CFG["codex"])
+            == "https://B.example"
+        )
+        assert not os.path.exists(wiring._path(str(tmp_path), "claude") + wiring.BAK_SUFFIX)
+
+    def test_bak_fallback_when_snapshot_missing(self, tmp_path, monkeypatch):
+        """快照不可得的 harness：退回第一次接管前的整文件 .bak（用户确认的兜底路径）。"""
+        self._env(tmp_path, monkeypatch)
+        import shutil
+
+        p = wiring._path(str(tmp_path), "claude")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        original = json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://A.example", "ANTHROPIC_AUTH_TOKEN": "sk-x"}})
+        open(p, "w", encoding="utf-8").write(original)
+        shutil.copyfile(p, p + wiring.BAK_SUFFIX)
+        wiring.write_base_url(p, wiring.HARNESS_CFG["claude"], "http://127.0.0.1:8787")
+
+        wiring.wiring_restore_on_stop(ProxyConfig())
+        d = json.load(open(p, encoding="utf-8"))
+        assert d["env"]["ANTHROPIC_BASE_URL"] == "https://A.example"
+        assert d["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-x"
+        assert not os.path.exists(p + wiring.BAK_SUFFIX)
+
+    def test_noop_when_base_url_not_ours(self, tmp_path, monkeypatch):
+        """当前不指向本代理：不动文件（与其他还原函数同守卫）。"""
+        self._env(tmp_path, monkeypatch)
+        p = wiring._path(str(tmp_path), "claude")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w", encoding="utf-8").write(json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://elsewhere.example"}}))
+        wiring.wiring_restore_on_stop(ProxyConfig())
+        assert json.load(open(p, encoding="utf-8"))["env"]["ANTHROPIC_BASE_URL"] == "https://elsewhere.example"

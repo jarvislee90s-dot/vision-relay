@@ -8,6 +8,8 @@ start_core_detached 同参数）→ status → stop → status。
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from integration_helpers import (
     envelope_of,
@@ -61,3 +63,26 @@ def test_routing_on_then_off_full_lifecycle(env):
         assert read_harness_base_url(home, harness) == ORIGIN  # 还原为接管前原值
         assert d["harnesses"][harness]["ownership"] != "ours"  # 拓扑卡 relay 置灰
     assert not (cfg_dir / "proxy.pid").exists()
+
+
+def test_stop_after_absorb_restores_latest_snapshot(tmp_path):
+    """偏离①验收：运行中吸收新供应商 B → stop 还原到 B（最新快照），而非最早的 A。"""
+    home = tmp_path / "home"
+    cfg_dir = tmp_path / "cfg"
+    write_harness_configs(home, ORIGIN)  # A = ORIGIN
+    cfg_dir.mkdir()
+    port = free_port()
+    write_proxy_json(cfg_dir, server={"bind_host": "127.0.0.1", "bind_port": port})
+    proc = run_cli(["start", "--detach"], cfg_dir, home)
+    assert proc.returncode == 0 and wait_port(port, up=True, timeout=20)
+
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://B.example/api"}}), encoding="utf-8"
+    )
+    data = envelope_of(run_cli(["refresh", "--json"], cfg_dir, home))["data"]
+    assert any(a["type"] == "absorb" and a["harness"] == "claude" for a in data["actions"])
+
+    assert run_cli(["stop"], cfg_dir, home).returncode == 0
+    assert wait_port(port, up=False, timeout=20)
+    assert read_harness_base_url(home, "claude") == "https://B.example/api"  # 最新快照，不是 ORIGIN
+    assert read_harness_base_url(home, "codex") == ORIGIN  # 无吸收的 harness 仍按 .bak 还原原值
