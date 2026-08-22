@@ -495,3 +495,15 @@ class TestStatusRich:
             lambda c: {"service_alive": False, "routing_on": False, "harnesses": {}, "tools": []},
         )
         assert "sk-leak" not in json.dumps(verbs.status(cfg))
+
+
+class TestWizardConfirm:
+    def test_empty_models_set_marks_confirmed(self, tmp_path, monkeypatch):
+        import io as _io
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr("sys.stdin", _io.StringIO("[]"))
+        cfg = ProxyConfig()
+        assert cfg.routing.capability_confirmed is False
+        verbs.models_set(cfg)
+        assert cfg.routing.capability_confirmed is True

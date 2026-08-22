@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { initialLang, t, Lang } from "./i18n";
 import { useStatus } from "./shell/useStatus";
 import { CloseGuard } from "./shell/CloseGuard";
+import { Wizard } from "./wizard/Wizard";
 import { Overview } from "./pages/Overview";
 import { ModelsPage } from "./pages/Models";
 import { VisionLogPage } from "./pages/VisionLog";
@@ -43,6 +44,7 @@ export default function App() {
         {page === "settings" && <SettingsPage lang={lang} status={status} refresh={refresh} setLang={setLang} />}
       </div>
       <CloseGuard />
+      {status?.first_run && <Wizard onDone={refresh} />}
     </div>
   );
 }

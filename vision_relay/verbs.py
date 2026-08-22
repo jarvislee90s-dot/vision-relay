@@ -218,6 +218,8 @@ def models_set(cfg: ProxyConfig) -> dict:
         v = r.get("value")
         if v not in ("image", "text_only", None):
             return envelope(False, {"error": f"value must be image|text_only|null, got {v!r}"})
+    if rows == [] and not cfg.routing.capability_confirmed:
+        cfg.routing.capability_confirmed = True  # 向导完成/跳过 = 首次确认完成（spec §6）
     with config_lock():
         for r in rows:
             h, p, m, v = r["harness"], r["provider"], r["model"], r.get("value")
