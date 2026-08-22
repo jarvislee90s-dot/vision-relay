@@ -5,12 +5,17 @@ GUI（M2）只消费这些动词的输出；结构变更必须升 contract_versi
 
 from __future__ import annotations
 
+import json
+import sys
+
 import httpx
 
-from .config import ProxyConfig
+from .config import ProxyConfig, save_config
+from .locking import config_lock
 from .reconcile import observe as _observe_impl
 from .reconcile import reconcile as _reconcile_impl
 from .reconcile import tail_events as _tail_events_impl
+from .tools import TOOL_DOSSIERS
 from .tools import probe_tools as _probe_tools_impl
 from .visionlog import query as _vl_query_impl
 
@@ -19,6 +24,24 @@ CONTRACT_VERSION = 1
 
 def envelope(ok: bool, data) -> dict:
     return {"contract_version": CONTRACT_VERSION, "ok": ok, "data": data}
+
+
+def _stdin_json(kind: str):
+    """写动词共用的 stdin 读取+顶层类型校验。返回 (payload, None) 或 (None, 错误 envelope)。"""
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError as exc:
+        return None, envelope(False, {"error": f"invalid stdin json: {exc}"})
+    expected = {"array": list, "object": dict}[kind]
+    if not isinstance(payload, expected):
+        return None, envelope(False, {"error": f"expected a JSON {kind}"})
+    return payload, None
+
+
+def _locked_save(cfg: ProxyConfig) -> None:
+    """写动词共用的落盘段：自方写者经文件锁串行（spec §4）。"""
+    with config_lock():
+        save_config(cfg)
 
 
 # 依赖注入点（测试替换；生产各指向真实现）
@@ -71,7 +94,6 @@ def _provider_hint(harness: str, states: list | None = None) -> str:
 
     states 由调用方注入（_scan_triples 一次探测全组复用）；None 时自行探测。"""
     from . import snapshot
-    from .tools import TOOL_DOSSIERS
 
     for s in states if states is not None else _probe_tools():
         d = TOOL_DOSSIERS.get(s.name)
@@ -87,7 +109,7 @@ def status(cfg: ProxyConfig) -> dict:
     """总览一次拿全：观测 + relay 视图（打码）+ 快照 + vlm 概要 + setup_state（向导触发）。"""
     import os
 
-    from .config import _default_config_path
+    from .config import default_config_path
     from .snapshot import load as load_snapshots
 
     obs = _observe_for_status(cfg)
@@ -123,7 +145,7 @@ def status(cfg: ProxyConfig) -> dict:
         "groups": sorted(cfg.vlm_by_harness.keys()),
     }
     obs["vlm"]["configured"] = bool(cfg.vlm.api_key)
-    has_config = os.path.exists(_default_config_path())
+    has_config = os.path.exists(default_config_path())
     obs["setup_state"] = {
         "has_config": has_config,
         "capability_confirmed": cfg.routing.capability_confirmed,
@@ -201,17 +223,9 @@ def visionlog(cfg: ProxyConfig, harness: str | None = None, session: str | None 
 def models_set(cfg: ProxyConfig) -> dict:
     """stdin: [{"harness","provider","model","value"}]；value ∈ image|text_only|null。
     全量校验通过才写（不部分落盘）；value=null 清除条目=未标注。写路径走文件锁。"""
-    import json
-    import sys
-
-    from .locking import config_lock
-
-    try:
-        rows = json.load(sys.stdin)
-    except ValueError as exc:
-        return envelope(False, {"error": f"invalid stdin json: {exc}"})
-    if not isinstance(rows, list):
-        return envelope(False, {"error": "expected a JSON array"})
+    rows, err = _stdin_json("array")
+    if err is not None:
+        return err
     for r in rows:
         if not isinstance(r, dict) or not all(k in r for k in ("harness", "provider", "model")):
             return envelope(False, {"error": f"row missing keys: {r!r}"})
@@ -231,8 +245,6 @@ def models_set(cfg: ProxyConfig) -> dict:
             else:
                 cap[m] = v
                 src[m] = "user"
-        from .config import save_config
-
         save_config(cfg)
     return envelope(True, {"updated": len(rows)})
 
@@ -241,17 +253,9 @@ def vlm_set(cfg: ProxyConfig) -> dict:
     """stdin: {"vlm":{...}, "vlm_by_harness":{h:{...}}, "custom_tier1":str|null, "custom_tier2":str|null}
     规则：缺省字段不修改；api_key 空串 = 不修改、打码占位 = 拒绝（GUI 看不到 key，无法回显）；
     custom_tierX null = 恢复默认。"""
-    import json
-    import sys
-
-    from .locking import config_lock
-
-    try:
-        payload = json.load(sys.stdin)
-    except ValueError as exc:
-        return envelope(False, {"error": f"invalid stdin json: {exc}"})
-    if not isinstance(payload, dict):
-        return envelope(False, {"error": "expected a JSON object"})
+    payload, err = _stdin_json("object")
+    if err is not None:
+        return err
     for key in ("vlm", "vlm_by_harness"):
         v = payload.get(key)
         if v is not None and not isinstance(v, dict):
@@ -269,29 +273,26 @@ def vlm_set(cfg: ProxyConfig) -> dict:
             target[k] = v
         return None
 
-    err = apply(cfg.vlm.__dict__, payload.get("vlm") or {})
-    if err is None:
+    err_text = apply(cfg.vlm.__dict__, payload.get("vlm") or {})
+    if err_text is None:
         for k in ("custom_tier1", "custom_tier2"):
             if k in payload:
                 setattr(cfg.vlm, k, payload[k] or None)
-    if err is None:
+    if err_text is None:
         for h, over in (payload.get("vlm_by_harness") or {}).items():
             if over is None:
                 cfg.vlm_by_harness.pop(h, None)  # null = 改回跟随全局
                 continue
             if not isinstance(over, dict):
-                err = f"vlm_by_harness[{h}] must be object or null"
+                err_text = f"vlm_by_harness[{h}] must be object or null"
                 break
             bucket = cfg.vlm_by_harness.setdefault(h, {})
-            err = apply(bucket, over) or None
-            if err:
+            err_text = apply(bucket, over) or None
+            if err_text:
                 break
-    if err is not None:
-        return envelope(False, {"error": err})
-    from .config import save_config
-
-    with config_lock():
-        save_config(cfg)
+    if err_text is not None:
+        return envelope(False, {"error": err_text})
+    _locked_save(cfg)
     return envelope(True, {"saved": True})
 
 
@@ -306,17 +307,12 @@ def vlm_test(cfg: ProxyConfig, payload: dict | None = None) -> dict:
     payload: {mode: tier1|tier2, question?, custom_prompt?, harness?, image_base64?, media_type?}
     payload 缺省时（CLI 入口）从 stdin 读 JSON。"""
     import base64
-    import json
-    import sys
     import time
 
     if payload is None:
-        try:
-            payload = json.load(sys.stdin)
-        except ValueError as exc:
-            return envelope(False, {"error": f"invalid stdin json: {exc}"})
-        if not isinstance(payload, dict):
-            return envelope(False, {"error": "expected a JSON object"})
+        payload, err = _stdin_json("object")
+        if err is not None:
+            return err
     mode = payload.get("mode", "tier1")
     if mode not in ("tier1", "tier2"):
         return envelope(False, {"error": "mode must be tier1|tier2"})
@@ -357,17 +353,9 @@ def vlm_test(cfg: ProxyConfig, payload: dict | None = None) -> dict:
 
 def settings_set(cfg: ProxyConfig) -> dict:
     """stdin: {"routing": {...白名单键...}, "vision_log": {...}}。白名单外键拒绝。"""
-    import json
-    import sys
-
-    from .locking import config_lock
-
-    try:
-        payload = json.load(sys.stdin)
-    except ValueError as exc:
-        return envelope(False, {"error": f"invalid stdin json: {exc}"})
-    if not isinstance(payload, dict):
-        return envelope(False, {"error": "expected a JSON object"})
+    payload, err = _stdin_json("object")
+    if err is not None:
+        return err
     routing_ok = {"unknown_default"}
     log_ok = {"enabled", "retention_days"}
     r = payload.get("routing") or {}
@@ -389,26 +377,15 @@ def settings_set(cfg: ProxyConfig) -> dict:
         cfg.vision_log.enabled = enabled
     if "retention_days" in v:
         cfg.vision_log.retention_days = v["retention_days"]
-    from .config import save_config
-
-    with config_lock():
-        save_config(cfg)
+    _locked_save(cfg)
     return envelope(True, {"saved": True})
 
 
 def relay_set(cfg: ProxyConfig) -> dict:
     """stdin: {"name", "suppressed": bool} 或 {"name", "api_key": str}（补 key，spec §6 需要你区唯一动作）。"""
-    import json
-    import sys
-
-    from .locking import config_lock
-
-    try:
-        payload = json.load(sys.stdin)
-    except ValueError as exc:
-        return envelope(False, {"error": f"invalid stdin json: {exc}"})
-    if not isinstance(payload, dict):
-        return envelope(False, {"error": "expected a JSON object"})
+    payload, err = _stdin_json("object")
+    if err is not None:
+        return err
     name = payload.get("name")
     relay = next((r for r in cfg.relays if r.name == name), None)
     if relay is None:
@@ -427,20 +404,35 @@ def relay_set(cfg: ProxyConfig) -> dict:
         if not isinstance(key, str) or not key or key == "●●●●":
             return envelope(False, {"error": "api_key must be a non-empty string"})
         relay.api_key = key
-    from .config import save_config
-
-    with config_lock():
-        save_config(cfg)
+    _locked_save(cfg)
     return envelope(True, {"name": name})
 
 
-def _run_probe(cfg: ProxyConfig, harness: str, provider: str, model: str) -> str | None:
-    from .annotate import run_probe as _rp
-    from .cli import _probe_target_for
-    from .reconcile import observe
+def probe_target_for(cfg: ProxyConfig, harness: str, provider: str, tool_by_name: dict) -> tuple[str, str, str]:
+    """探测目标：两层=工具端口（无 key）；直连=对应 relay 的 base_url+key。
+    （由 cli.py 上移：verbs 是更低层，原 verbs→cli 反向导入是层次倒置。）"""
+    proto = {"claude": "anthropic", "codex": "responses", "qwen-code": "chat"}.get(harness, "chat")
+    for name, d in TOOL_DOSSIERS.items():
+        if harness in d.harnesses and tool_by_name.get(name, {}).get("online"):
+            port = tool_by_name[name]["port"]
+            base = "http://127.0.0.1:%d/v1" % port if name == "codex-plus" else "http://127.0.0.1:%d" % port
+            return base, "", proto if name != "codex-plus" else "responses"
+    for r in cfg.relays:
+        if r.protocol == proto and r.base_url and not r.base_url.startswith("http://127.0.0.1"):
+            return r.base_url, r.api_key, proto
+    return "", "", proto
 
-    tool_by_name = {t["name"]: t for t in observe(cfg)["tools"]}
-    base, key, proto = _probe_target_for(cfg, harness, provider, tool_by_name)
+
+def _run_probe(
+    cfg: ProxyConfig, harness: str, provider: str, model: str, tool_by_name: dict | None = None
+) -> str | None:
+    from .annotate import run_probe as _rp
+
+    if tool_by_name is None:  # 单模型路径：现探一次；批量路径由调用方传入（省 N 次探测）
+        from .reconcile import observe
+
+        tool_by_name = {t["name"]: t for t in observe(cfg)["tools"]}
+    base, key, proto = probe_target_for(cfg, harness, provider, tool_by_name)
     return _rp(cfg, harness, provider, model, base, key, proto)
 
 
@@ -454,6 +446,7 @@ def probe_all_untested(cfg: ProxyConfig) -> dict:
     from .onboarding import scan_model_groups
 
     state = _probe_tools()
+    tool_by_name = {t["name"]: t for t in _observe_impl(cfg, tool_states=state)["tools"]}
     probed: list[dict] = []
     for g in scan_model_groups(cfg):
         provider = _provider_hint(g.group, state)
@@ -461,7 +454,7 @@ def probe_all_untested(cfg: ProxyConfig) -> dict:
             cached = (cfg.probe_results.get(provider, {}).get(ent.model) or {}).get("result")
             if cached:
                 continue
-            result = _run_probe(cfg, g.group, provider, ent.model)
+            result = _run_probe(cfg, g.group, provider, ent.model, tool_by_name)
             probed.append({"harness": g.group, "provider": provider, "model": ent.model, "result": result})
     return envelope(True, {"probed": len(probed), "results": probed})
 

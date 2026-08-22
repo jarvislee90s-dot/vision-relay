@@ -326,7 +326,7 @@ def save_config(cfg: ProxyConfig, path: str | None = None) -> str:
     return path
 
 
-def _default_config_path() -> str:
+def default_config_path() -> str:
     from .env_util import config_dir
 
     return os.path.join(config_dir(), "proxy.json")
@@ -340,13 +340,13 @@ def _legacy_config_path() -> str:
 
 def load_config(path: str | None = None) -> ProxyConfig:
     if path is None:
-        path = _default_config_path()
+        path = default_config_path()
         if not os.path.exists(path):
             legacy = _legacy_config_path()
             if os.path.exists(legacy):
                 path = legacy
                 print(
-                    f"note: using legacy config {legacy}; it will be copied to {_default_config_path()} on next save (legacy file retained)",
+                    f"note: using legacy config {legacy}; it will be copied to {default_config_path()} on next save (legacy file retained)",
                     file=sys.stderr,
                 )
     try:

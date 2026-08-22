@@ -32,8 +32,6 @@ _JSON_MAP = {
     "settings-set": verbs.settings_set,  # Task 3: stdin 白名单设置（unknown_default / vision_log）
     "relay-set": verbs.relay_set,  # Task 3: 停用压制 / 补 key
     "probe": verbs.probe_one,  # Task 3: --json 探针（main 特判补 harness/provider/model）
-    # Task 9: --json 批量探测未测（内部调度键，非子命令——只被 main() probe 分支引用）
-    "probe-all-untested": verbs.probe_all_untested,
     "models-fetch": verbs.models_fetch,  # Task 3: 拉上游模型 ID 清单（spec §5）
 }
 
@@ -295,20 +293,20 @@ def cmd_probe(args, cfg) -> int:
         count = 0
         tool_by_name = {t["name"]: t for t in obs["tools"]}
         for g in scan_model_groups(cfg):
-            provider = _provider_for_group(cfg, g.group, tool_by_name)
+            provider = _provider_for_group(g.group, tool_by_name)
             for ent in g.entries:
                 if args.model and ent.model != args.model:
                     continue
                 cached = cfg.probe_results.get(provider or "?", {}).get(ent.model)
                 if cached and not args.all_untested:
                     continue
-                base, key, proto = _probe_target_for(cfg, g.group, provider, tool_by_name)
+                base, key, proto = verbs.probe_target_for(cfg, g.group, provider, tool_by_name)
                 result = run_probe(cfg, g.group, provider or "?", ent.model, base, key, proto)
                 print(f"  {ent.model}: {result}")
                 count += 1
         print(f"probed {count} model(s)")
         return 0
-    base, key, proto = _probe_target_for(
+    base, key, proto = verbs.probe_target_for(
         cfg, args.harness or "", args.provider or "?", {t["name"]: t for t in obs["tools"]}
     )
     result = run_probe(cfg, args.harness or "?", args.provider or "?", args.model, base, key, proto)
@@ -316,7 +314,7 @@ def cmd_probe(args, cfg) -> int:
     return 0 if result else 1
 
 
-def _provider_for_group(cfg, group: str, tool_by_name: dict) -> str | None:
+def _provider_for_group(group: str, tool_by_name: dict) -> str | None:
     """harness -> 当前 provider 名（两层=工具激活供应商；直连场景名未知回 None，调用方用 '?' 占位）。"""
     from . import tools
 
@@ -328,22 +326,6 @@ def _provider_for_group(cfg, group: str, tool_by_name: dict) -> str | None:
         ):
             return tool_by_name[name]["active_provider"]
     return None
-
-
-def _probe_target_for(cfg, harness: str, provider: str, tool_by_name: dict) -> tuple[str, str, str]:
-    """探测目标：两层=工具端口（无 key）；直连=对应 relay 的 base_url+key。"""
-    from . import tools
-
-    proto = {"claude": "anthropic", "codex": "responses", "qwen-code": "chat"}.get(harness, "chat")
-    for name, d in tools.TOOL_DOSSIERS.items():
-        if harness in d.harnesses and tool_by_name.get(name, {}).get("online"):
-            port = tool_by_name[name]["port"]
-            base = "http://127.0.0.1:%d/v1" % port if name == "codex-plus" else "http://127.0.0.1:%d" % port
-            return base, "", proto if name != "codex-plus" else "responses"
-    for r in cfg.relays:
-        if r.protocol == proto and r.base_url and not r.base_url.startswith("http://127.0.0.1"):
-            return r.base_url, r.api_key, proto
-    return "", "", proto
 
 
 def cmd_events(cfg) -> int:
@@ -567,7 +549,7 @@ def main(argv: list[str] | None = None) -> int:
     if as_json:
         if args.command == "probe":  # --json 特判补参；--all-untested 走批量探测（Task 9）
             if getattr(args, "all_untested", False):
-                out = _JSON_MAP["probe-all-untested"](cfg)
+                out = verbs.probe_all_untested(cfg)
             else:
                 out = _JSON_MAP["probe"](
                     cfg,
