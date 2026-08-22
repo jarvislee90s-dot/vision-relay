@@ -51,6 +51,15 @@ python -m pip install -e .
 python -m pip install pytest httpx
 ```
 
+**Windows(PowerShell)** 从源码 checkout 时,`source .venv/bin/activate` 是 Unix 写法,在 PowerShell 里会报错。用下面的命令(用 `py` 或 `python`,不是 `python3`;激活脚本在 `Scripts\` 下):
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1   # 若提示禁止运行脚本,先执行:  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+python -m pip install -e .
+python -m pip install pytest httpx
+```
+
 ## 快速开始
 
 ### 支持什么
@@ -110,6 +119,13 @@ python -m pip install pytest httpx
 
 2. 启动:`vision-relay start`(首次会交互确认哪些模型支持图片;之后 start/stop 自动接线并恢复,不再提示)。
 
+   **Windows 一键脚本**:从源码目录直接跑 `.\start.ps1` 启动、`.\stop.ps1` 停止——脚本会自动建 venv、装依赖,再调用 `vision-relay start`/`stop`(首次建议在交互终端里跑 `start.ps1`,因为要确认模型看图能力):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\start.ps1   # 一键启动(前台常驻,Ctrl+C 停止)
+   powershell -ExecutionPolicy Bypass -File .\stop.ps1    # 一键停止(回滚接线)
+   ```
+
 3. 验证:在 Claude Code / Codex / Qwen Code 里粘贴一张图并问"这是什么",然后 `vision-relay logs` 显示 `injected:1` 即成功。
 
 配置改写只在 `start` / `stop` 时发生(备份并改写三个 harness base_url,stop 时恢复)。运行时它从不监视或改写任何配置文件;改动下次 `start` 生效。
@@ -153,6 +169,17 @@ vision-relay 是 `qwen-mm-plugins-proxy` 能力的独立继任者。首次启动
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install -e .
+python -m pip install pytest httpx
+python -m pytest -q
+ruff check .
+```
+
+Windows(PowerShell):
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1
 python -m pip install -e .
 python -m pip install pytest httpx
 python -m pytest -q

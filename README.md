@@ -55,6 +55,15 @@ python -m pip install -e .
 python -m pip install pytest httpx
 ```
 
+**Windows (PowerShell)** when installing from a checkout: `source .venv/bin/activate` is Unix syntax and will error in PowerShell. Use the commands below instead (use `py` or `python`, not `python3`; the activation script lives under `Scripts\`):
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1   # if "running scripts is disabled", first run:  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+python -m pip install -e .
+python -m pip install pytest httpx
+```
+
 ## Quick start
 
 ### What vision-relay supports
@@ -114,6 +123,13 @@ python -m pip install pytest httpx
 
 2. Start: `vision-relay start` (first run interactively asks which models support images; afterwards start/stop auto-wire and restore without prompting).
 
+   **Windows one-click scripts** from the source dir: run `.\start.ps1` to start and `.\stop.ps1` to stop — the script creates the venv, installs deps, then invokes `vision-relay start`/`stop` (run `start.ps1` in an interactive terminal on first use, since it asks you to confirm model vision capability):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\start.ps1   # one-click start (foreground, Ctrl+C to stop)
+   powershell -ExecutionPolicy Bypass -File .\stop.ps1    # one-click stop (restores wiring)
+   ```
+
 3. Verify: paste an image in Claude Code / Codex / Qwen Code and ask "what is this", then `vision-relay logs` shows `injected:1` on success.
 
 Config rewrites happen only on `start` / `stop` (backup + rewrite the three harness base_urls, restore on stop). While running it never watches or rewrites any config file; edits take effect on the next `start`.
@@ -157,6 +173,17 @@ vision-relay is the standalone successor of the `qwen-mm-plugins-proxy` capabili
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install -e .
+python -m pip install pytest httpx
+python -m pytest -q
+ruff check .
+```
+
+Windows (PowerShell):
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1
 python -m pip install -e .
 python -m pip install pytest httpx
 python -m pytest -q
