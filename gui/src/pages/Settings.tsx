@@ -42,21 +42,25 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
   const touch = () => setDirtyCount((n) => n + 1);
 
   const save = async () => {
-    const payload: Record<string, unknown> = {
-      vlm: { model: vlm.model, base_url: vlm.base_url, format: vlm.format, ...(vlm.api_key ? { api_key: vlm.api_key } : {}) },
-      vlm_by_harness: Object.fromEntries(
-        HARNESSES.filter((h) => groups[h]).map((h) => {
-          const g = groups[h]!;
-          return [h, g ? { model: g.model, base_url: g.base_url, ...(g.api_key ? { api_key: g.api_key } : {}) } : null];
-        }),
-      ),
-    };
-    if (prompts.t1) payload.custom_tier1 = prompts.t1; else payload.custom_tier1 = null;
-    if (prompts.t2) payload.custom_tier2 = prompts.t2; else payload.custom_tier2 = null;
-    await core("vlm-set", { stdin: payload });
-    await core("settings-set", { stdin: { routing: { unknown_default: unknownDefault }, vision_log: logCfg } });
-    if (corePath) setCorePath(corePath);
-    setDirtyCount(0); p.refresh();
+    try {
+      const payload: Record<string, unknown> = {
+        vlm: { model: vlm.model, base_url: vlm.base_url, format: vlm.format, ...(vlm.api_key ? { api_key: vlm.api_key } : {}) },
+        vlm_by_harness: Object.fromEntries(
+          HARNESSES.filter((h) => groups[h]).map((h) => {
+            const g = groups[h]!;
+            return [h, g ? { model: g.model, base_url: g.base_url, ...(g.api_key ? { api_key: g.api_key } : {}) } : null];
+          }),
+        ),
+      };
+      if (prompts.t1) payload.custom_tier1 = prompts.t1; else payload.custom_tier1 = null;
+      if (prompts.t2) payload.custom_tier2 = prompts.t2; else payload.custom_tier2 = null;
+      await core("vlm-set", { stdin: payload });
+      await core("settings-set", { stdin: { routing: { unknown_default: unknownDefault }, vision_log: logCfg } });
+      if (corePath) setCorePath(corePath);
+      setDirtyCount(0); p.refresh();
+    } catch (e) {
+      window.alert("保存失败：" + (e instanceof Error ? e.message : String(e)));
+    }
   };
 
   const runTest = async () => {
@@ -162,7 +166,7 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
           <tr><td className="dim">识图留痕</td>
             <td>
               <label><input type="checkbox" checked={logCfg.enabled} onChange={(e) => { setLogCfg({ ...logCfg, enabled: e.target.checked }); touch(); }} /> 记录</label>
-              　留存 <input className="input" value={logCfg.retention_days} onChange={(e) => { setLogCfg({ ...logCfg, retention_days: Number(e.target.value) || 0 }); touch(); }} style={{ width: 56 }} /> 天 · 仅存本机
+              　留存 <input className="input" value={logCfg.retention_days} onChange={(e) => { const n = Math.floor(Number(e.target.value)); setLogCfg({ ...logCfg, retention_days: n >= 1 ? n : 7 }); touch(); }} style={{ width: 56 }} /> 天 · 仅存本机
             </td></tr>
         </tbody></table>
       </details>

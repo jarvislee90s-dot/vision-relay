@@ -378,8 +378,9 @@ def settings_set(cfg: ProxyConfig) -> dict:
         return envelope(False, {"error": "unsupported settings key"})
     if "unknown_default" in r and r["unknown_default"] not in ("text_only", "image"):
         return envelope(False, {"error": "unknown_default must be text_only|image"})
-    if "retention_days" in v and (not isinstance(v["retention_days"], int) or v["retention_days"] < 0):
-        return envelope(False, {"error": "retention_days must be a non-negative int"})
+    if "retention_days" in v and (not isinstance(v["retention_days"], int) or v["retention_days"] < 1):
+        # VisionLogConfig 要求 >=1：0 落盘会让下次 load_config 抛 ConfigError（关留存用 enabled=false）
+        return envelope(False, {"error": "retention_days must be an int >= 1 (disable via vision_log.enabled=false)"})
     cfg.routing.unknown_default = r.get("unknown_default", cfg.routing.unknown_default)
     if "enabled" in v:
         enabled = v["enabled"]

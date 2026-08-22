@@ -436,6 +436,13 @@ class TestSettingsSetHardening:
         self._stdin(monkeypatch, {"vision_log": {"enabled": "false"}})
         assert verbs.settings_set(ProxyConfig())["ok"] is False
 
+    def test_retention_days_zero_rejected(self, tmp_path, monkeypatch):
+        """retention_days=0 能过动词校验但会被 VisionLogConfig 拒绝——落盘即成
+        下次 load_config 必炸 ConfigError 的砖头文件，入口必须挡住。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        self._stdin(monkeypatch, {"vision_log": {"retention_days": 0}})
+        assert verbs.settings_set(ProxyConfig())["ok"] is False
+
 
 class TestRelaySetBool:
     def _stdin(self, monkeypatch, payload):
