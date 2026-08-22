@@ -84,7 +84,53 @@ def _provider_hint(harness: str, states: list | None = None) -> str:
 
 
 def status(cfg: ProxyConfig) -> dict:
+    """总览一次拿全：观测 + relay 视图（打码）+ 快照 + vlm 概要 + setup_state（向导触发）。"""
+    import os
+
+    from .config import _default_config_path
+    from .snapshot import load as load_snapshots
+
     obs = _observe_for_status(cfg)
+    relays = [
+        {
+            "name": r.name,
+            "protocol": r.protocol,
+            "base_url": r.base_url,
+            "via": r.via,
+            "models": r.models,
+            "suppressed": r.name in cfg.routing.suppressed_relays,
+            "has_key": bool(r.api_key),
+        }
+        for r in cfg.relays
+    ]
+    snaps = load_snapshots()
+    obs["relays"] = relays
+    obs["snapshots"] = {
+        h: {
+            "base_url": s.base_url,
+            "key_ref": s.key_ref,
+            "model": s.model,
+            "second_hop": s.second_hop,
+            "ts": s.ts,
+        }
+        for h, s in snaps.items()
+    }
+    obs["vlm"] = {
+        "model": cfg.vlm.model,
+        "base_url": cfg.vlm.base_url,
+        "format": cfg.vlm.format,
+        "custom_prompts": bool(cfg.vlm.custom_tier1 or cfg.vlm.custom_tier2),
+        "groups": sorted(cfg.vlm_by_harness.keys()),
+    }
+    obs["vlm"]["configured"] = bool(cfg.vlm.api_key)
+    has_config = os.path.exists(_default_config_path())
+    obs["setup_state"] = {
+        "has_config": has_config,
+        "capability_confirmed": cfg.routing.capability_confirmed,
+        "vlm_configured": bool(cfg.vlm.api_key),
+    }
+    # spec §6 向导触发：无配置 / 首次确认未置位 / VLM 未配（第①步必填）
+    obs["first_run"] = (not has_config) or (not cfg.routing.capability_confirmed) or (not cfg.vlm.api_key)
     return envelope(True, obs)
 
 

@@ -418,3 +418,45 @@ class TestRelaySetBool:
         )
         self._stdin(monkeypatch, {"name": "cc-claude", "suppressed": "false"})
         assert verbs.relay_set(cfg)["ok"] is False
+
+
+class TestStatusRich:
+    def test_payload_contains_relays_snapshots_setup(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.relays.append(
+            RelayConfig(
+                name="cc-claude", protocol="anthropic", base_url="http://127.0.0.1:15721", via="cc-switch", models=["*"]
+            )
+        )
+        monkeypatch.setattr(
+            verbs,
+            "_observe_for_status",
+            lambda c: {
+                "service_alive": False,
+                "routing_on": False,
+                "harnesses": {"claude": {"base_url": None, "ownership": "none", "has_snapshot": False}},
+                "tools": [],
+            },
+        )
+        out = verbs.status(cfg)
+        d = out["data"]
+        assert d["relays"][0]["name"] == "cc-claude" and d["relays"][0]["via"] == "cc-switch"
+        assert d["vlm"]["configured"] is False and "api_key" not in d["vlm"]
+        assert d["setup_state"] == {
+            "has_config": False,
+            "capability_confirmed": False,
+            "vlm_configured": False,
+        }
+        assert "first_run" in d and d["first_run"] is True
+
+    def test_key_never_in_status(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "sk-leak"
+        monkeypatch.setattr(
+            verbs,
+            "_observe_for_status",
+            lambda c: {"service_alive": False, "routing_on": False, "harnesses": {}, "tools": []},
+        )
+        assert "sk-leak" not in json.dumps(verbs.status(cfg))
