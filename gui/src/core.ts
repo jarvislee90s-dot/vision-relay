@@ -54,3 +54,8 @@ export async function stopService(): Promise<void> {
   const path = await detectCore();
   await invoke("run_core", { corePath: path, args: ["stop"], stdin: null });
 }
+
+export async function openPath(p: string): Promise<void> {
+  // 系统默认程序打开（配置文件入口，spec §6 详情抽屉）；非核心 CLI 动词，直接 invoke
+  await invoke("open_path", { path: p });
+}

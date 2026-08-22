@@ -76,6 +76,27 @@ fn start_core_detached(core_path: String) -> Result<(), String> {
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    // 用系统默认程序打开文件/定位（2026-08-23 决策③：只到文件，不做行号）
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &path])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        std::process::Command::new(opener).arg(&path).spawn().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -98,7 +119,7 @@ pub fn run() {
                 .build(app)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![which_core, run_core, start_core_detached])
+        .invoke_handler(tauri::generate_handler![which_core, run_core, start_core_detached, open_path])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

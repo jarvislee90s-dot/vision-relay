@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { core } from "../core";
-export interface HarnessRow { base_url: string | null; ownership: string; has_snapshot: boolean }
+export interface HarnessRow { base_url: string | null; ownership: string; has_snapshot: boolean; config_path?: string }
 export interface ToolRow { name: string; port: number; online: boolean; active_provider: string | null; provider_base_url: string | null }
 export interface RelayRow { name: string; protocol: string; base_url: string; via: string | null; models: string[]; suppressed: boolean; has_key: boolean }
 export interface SnapshotRow { base_url: string; key_ref: string; model: string; second_hop: string | null; ts: number }
 export interface StatusData {
-  service_alive: boolean; routing_on: boolean;
+  service_alive: boolean; routing_on: boolean; bind_port: number;
   harnesses: Record<string, HarnessRow>;
   tools: ToolRow[]; relays: RelayRow[];
   snapshots: Record<string, SnapshotRow>;

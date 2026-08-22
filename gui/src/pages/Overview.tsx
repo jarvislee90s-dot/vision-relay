@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { core } from "../core";
+import { core, openPath } from "../core";
 import { RoutingToggle } from "../shell/RoutingToggle";
 import { chainHops, toolFor } from "../lib/chain";
 import type { StatusData } from "../shell/useStatus";
@@ -35,7 +35,7 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
           <div className="row">
             <span className={"dot " + (s.service_alive ? "g" : "r")} />
             <b style={{ fontSize: 15 }}>{s.service_alive ? "服务运行中" : "服务已停止"}</b>
-            <span className="dim">127.0.0.1:8787 · 自动对账中</span>
+            <span className="dim">127.0.0.1:{s.bind_port} · 自动对账中</span>
           </div>
         </div>
         <RoutingToggle on={s.routing_on && s.service_alive} onChangeDone={p.refresh} lang={p.lang} />
@@ -45,8 +45,9 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
       <div className="cols3">
         {Object.keys(s.harnesses).map((h) => {
           const tool = toolFor(h, s.tools);
-          const hops = chainHops(s.harnesses[h], h, tool, s.routing_on && s.service_alive, 8787);
+          const hops = chainHops(s.harnesses[h], h, tool, s.routing_on && s.service_alive, s.bind_port);
           const snap = s.snapshots[h];
+          const cfgPath = s.harnesses[h].config_path;
           return (
             <div className="card" key={h}>
               <div className="row between"><b>{h}</b><span className={"tag " + (s.harnesses[h].ownership === "ours" ? "ok" : "gray")}>{s.harnesses[h].ownership === "ours" ? "✓ 已接管" : s.harnesses[h].ownership}</span></div>
@@ -65,6 +66,12 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
               {drawer === h && (
                 <table>
                   <tbody>
+                    <tr><td className="dim small">配置文件</td><td className="small mono">
+                      {cfgPath ?? "—"}{" "}
+                      {cfgPath && (
+                        <button className="btn" onClick={() => openPath(cfgPath).catch((e) => window.alert(String(e)))}>打开</button>
+                      )}
+                    </td></tr>
                     <tr><td className="dim small">接管快照</td><td className="mono small">{snap ? `${snap.base_url} · ${snap.key_ref} · ${snap.model}` : "无"}</td></tr>
                     {s.relays.filter((r) => r.via || r.name.startsWith("direct-")).slice(0, 4).map((r) => (
                       <tr key={r.name}><td className="dim small">relay</td><td className="small">
