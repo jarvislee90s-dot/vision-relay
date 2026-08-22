@@ -23,8 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - M1 control plane — `refresh` / `diagnose` verbs, reconcile engine with intent-based auto-repair, tool dossiers, modality probe (tri-state), takeover snapshots, file lock, vision call records, per-harness VLM, tri-state capability store (image terminology).
 - M2（GUI）：Tauri 2 + React 控制台（5 页 + 两步向导 + 托盘与关闭确认），新增写动词 models-set/vlm-set/vlm-test/settings-set/relay-set/probe --json/models-fetch，status 总览增强
 - 集成/E2E 测试：真实子进程 CLI 契约、跨进程文件锁与原子写、三态轮转、快照 absorb/reclaim、mock HTTP 上游、手动剧本 G1–G8 自动化（`tests/test_integration_*.py`、`tests/test_e2e_g*.py`、`gui/src/core.integration.test.ts`）。
+- `status --json` 暴露每个 harness 的 `config_path` 与顶层 `bind_port`；GUI 详情抽屉提供配置文件路径与系统打开入口，总览不再硬编码 8787。
+- 事件日志页「导出」：`events --json --limit 0` 拉全量并下载 JSONL。
+- `probe --json` 无结论（含糊不下结论）改返回 `ok:true, result:null`（合法三态而非错误）。
 
 ### Fixed
 - `settings-set` 接受 `retention_days=0` 会写出下次 `load_config` 必报 ConfigError 的 proxy.json（`VisionLogConfig` 要求 ≥1）；现入口直接拒绝（关闭留存请用 `vision_log.enabled=false`），GUI 留存输入不再把空值强制成 0，设置保存失败会弹出错误。
 - 首次向导「完成（过目）」路径不置 `capability_confirmed`：向导会反复弹出；现在任何一次成功的 `models-set`（含空数组跳过）都视为确认完成。
 - 僵尸接线自动重启三处缺陷：重启 spawn 原在 `config_lock` 内，与子进程 `start` 的对账互等（锁倒置死锁，`ok` 恒 False）；多 harness 僵尸会重复 spawn；Windows PID 复用 + 残留 pid 文件会让重启子进程误判 "already running" 后退出。现在 spawn 移到锁外、整组只重启一次、重启前清理残留 pid、端口等待窗口 2s→8s。
+- 正常 stop 的还原依据统一为最新接管组合快照（运行中吸收过新供应商时不再回跳最早的原始地址）；快照缺失的 harness 退回第一次接管前的整文件备份兜底。
+- pid 文件升级为 `{pid, token}`（进程创建时间指纹）：Windows PID 复用不再导致 status 误报“运行中”、stop 误杀无关进程；老格式纯数字文件保持兼容。
