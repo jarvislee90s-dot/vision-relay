@@ -494,3 +494,15 @@ class TestWizardConfirm:
         cfg = ProxyConfig()
         verbs.models_set(cfg)
         assert cfg.routing.capability_confirmed is True
+
+
+class TestEventsLimit:
+    def test_limit_slices_and_zero_returns_all(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay import reconcile
+
+        for i in range(3):
+            reconcile.append_event("reclaim", "codex", {"i": i})
+        assert len(verbs.events(ProxyConfig(), limit=2)["data"]) == 2  # 最近 2 条
+        assert len(verbs.events(ProxyConfig(), limit=0)["data"]) == 3  # 0 = 全量（导出用）
+        assert verbs.events(ProxyConfig(), limit=2)["data"][-1]["i"] == 2

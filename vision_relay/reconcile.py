@@ -74,8 +74,9 @@ def tail_events(n: int = 50) -> list[dict]:
             lines = f.readlines()
     except OSError:
         return []
+    selected = lines if n is None or n <= 0 else lines[-n:]  # 0/None = 全量（导出，2026-08-23 决策④）
     out = []
-    for line in lines[-n:]:
+    for line in selected:
         try:
             out.append(json.loads(line))
         except ValueError:

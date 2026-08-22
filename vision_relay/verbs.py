@@ -212,8 +212,8 @@ def tools(cfg: ProxyConfig) -> dict:
     )
 
 
-def events(cfg: ProxyConfig, tail: int = 50) -> dict:
-    return envelope(True, _tail_events(tail))
+def events(cfg: ProxyConfig, limit: int = 50) -> dict:
+    return envelope(True, _tail_events(limit))
 
 
 def visionlog(cfg: ProxyConfig, harness: str | None = None, session: str | None = None) -> dict:

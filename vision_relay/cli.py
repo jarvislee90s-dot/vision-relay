@@ -63,7 +63,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     pr.add_argument("--provider")
     pr.add_argument("--model")
     pr.add_argument("--all-untested", action="store_true")
-    sub.add_parser("events", parents=[common])  # M1: 事件日志 tail
+    ev = sub.add_parser("events", parents=[common])  # M1: 事件日志 tail（--limit 0 = 全量导出）
+    ev.add_argument("--limit", type=int, default=50)
     vl = sub.add_parser("visionlog", parents=[common])  # M1: 识图记录查询
     vl.add_argument("--harness")
     sub.add_parser("config", parents=[common])  # Task 14: --json 配置读取（打码）
@@ -542,6 +543,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
         else:
             kw = {"harness": getattr(args, "harness", None)} if args.command == "visionlog" else {}
+            if args.command == "events":
+                kw = {"limit": getattr(args, "limit", 50)}
             out = _JSON_MAP[args.command](cfg, **kw)
         print(json.dumps(out, ensure_ascii=False))
         return 0
