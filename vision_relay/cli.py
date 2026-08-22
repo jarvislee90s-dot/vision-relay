@@ -22,6 +22,7 @@ _JSON_MAP = {
     "refresh": verbs.refresh,
     "diagnose": verbs.diagnose,
     "models-scan": verbs.models_scan,
+    "models-set": verbs.models_set,
     "config": verbs.config_get,
     "tools": verbs.tools,
     "events": verbs.events,
@@ -46,6 +47,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ti.add_argument("--question", default=None)
     sub.add_parser("check", parents=[common])
     sub.add_parser("models-scan", parents=[common])  # 非交互打印模型能力草稿
+    sub.add_parser("models-set", parents=[common])  # Task 1: stdin 三元组写入（source=user；null=清除）
     sub.add_parser("models", parents=[common])  # 显式交互入口：重新确认/编辑 model_capabilities
     sub.add_parser("refresh", parents=[common])  # M1: 手动对账（= 刷新按钮后端）
     sub.add_parser("diagnose", parents=[common])  # M1: 观测 + 自动修复 + 报告

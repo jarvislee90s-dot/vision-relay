@@ -152,3 +152,45 @@ def test_every_verb_has_contract_version(cfg, monkeypatch):
         verbs.visionlog,
     ):
         assert fn(cfg)["contract_version"] == verbs.CONTRACT_VERSION
+
+
+class TestModelsSet:
+    def _stdin(self, monkeypatch, payload):
+        import io as _io
+
+        monkeypatch.setattr("sys.stdin", _io.StringIO(json.dumps(payload)))
+
+    def test_write_user_override_and_clear(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        self._stdin(
+            monkeypatch,
+            [
+                {"harness": "claude", "provider": "bigmodel", "model": "m1", "value": "image"},
+                {"harness": "claude", "provider": "bigmodel", "model": "m2", "value": None},
+            ],
+        )
+        cfg.model_capabilities.setdefault("claude", {}).setdefault("bigmodel", {})["m2"] = "text_only"
+        cfg.capability_sources.setdefault("claude", {}).setdefault("bigmodel", {})["m2"] = "probe"
+        out = verbs.models_set(cfg)
+        assert out["ok"] is True
+        assert cfg.model_capabilities["claude"]["bigmodel"]["m1"] == "image"
+        assert cfg.capability_sources["claude"]["bigmodel"]["m1"] == "user"
+        assert "m2" not in cfg.model_capabilities["claude"]["bigmodel"]
+        assert "m2" not in cfg.capability_sources["claude"]["bigmodel"]
+
+    def test_invalid_value_rejected_without_partial_write(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        self._stdin(monkeypatch, [{"harness": "c", "provider": "p", "model": "m", "value": "movie"}])
+        out = verbs.models_set(cfg)
+        assert out["ok"] is False and "movie" in json.dumps(out)
+        assert cfg.model_capabilities == {}  # 校验失败不落盘
+
+    def test_bad_json_rejected(self, tmp_path, monkeypatch):
+        import io as _io
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr("sys.stdin", _io.StringIO("not-json"))
+        out = verbs.models_set(ProxyConfig())
+        assert out["ok"] is False

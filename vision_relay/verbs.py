@@ -148,3 +148,40 @@ def events(cfg: ProxyConfig, tail: int = 50) -> dict:
 
 def visionlog(cfg: ProxyConfig, harness: str | None = None, session: str | None = None) -> dict:
     return envelope(True, _vl_query(harness=harness, session=session))
+
+
+def models_set(cfg: ProxyConfig) -> dict:
+    """stdin: [{"harness","provider","model","value"}]；value ∈ image|text_only|null。
+    全量校验通过才写（不部分落盘）；value=null 清除条目=未标注。写路径走文件锁。"""
+    import json
+    import sys
+
+    from .locking import config_lock
+
+    try:
+        rows = json.load(sys.stdin)
+    except ValueError as exc:
+        return envelope(False, {"error": f"invalid stdin json: {exc}"})
+    if not isinstance(rows, list):
+        return envelope(False, {"error": "expected a JSON array"})
+    for r in rows:
+        if not isinstance(r, dict) or not all(k in r for k in ("harness", "provider", "model")):
+            return envelope(False, {"error": f"row missing keys: {r!r}"})
+        v = r.get("value")
+        if v not in ("image", "text_only", None):
+            return envelope(False, {"error": f"value must be image|text_only|null, got {v!r}"})
+    with config_lock():
+        for r in rows:
+            h, p, m, v = r["harness"], r["provider"], r["model"], r.get("value")
+            cap = cfg.model_capabilities.setdefault(h, {}).setdefault(p, {})
+            src = cfg.capability_sources.setdefault(h, {}).setdefault(p, {})
+            if v is None:
+                cap.pop(m, None)
+                src.pop(m, None)
+            else:
+                cap[m] = v
+                src[m] = "user"
+        from .config import save_config
+
+        save_config(cfg)
+    return envelope(True, {"updated": len(rows)})
