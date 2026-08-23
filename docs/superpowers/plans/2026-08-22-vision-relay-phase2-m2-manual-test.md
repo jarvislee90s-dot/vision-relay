@@ -1,3 +1,6 @@
+> **[2026-08-23 注]** 执行范围以[修订版手册](2026-08-23-vision-relay-phase2-manual-test-revised.md)为准：
+> G1–G8/G12 及 G10/G11/G13 的可模拟部分已自动化（vitest 组件测试 + pytest E2E）；本手册保留为原始验收记录。
+
 ## 附录 A：M2 手动测试手册（GUI 验收 = spec §10 剧本 1–8 GUI 化 + GUI 专项）
 
 > 环境：Windows 本机；`vision-relay` 已 pip 安装且在 PATH；CC Switch / Codex++ 至少一个可用；VLM key 可用。macOS/Linux 实机回归留 M3 打包后。
