@@ -1,9 +1,17 @@
-// vitest 全局 setup：jsdom 组件测试的 localStorage 桩。
+// vitest 全局 setup：jsdom 组件测试的 localStorage 桩 + RTL 自动 cleanup。
 // 背景：Node 22.4+ 原生暴露 globalThis.localStorage（Node 25 下是空壳 object，无 Storage 方法），
 // vitest 2.1.9 的 jsdom 环境 populateGlobal 因 `localStorage in global` 为真且不在
 // 白名单 KEYS 而跳过 jsdom 的 Storage 覆盖，导致 jsdom 测试里 localStorage 不可用。
 // 这里注入一个内存桩，行为对齐标准 Storage（getItem/setItem/removeItem/clear/key/length）。
+// vitest 默认 globals:false，RTL 16 无法自动注册 afterEach cleanup，需手动挂载，
+// 否则同一文件内多个用例的 DOM 相互泄漏。
 // 仅影响测试运行，不触碰任何生产代码。
+import { afterEach } from "vitest";
+import { cleanup } from "@testing-library/react";
+
+afterEach(() => {
+  cleanup();
+});
 
 const store = new Map<string, string>();
 
