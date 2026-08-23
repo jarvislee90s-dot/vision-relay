@@ -168,3 +168,48 @@ describe("SettingsPage save semantics (G11)", () => {
     expect(stdin).toEqual({ mode: "tier1", question: null, custom_prompt: null });
   });
 });
+
+describe("SettingsPage remount & discard (G11 已知分歧)", () => {
+  beforeEach(() => {
+    coreMock.mockReset();
+    coreMock.mockImplementation(async (verb: string) =>
+      verb === "config" ? JSON.parse(JSON.stringify(CONFIG)) : {},
+    );
+  });
+
+  it("remount (page switch) resets fields and dirty — App 卸载页面组件，本地 state 丢失", async () => {
+    // 手册 G11 原预期「切页再回来字段保持」与实现不符：App.tsx 用条件渲染切换页面，
+    // SettingsPage 卸载后 useState 全部重置。本用例钉住现状；分歧登记在修订手册（Task 8）。
+    const { unmount } = render(<SettingsPage lang="zh" status={null} refresh={vi.fn()} setLang={vi.fn()} />);
+    await screen.findByDisplayValue("vl-global");
+    fireEvent.change(screen.getByDisplayValue("vl-global"), { target: { value: "vl-new" } });
+    expect(screen.getByText(/1 处未保存修改/)).toBeTruthy();
+
+    unmount(); // 模拟切到总览页
+    render(<SettingsPage lang="zh" status={null} refresh={vi.fn()} setLang={vi.fn()} />); // 切回
+    await screen.findByDisplayValue("vl-global"); // 回到已保存值
+    expect(screen.getByText(/无未保存修改/)).toBeTruthy(); // 脏计数归零
+  });
+
+  it("放弃修改 reloads the page", async () => {
+    const originalLocation = window.location;
+    const reload = vi.fn();
+    try {
+      // jsdom 的 location.reload 未实现且不可 spyOn —— 整体替换为测试替身
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (window as any).location;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).location = { ...originalLocation, reload };
+      render(<SettingsPage lang="zh" status={null} refresh={vi.fn()} setLang={vi.fn()} />);
+      await screen.findByDisplayValue("vl-global");
+      fireEvent.change(screen.getByDisplayValue("vl-global"), { target: { value: "vl-new" } });
+      fireEvent.click(screen.getByText("放弃修改"));
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (window as any).location;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).location = originalLocation;
+    }
+  });
+});
