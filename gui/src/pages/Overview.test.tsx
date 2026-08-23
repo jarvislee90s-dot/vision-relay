@@ -7,9 +7,10 @@ import { Overview } from "./Overview";
 import type { StatusData } from "../shell/useStatus";
 
 const h = vi.hoisted(() => ({
-  startService: vi.fn(async () => {}),
-  stopService: vi.fn(async () => {}),
-  openPath: vi.fn(async () => {}),
+  // rest 形参是 wrapper 展开所必需的（tsc TS2556：展开实参须落在 rest 形参上）
+  startService: vi.fn(async (..._args: unknown[]) => {}),
+  stopService: vi.fn(async (..._args: unknown[]) => {}),
+  openPath: vi.fn(async (..._args: unknown[]) => {}),
 }));
 
 vi.mock("../core", () => ({

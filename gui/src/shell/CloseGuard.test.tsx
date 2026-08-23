@@ -22,7 +22,8 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 
-const stopService = vi.fn(async () => {});
+// rest 形参是 wrapper 展开所必需的（tsc TS2556：展开实参须落在 rest 形参上）
+const stopService = vi.fn(async (..._args: unknown[]) => {});
 vi.mock("../core", () => ({ stopService: (...a: unknown[]) => stopService(...a) }));
 
 function triggerClose() {
