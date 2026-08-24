@@ -10,6 +10,7 @@ dist/
 项目启动提示词.txt
 .superpowers/
 .zcode/
+.omo/
 gui/node_modules/
 gui/dist/
 gui/src-tauri/target/
