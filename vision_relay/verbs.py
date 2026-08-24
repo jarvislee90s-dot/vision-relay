@@ -265,6 +265,10 @@ def models_set(cfg: ProxyConfig) -> dict:
             else:
                 cap[m] = v
                 src[m] = "user"
+            for shadow in ("legacy", "?"):  # 键统一：规范桶落笔即清影子，防兜底读到旧值
+                if shadow != p:
+                    cfg.model_capabilities.get(h, {}).get(shadow, {}).pop(m, None)
+                    cfg.capability_sources.get(h, {}).get(shadow, {}).pop(m, None)
         save_config(cfg)
     return envelope(True, {"updated": len(rows)})
 

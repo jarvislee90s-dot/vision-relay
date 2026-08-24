@@ -224,6 +224,18 @@ class TestModelsSet:
         out = verbs.models_set(ProxyConfig())
         assert out["ok"] is False
 
+    def test_models_set_purges_shadow_buckets(self, cfg, monkeypatch):
+        """保存到规范供应商桶时,清掉 legacy/? 影子桶的同模型旧条目——防双写后兜底读到旧值。"""
+        _set_stdin(monkeypatch, [{"harness": "claude", "provider": "火山Ark", "model": "m1", "value": "image"}])
+        cfg.model_capabilities["claude"] = {"legacy": {"m1": "text_only"}, "?": {"m1": "text_only"}}
+        cfg.capability_sources["claude"] = {"legacy": {"m1": "user"}}
+        out = verbs.models_set(cfg)
+        assert out["ok"] is True
+        caps = cfg.model_capabilities["claude"]
+        assert caps["火山Ark"]["m1"] == "image"
+        assert "m1" not in caps.get("legacy", {}) and "m1" not in caps.get("?", {})
+        assert "m1" not in cfg.capability_sources["claude"].get("legacy", {})
+
 
 class TestVlmSet:
     def test_set_global_and_group_and_prompts(self, tmp_path, monkeypatch):
