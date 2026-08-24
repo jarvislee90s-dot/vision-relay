@@ -222,6 +222,11 @@ def _restart_service(cfg: ProxyConfig) -> bool:
         kwargs["creationflags"] = 0x00000008  # DETACHED_PROCESS（CREATE_NO_WINDOW 与其互斥，只留一个）
     else:
         kwargs["start_new_session"] = True
+    # stdio 重定向 DEVNULL：分离重启子进程常驻，若继承调用方管道会让
+    # `subprocess.run(capture_output=True)` 等不到 EOF 而挂起（G4 diagnose 曾 90s 超时）。
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    kwargs.setdefault("stdout", subprocess.DEVNULL)
+    kwargs.setdefault("stderr", subprocess.DEVNULL)
     try:
         # 注入 VISION_RELAY_RESTART=1：分离重启的子进程无控制台，cmd_start 据此跳过
         # 交互 onboarding（capability_confirmed 未确认时否则会在无终端环境下挂死）。

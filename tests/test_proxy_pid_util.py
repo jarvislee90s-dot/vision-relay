@@ -2,10 +2,14 @@
 
 import os
 
+import pytest
+
 from vision_relay import pid_util
 
 
 def test_process_token_of_self_is_stable_nonzero():
+    if not os.path.exists("/proc"):  # macOS/BSD 无 /proc：token 机制不适用（退回仅存活检查）
+        pytest.skip("no /proc (non-Linux POSIX): process token unavailable")
     token = pid_util.process_token(os.getpid())
     assert token is not None and token > 0
     assert pid_util.process_token(os.getpid()) == token  # 同进程指纹稳定

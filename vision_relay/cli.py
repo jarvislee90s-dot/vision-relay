@@ -200,7 +200,9 @@ def _spawn_detached(argv: list[str]) -> int:
     """分离 spawn 完整命令（argv[0]=可执行文件）。返回 0 成功 / 1 失败。
 
     分离进程无控制台：一律注入 VISION_RELAY_RESTART=1，让子进程 cmd_start 跳过
-    交互 onboarding（env 用拷贝注入，不污染当前进程环境）。"""
+    交互 onboarding（env 用拷贝注入，不污染当前进程环境）。stdio 重定向 DEVNULL——
+    守护进程不继承调用方管道，否则 `subprocess.run(capture_output=True)` 因子进程常驻
+    永远等不到 EOF 而挂起（e2e G2/G3/G4/G8 的 start --detach 曾因此 60s 超时）。"""
     import subprocess
 
     kwargs: dict = {"env": {**os.environ, "VISION_RELAY_RESTART": "1"}}
@@ -208,6 +210,9 @@ def _spawn_detached(argv: list[str]) -> int:
         kwargs["creationflags"] = 0x00000008  # DETACHED_PROCESS
     else:
         kwargs["start_new_session"] = True
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    kwargs.setdefault("stdout", subprocess.DEVNULL)
+    kwargs.setdefault("stderr", subprocess.DEVNULL)
     try:
         subprocess.Popen(argv, **kwargs)
         return 0
