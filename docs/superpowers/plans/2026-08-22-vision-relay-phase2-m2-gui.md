@@ -16,7 +16,7 @@
 **全局约定:**
 - 契约：所有新增动词沿用 envelope `{contract_version:1, ok, data}`；**结构变更必须在本计划内记录**，不许静默改。
 - 写动词输入一律走 **stdin 传 JSON**（避免 Windows 命令行引号地狱）；`--json` 走 stdout。
-- 密钥铁律：任何动词输出不出现明文 key（打码 `●●●●`）；GUI 永不回显 key，编辑时留空=不修改。
+- 密钥铁律：任何动词输出不出现明文 key（打码 `●●●●`）；GUI 永不回显 key，编辑时留空=不修改。（2026-08-24 刻意豁免：设置页「显示」按钮经 `vlm-secret` 动词按需回显明文——仅此一径；config/status/日志等其余输出仍一律打码。）
 - GUI 决策点只有 6 个（spec §3）：路由总开关 / 首次填 VLM / 首次过目模型能力 / 缺 key 补填 / 关 GUI 选择（记住）/ 稀有停用转发。其余一律只读展示或被动通知。
 - 保存语义（spec §6）：输入类控件统一页底「保存」；按钮类动作（刷新/诊断/路由开关/探测/测试）即时。
 - 每 Task TDD + `ruff format vision_relay tests && ruff check vision_relay tests`（Python）/ `pnpm -C gui test`（前端）+ commit。
@@ -2201,6 +2201,6 @@ git commit -m "docs: M2 GUI preview docs and manual test checklist"
 1. 严格 TDD / 先测后码；每个 checkbox 真跑过命令才打勾；每 Task 一 commit。
 2. **尊重 spec 与 mockup**：与 spec 冲突停下来问用户；GUI 布局/措辞以 `gui-mockups/index.html` 为准（顶部标签不是软件界面）；决策点不许超过 6 个（§3）。
 3. Python 侧全绿门禁：`python -m pytest -q`（≥ 基线 330）+ `ruff format --check .` + `ruff check .`；前端门禁：`pnpm -C gui test` + `pnpm -C gui build`。
-4. 密钥铁律：任何 GUI 显示/日志/导出不出现明文 key；`config --json` 输出必须打码。
+4. 密钥铁律：任何 GUI 显示/日志/导出不出现明文 key；`config --json` 输出必须打码。（2026-08-24 豁免：设置页「显示」按钮 → `vlm-secret` 动词按需回显明文，唯一刻意例外。）
 5. 计划中的 Rust/TS 代码贴合 Tauri 2 与 React 18，但小版本 API 有出入时以编译器为准做等价调整（Task 6/7 已标注两处），不许改变行为语义。
 6. M2 不做：打包、自动监听 UI、三平台 CI、冻结分发。

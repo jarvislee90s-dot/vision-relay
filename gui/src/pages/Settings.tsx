@@ -7,6 +7,75 @@ interface VlmForm { model: string; base_url: string; api_key: string; format: st
 const EMPTY: VlmForm = { model: "", base_url: "", api_key: "", format: "chat" };
 const HARNESSES = ["claude", "codex", "qwen-code"];
 
+// 大写真组件（非 field() 闭包 helper）：useState 逐实例、跨重渲染存活；卸载即重置。
+// 显隐翻转只走 onSet（不 touch），用户输入才 onEdit（touch）——reveal 不产生脏状态。
+// 只读不覆盖用户输入（评审修正）：字段已有内容时不填真 key，仅切可见性；隐藏时
+// 仅当内容未被编辑（仍等于揭示出的 key）才还原为空态=不修改，否则保留用户编辑。
+function SecretField(p: {
+  label: string;                    // 展示文案，如 "API key" | "claude · API key"
+  ariaKey: string;                  // aria-label 用，如 "API key" | "claude 的 API key"
+  value: string;
+  onSet: (v: string) => void;       // 写值（不 touch：显隐翻转不动脏计数）
+  onEdit: () => void;               // 用户输入才 touch
+  onReveal: () => Promise<string>;  // 取该作用域真 key（""=未配置）
+  width?: number;
+}) {
+  const [shown, setShown] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [revealed, setRevealed] = useState<string | null>(null); // 揭示出的真 key（隐藏时据此判断是否被编辑）
+
+  const reveal = async () => {
+    setBusy(true);
+    try {
+      const before = p.value;
+      const real = await p.onReveal();
+      setRevealed(real || null);
+      // 空字段且取回期间未被改动 → 填入真 key（不 touch）；字段已有输入则绝不覆盖（用户编辑胜出）
+      if (real && before === "" && p.value === before) p.onSet(real);
+      // 有内容（真 key 或用户输入）才切可见；无 real 且字段空 → 无可显，保持隐藏
+      if (real || p.value !== "") setShown(true);
+    } catch (e) {
+      window.alert("获取 key 失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const hide = () => {
+    // 内容仍是被揭示的真 key（未编辑）→ 还原空态=不修改；用户改过则保留其编辑，仅切回密码态
+    if (revealed !== null && p.value === revealed) p.onSet("");
+    setRevealed(null);
+    setShown(false);
+  };
+
+  return (
+    <div className="field">
+      <label>{p.label}</label>
+      <div className="row" style={{ gap: 6 }}>
+        <input
+          className="input"
+          type={shown ? "text" : "password"}
+          value={p.value}
+          onChange={(e) => { p.onSet(e.target.value); p.onEdit(); }}
+          style={{ minWidth: p.width ?? 160 }}
+        />
+        <button
+          type="button"
+          className="btn"
+          aria-label={shown ? `隐藏 ${p.ariaKey}` : `显示 ${p.ariaKey}`}
+          disabled={busy}
+          onClick={async () => {
+            if (shown) { hide(); return; }
+            await reveal();
+          }}
+        >
+          {shown ? "🙈" : "👁"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPage(p: { lang: string; status: StatusData | null; refresh: () => void; setLang: (l: Lang) => void }) {
   const [vlm, setVlm] = useState<VlmForm>(EMPTY);
   const [groups, setGroups] = useState<Record<string, VlmForm | null>>({});
@@ -20,6 +89,9 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
   const [testMode, setTestMode] = useState("tier1");
   const [testCustom, setTestCustom] = useState("");
   const [testQ, setTestQ] = useState("");
+  const [testImg, setTestImg] = useState<{ file: File; base64: string; url: string } | null>(null);
+  const [testImgReading, setTestImgReading] = useState(false); // FileReader 读取中禁用测试按钮，防止此刻点击发出默认/旧图请求
+  const [testImgErr, setTestImgErr] = useState<string | null>(null);
 
   useEffect(() => {
     core<Record<string, unknown>>("config").then((c) => {
@@ -63,16 +135,48 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
     }
   };
 
+  const readAsDataURL = (f: File) =>
+    new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(new Error("read failed"));
+      r.readAsDataURL(f);
+    });
+
+  const onPickImage = async (f: File) => {
+    setTestImgErr(null);
+    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(f.type)) {
+      setTestImgErr("仅支持 PNG、JPEG、WebP 或 GIF");
+      return;
+    }
+    if (f.size > 10 * 1024 * 1024) {
+      setTestImgErr("图片不能超过 10 MiB");
+      return;
+    }
+    setTestImgReading(true);
+    try {
+      const dataUrl = await readAsDataURL(f);
+      setTestImg({ file: f, base64: dataUrl.split(",")[1] ?? "", url: dataUrl });
+    } catch {
+      setTestImgErr("图片读取失败");
+    } finally {
+      setTestImgReading(false);
+    }
+  };
+
   const runTest = async () => {
     setTestBusy(true); setTestOut(null);
     try {
-      const d = await core<{ desc: string; duration_ms: number; model: string }>("vlm-test", {
-        stdin: {
-          mode: testMode.startsWith("tier1") ? "tier1" : "tier2", // 四模式(tier1/tier1c/tier2/tier2c)→契约 mode=tier1|tier2
-          question: testQ || null,
-          custom_prompt: testMode.endsWith("c") ? (testCustom || null) : null, // 自选提示词仅 c 模式走 custom_prompt，否则 null
-        },
-      });
+      const stdin: Record<string, unknown> = {
+        mode: testMode.startsWith("tier1") ? "tier1" : "tier2", // 四模式(tier1/tier1c/tier2/tier2c)→契约 mode=tier1|tier2
+        question: testQ || null,
+        custom_prompt: testMode.endsWith("c") ? (testCustom || null) : null, // 自选提示词仅 c 模式走 custom_prompt，否则 null
+      };
+      if (testImg) {
+        stdin.image_base64 = testImg.base64;
+        stdin.media_type = testImg.file.type;
+      }
+      const d = await core<{ desc: string; duration_ms: number; model: string }>("vlm-test", { stdin });
       setTestOut(`✅ ${d.model} · ${d.duration_ms}ms\n${d.desc}`);
     } catch (e) {
       setTestOut(`❌ ${String(e)}`);
@@ -92,8 +196,10 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
         <h3>🔍 VLM（唯一必配）{p.status?.vlm.configured ? <span className="tag ok">已配置</span> : <span className="tag err">未配置</span>}</h3>
         {field("模型名称", vlm.model, (v) => setVlm({ ...vlm, model: v }))}
         {field("base URL", vlm.base_url, (v) => setVlm({ ...vlm, base_url: v }))}
-        {field("API key", vlm.api_key, (v) => setVlm({ ...vlm, api_key: v }), "password", 160)}
-        <div className="dim small" style={{ marginLeft: 92 }}>留空 = 不修改（已保存的 key 不回显）</div>
+        <SecretField label="API key" ariaKey="API key" value={vlm.api_key}
+          onSet={(v) => setVlm({ ...vlm, api_key: v })} onEdit={touch}
+          onReveal={async () => (await core<{ vlm: { api_key: string } }>("vlm-secret")).vlm.api_key} />
+        <div className="dim small" style={{ marginLeft: 92 }}>留空 = 不修改（👁 可点按显示已保存的 key；离开本页自动恢复隐藏）</div>
       </div>
 
       <div className="card">
@@ -115,7 +221,9 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
           <div className="card" key={h} style={{ margin: "8px 0 0" }}>
             {field(`${h} · 模型`, groups[h]!.model, (v) => setGroups({ ...groups, [h]: { ...groups[h]!, model: v } }))}
             {field(`${h} · base URL`, groups[h]!.base_url, (v) => setGroups({ ...groups, [h]: { ...groups[h]!, base_url: v } }))}
-            {field(`${h} · API key`, groups[h]!.api_key, (v) => setGroups({ ...groups, [h]: { ...groups[h]!, api_key: v } }), "password", 160)}
+            <SecretField label={`${h} · API key`} ariaKey={`${h} 的 API key`} value={groups[h]!.api_key}
+              onSet={(v) => setGroups({ ...groups, [h]: { ...groups[h]!, api_key: v } })} onEdit={touch}
+              onReveal={async () => (await core<{ vlm_by_harness: Record<string, { api_key: string }> }>("vlm-secret")).vlm_by_harness[h]?.api_key ?? ""} />
           </div>
         ))}
       </div>
@@ -182,10 +290,25 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
           </select>
           {testMode.startsWith("tier2") && <input className="input" placeholder="聚焦问题…" value={testQ} onChange={(e) => setTestQ(e.target.value)} />}
           {testMode.endsWith("c") && <input className="input" placeholder="自选提示词…" value={testCustom} onChange={(e) => setTestCustom(e.target.value)} />}
-          <button className="btn green" disabled={testBusy} onClick={runTest}>{testBusy ? "测试中…" : "开始测试"}</button>
+          <button className="btn green" disabled={testBusy || testImgReading} onClick={runTest}>{testBusy ? "测试中…" : "开始测试"}</button>
+        </div>
+        <div className="field" style={{ marginTop: 8 }}>
+          <label>自定义测试图（可选，走同一 VLM 调用路径）</label>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" aria-label="自定义图片"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickImage(f); }} />
+            {testImg && (
+              <>
+                <img src={testImg.url} alt="自定义测试图片预览" style={{ height: 48, border: "1px solid #ddd", borderRadius: 4 }} />
+                <span className="dim small">{testImg.file.name} · {testImg.file.type}</span>
+                <button type="button" className="btn" onClick={() => setTestImg(null)}>清除图片</button>
+              </>
+            )}
+          </div>
+          {testImgErr && <div className="err small" style={{ marginTop: 4 }}>{testImgErr}</div>}
         </div>
         {testOut && <div className="mono codebox" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{testOut}</div>}
-        <div className="dim small" style={{ marginTop: 4 }}>测试使用 1×1 最小图（不带用户图片，验证连通与提示词）。</div>
+        <div className="dim small" style={{ marginTop: 4 }}>未选自定义测试图时使用 1×1 最小图（验证连通与提示词）。</div>
       </div>
 
       <div className="card row between" style={{ position: "sticky", bottom: 0 }}>
