@@ -26,11 +26,24 @@ export function ModelsPage(p: { lang: string; refresh: () => void }) {
   };
   const retest = async (r: Triple) => {
     setBusy(r.model);
-    try { await core("probe", { args: ["--harness", r.harness, "--provider", r.provider, "--model", r.model] }); await refreshRows(); } catch (e) { console.error(e); window.alert(String(e)); } finally { setBusy(""); }
+    try {
+      const d = await core<{ result: string | null; target_found: boolean; reason: string | null }>("probe", { args: ["--harness", r.harness, "--provider", r.provider, "--model", r.model] });
+      if (d.result === null)
+        window.alert(d.target_found === false ? (d.reason ?? "探测目标不可达") : "已探测但无结论（超时/鉴权/回答含糊），不下判定");
+      await refreshRows();
+    } catch (e) { console.error(e); window.alert(String(e)); } finally { setBusy(""); }
   };
   const probeAll = async () => {
     setBusy("all");
-    try { await core("probe", { args: ["--all-untested"] }); await refreshRows(); } catch (e) { console.error(e); window.alert(String(e)); } finally { setBusy(""); }
+    try {
+      const d = await core<{ probed: number; results: { result: string | null; target_found: boolean; reason: string | null }[] }>("probe", { args: ["--all-untested"] });
+      if (d.probed === 0) window.alert("没有待探测的模型（全部已有缓存结论）");
+      else if (d.results.every((x) => x.result === null)) {
+        const first = d.results.find((x) => x.target_found === false);
+        window.alert(`已探测 ${d.probed} 个，均无结论${first ? "：" + (first.reason ?? "目标不可达") : "（超时/鉴权/回答含糊）"}`);
+      }
+      await refreshRows();
+    } catch (e) { console.error(e); window.alert(String(e)); } finally { setBusy(""); }
   };
   const fetchList = async () => {
     try {
