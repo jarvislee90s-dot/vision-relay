@@ -505,6 +505,8 @@ class TestProbeVerb:
             "vision_relay.reconcile.observe",
             lambda cfg, *a, **k: {"service_alive": False, "routing_on": False, "tools": [], "harnesses": {}},
         )
+        # 隔离:探测目标解析若走直连候选会读真机 ~/.claude 里的 key——这里不探真实上游。
+        monkeypatch.setattr("vision_relay.verbs.probe_target_for", lambda cfg, h, p, tb: ("", "", "chat"))
         monkeypatch.setattr("vision_relay.annotate.run_probe", lambda *a, **k: "image")
         args = cli.parse_args(["probe", "--harness", "claude", "--provider", "p", "--model", "m1"])
         assert cli.cmd_probe(args, ProxyConfig()) == 0

@@ -192,6 +192,9 @@ class TestHttpIntegration:
         """probe --json 真实发最小带图请求：mock 回答“红色” → 判定 image + 落 probe_results 缓存。"""
         base, _ = upstream
         home, cfg_dir = env
+        # qwen-code 指向 mock（回环）：直连候选被跳过，探测落到 mock-direct relay 测真实上游
+        qwen = home / ".qwen" / "settings.json"
+        qwen.write_text(json.dumps({"model": {"baseUrl": base, "model": "mock-vl-max"}}), encoding="utf-8")
         write_proxy_json(
             cfg_dir, relays=[{"name": "mock-direct", "protocol": "chat", "base_url": base, "models": ["mock-*"]}]
         )
@@ -333,6 +336,9 @@ class TestTriStateRotation:
         base, _, servers = start_mock_upstream()
         try:
             home, cfg_dir = env
+            # qwen-code 指向 mock（回环）：直连候选被跳过，探测落到 mock-direct relay 测真实上游
+            qwen = home / ".qwen" / "settings.json"
+            qwen.write_text(json.dumps({"model": {"baseUrl": base, "model": "mock-vl-max"}}), encoding="utf-8")
             write_proxy_json(
                 cfg_dir, relays=[{"name": "mock-direct", "protocol": "chat", "base_url": base, "models": ["mock-*"]}]
             )

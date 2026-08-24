@@ -29,6 +29,7 @@ _JSON_MAP = {
     "visionlog": verbs.visionlog,
     "vlm-set": verbs.vlm_set,  # Task 2: stdin JSON 写全局/分组/自定义提示词
     "vlm-test": verbs.vlm_test,  # Task 2: 与生产同一调用路径的连通测试（stdin JSON）
+    "vlm-secret": verbs.vlm_secret,  # 设置页「显示」按钮按需回显明文 VLM key（config 仍打码）
     "settings-set": verbs.settings_set,  # Task 3: stdin 白名单设置（unknown_default / vision_log）
     "relay-set": verbs.relay_set,  # Task 3: 停用压制 / 补 key
     "probe": verbs.probe_one,  # Task 3: --json 探针（main 特判补 harness/provider/model）
@@ -70,6 +71,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sub.add_parser("config", parents=[common])  # Task 14: --json 配置读取（打码）
     sub.add_parser("vlm-set", parents=[common])  # Task 2: stdin JSON 写 VLM 全局/分组/自定义提示词
     sub.add_parser("vlm-test", parents=[common])  # Task 2: stdin JSON VLM 连通测试（共享生产路径）
+    sub.add_parser("vlm-secret", parents=[common])  # 设置页「显示」按钮按需回显明文 VLM key
     sub.add_parser("settings-set", parents=[common])  # Task 3: stdin 白名单设置（unknown_default / vision_log）
     sub.add_parser("relay-set", parents=[common])  # Task 3: 停用压制 / 补 key
     sub.add_parser("models-fetch", parents=[common])  # Task 3: 拉上游模型 ID 清单（spec §5）
@@ -305,9 +307,17 @@ def cmd_probe(args, cfg) -> int:
 
 
 def _provider_for_group(group: str, tool_by_name: dict) -> str | None:
-    """harness -> 当前 provider 名（两层=工具激活供应商；直连场景名未知回 None，调用方用 '?' 占位）。"""
-    from . import tools
+    """harness -> 当前供应商名:工具档案矩阵 is_current 优先(磁盘真相,与工具在不在线无关);
+    退在线工具激活供应商;直连场景名未知回 None,调用方用 '?' 占位。"""
+    from . import model_sources, tools
+    from .config import load_config
 
+    try:
+        hit = model_sources.current_provider(load_config(), group)
+        if hit != "?":
+            return hit
+    except Exception:  # noqa: BLE001 - 档案读取失败走旧链路
+        pass
     for name, d in tools.TOOL_DOSSIERS.items():
         if (
             group in d.harnesses

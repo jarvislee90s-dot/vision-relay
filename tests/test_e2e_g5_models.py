@@ -26,6 +26,10 @@ def env(tmp_path):
     home = tmp_path / "home"
     cfg_dir = tmp_path / "cfg"
     write_harness_configs(home, "https://origin.example/api")
+    # qwen-code 指向 mock 上游:回环(localhost)让直连候选被跳过,重测落到 mock relay 拿真结论;
+    # claude/codex 仍指 origin.example,保住域名推导供应商的断言。
+    qwen = home / ".qwen" / "settings.json"
+    qwen.write_text(json.dumps({"model": {"baseUrl": base, "model": "qwen3-coder"}}), encoding="utf-8")
     cfg_dir.mkdir()
     write_proxy_json(
         cfg_dir, relays=[{"name": "mock-direct", "protocol": "chat", "base_url": base, "models": ["mock-*"]}]

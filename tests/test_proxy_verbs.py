@@ -431,41 +431,74 @@ class TestProbeJson:
     def test_probe_verb_envelope(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         monkeypatch.setattr(verbs, "_run_probe", lambda cfg, h, p, m, tb=None: "image")
+        monkeypatch.setattr(
+            verbs, "probe_target_info", lambda cfg, h, p, tb=None: ("https://up.example", "k", "chat", None)
+        )
         out = verbs.probe_one(ProxyConfig(), harness="claude", provider="bigmodel", model="m1")
-        assert out == {"contract_version": 1, "ok": True, "data": {"result": "image"}}
+        assert out == {
+            "contract_version": 1,
+            "ok": True,
+            "data": {"result": "image", "target_found": True, "reason": None},
+        }
 
     def test_inconclusive_is_ok_with_null_result(self, tmp_path, monkeypatch):
-        """含糊不下结论是合法结果（spec §5），不是错误：ok 恒 True，GUI 重测静默显示"未测"。"""
+        """含糊不下结论是合法结果(spec §5),不是错误:ok 恒 True。"""
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         monkeypatch.setattr(verbs, "_run_probe", lambda cfg, h, p, m, tb=None: None)
+        monkeypatch.setattr(
+            verbs, "probe_target_info", lambda cfg, h, p, tb=None: ("https://up.example", "k", "chat", None)
+        )
         out = verbs.probe_one(ProxyConfig(), harness="claude", provider="p", model="m")
+        assert out["ok"] is True and out["data"]["result"] is None and out["data"]["target_found"] is True
+
+    def test_probe_one_no_target_reports_reason(self, tmp_path, monkeypatch):
+        """无探测目标=ok 但 target_found=False + 原因(GUI 显示"不可达")。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            verbs,
+            "probe_target_info",
+            lambda cfg, h, p, tb=None: ("", "", "chat", "claude: 路由工具不在线,且未配置可探测的直连上游"),
+        )
+        out = verbs.probe_one(ProxyConfig(), harness="claude", provider="?", model="m")
         assert out["ok"] is True and out["data"]["result"] is None
+        assert out["data"]["target_found"] is False
+        assert out["data"]["reason"]  # 非空原因文案
+
+    def test_probe_target_info_direct_upstream_candidate(self, tmp_path, monkeypatch):
+        """工具离线时,harness 自身直连上游(live→snapshot)成为探测目标,key 按 key_ref 位置取。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / "settings.json").write_text(
+            json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://ark.example/api", "ANTHROPIC_AUTH_TOKEN": "tok-1"}}),
+            encoding="utf-8",
+        )
+        import vision_relay.wiring as W
+
+        monkeypatch.setattr(W, "HOME", str(home))
+        base, key, proto, reason = verbs.probe_target_info(ProxyConfig(), "claude", "volces-ark", {})
+        assert base == "https://ark.example/api" and key == "tok-1" and proto == "anthropic" and reason is None
 
 
 class TestProbeAllUntested:
-    def test_probes_only_uncached(self, tmp_path, monkeypatch):
-        """批量探测只测无探针缓存的组合；m1/m2 有缓存 -> 跳过，仅 m3/m4 被探测。
-
-        无真实 harness 配置时 scan_model_groups 返回空组，会导致 called 为空——
-        monkeypatch 固定 ModelGroup 保证稳定（与 TestModelsScan 同源做法）。"""
-        from vision_relay.onboarding import ModelEntry, ModelGroup
-        from vision_relay.tools import ToolState
+    def test_probes_only_uncached_current_provider(self, tmp_path, monkeypatch):
+        """批量探测=当前激活供应商的无缓存模型;有缓存跳过;envelope 带 target_found/reason。"""
+        from vision_relay.model_sources import ProviderRow
 
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig()
         monkeypatch.setattr(
-            "vision_relay.onboarding.scan_model_groups",
-            lambda c: [
-                ModelGroup(
-                    group="claude",
-                    path="fake",
-                    entries=[ModelEntry("m1"), ModelEntry("m2"), ModelEntry("m3"), ModelEntry("m4")],
-                )
-            ],
+            "vision_relay.model_sources.harness_matrix",
+            lambda c: {
+                "claude": [ProviderRow("cc-switch", "claude", "bigmodel", "https://x", True, ["m1", "m2", "m3", "m4"])],
+                "codex": [ProviderRow("codex-plus", "codex", "Openrouter", "https://y", False, ["g5"])],
+            },
         )
-        # provider 提示 -> bigmodel（cc-switch 在线 + 激活供应商）
         monkeypatch.setattr(
-            verbs, "_probe_tools", lambda: [ToolState("cc-switch", 15721, True, "bigmodel", "https://x")]
+            "vision_relay.model_sources.current_provider", lambda c, h: "bigmodel" if h == "claude" else "Openrouter"
+        )
+        monkeypatch.setattr(
+            verbs, "probe_target_info", lambda cfg, h, p, tb=None: ("https://up.example", "", "chat", None)
         )
         called = []
         monkeypatch.setattr(verbs, "_run_probe", lambda cfg, h, p, m, tb=None: called.append((h, p, m)) or "image")
@@ -475,6 +508,26 @@ class TestProbeAllUntested:
         assert out["ok"] is True
         assert out["data"]["probed"] == 2
         assert set(x[2] for x in called) == {"m3", "m4"}  # 只测无缓存的
+        assert all(r["target_found"] is True and r["reason"] is None for r in out["data"]["results"])
+
+    def test_all_untested_no_target_marks_reason(self, tmp_path, monkeypatch):
+        from vision_relay.model_sources import ProviderRow
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        monkeypatch.setattr(
+            "vision_relay.model_sources.harness_matrix",
+            lambda c: {"claude": [ProviderRow("cc-switch", "claude", "bigmodel", "https://x", True, ["m9"])]},
+        )
+        monkeypatch.setattr("vision_relay.model_sources.current_provider", lambda c, h: "bigmodel")
+        monkeypatch.setattr(
+            verbs,
+            "probe_target_info",
+            lambda cfg, h, p, tb=None: ("", "", "chat", "claude: 路由工具不在线,且未配置可探测的直连上游"),
+        )
+        out = verbs.probe_all_untested(cfg)
+        r = out["data"]["results"][0]
+        assert r["result"] is None and r["target_found"] is False and r["reason"]
 
 
 class TestModelsFetch:

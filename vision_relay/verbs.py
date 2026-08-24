@@ -446,7 +446,7 @@ def relay_set(cfg: ProxyConfig) -> dict:
 
 
 def probe_target_for(cfg: ProxyConfig, harness: str, provider: str, tool_by_name: dict) -> tuple[str, str, str]:
-    """探测目标：两层=工具端口（无 key）；直连=对应 relay 的 base_url+key。
+    """探测目标：两层=工具端口（无 key）；直连=harness 自身配置或对应 relay 的 base_url+key。
     （由 cli.py 上移：verbs 是更低层，原 verbs→cli 反向导入是层次倒置。）"""
     proto = {"claude": "anthropic", "codex": "responses", "qwen-code": "chat"}.get(harness, "chat")
     for name, d in TOOL_DOSSIERS.items():
@@ -454,10 +454,37 @@ def probe_target_for(cfg: ProxyConfig, harness: str, provider: str, tool_by_name
             port = tool_by_name[name]["port"]
             base = "http://127.0.0.1:%d/v1" % port if name == "codex-plus" else "http://127.0.0.1:%d" % port
             return base, "", proto if name != "codex-plus" else "responses"
+    # 直连候选:harness 自身配置(或接管前快照)指向上游时,直接探真实上游;
+    # key 按 snapshot.key_ref 的位置取(仅进程内使用,绝不进 envelope/日志);无快照
+    # (未接管过)时用该 harness 的默认 key 位置(_KEY_FIELDS 首个字段)。
+    from . import model_sources, snapshot
+
+    direct = model_sources.direct_provider_url(harness)
+    if direct:
+        snap = snapshot.load().get(harness)
+        key_ref = snap.key_ref if snap is not None else None
+        if not key_ref:
+            fields = snapshot._KEY_FIELDS.get(harness, ((), ()))[1]
+            key_ref = fields[0] if fields else None
+        return direct, model_sources.resolve_probe_key(harness, key_ref), proto
     for r in cfg.relays:
         if r.protocol == proto and r.base_url and not r.base_url.startswith("http://127.0.0.1"):
             return r.base_url, r.api_key, proto
     return "", "", proto
+
+
+def probe_target_info(
+    cfg: ProxyConfig, harness: str, provider: str, tool_by_name: dict | None = None
+) -> tuple[str, str, str, str | None]:
+    """探测目标 + 无目标原因。probe_target_for 的超集(前三位相同)。"""
+    if tool_by_name is None:
+        from .reconcile import observe
+
+        tool_by_name = {t["name"]: t for t in observe(cfg)["tools"]}
+    base, key, proto = probe_target_for(cfg, harness, provider, tool_by_name)
+    if base:
+        return base, key, proto, None
+    return base, key, proto, f"{harness}: 路由工具不在线,且未配置可探测的直连上游"
 
 
 def _run_probe(
@@ -474,26 +501,54 @@ def _run_probe(
 
 
 def probe_one(cfg: ProxyConfig, harness: str, provider: str, model: str) -> dict:
-    result = _run_probe(cfg, harness, provider, model)
-    # 无结论（None）= 含糊不下结论（spec §5 合法三态），不是错误；GUI 重测后显示"未测"
-    return envelope(True, {"result": result})
+    tool_by_name = {t["name"]: t for t in _observe_impl(cfg)["tools"]}
+    base, _key, _proto, reason = probe_target_info(cfg, harness, provider, tool_by_name)
+    if not base:
+        # 无结论(含无目标)= 合法三态(spec §5),不是错误;GUI 按 target_found 显示"不可达"
+        return envelope(True, {"result": None, "target_found": False, "reason": reason})
+    result = _run_probe(cfg, harness, provider, model, tool_by_name)
+    return envelope(True, {"result": result, "target_found": True, "reason": None})
 
 
 def probe_all_untested(cfg: ProxyConfig) -> dict:
-    """批量探测所有未测的 (harness, provider, model) 组合（probe_results 无缓存）。返回汇总。"""
-    from .onboarding import scan_model_groups
+    """批量探测:当前激活供应商(is_current 行)的无缓存 (provider, model) 组合。
+    非当前供应商的行不经工具路由、无探测路径——不尝试、不计入 results。"""
+    from . import model_sources
 
-    state = _probe_tools()
-    tool_by_name = {t["name"]: t for t in _observe_impl(cfg, tool_states=state)["tools"]}
+    matrix = model_sources.harness_matrix(cfg)
+    tool_by_name = {t["name"]: t for t in _observe_impl(cfg)["tools"]}
     probed: list[dict] = []
-    for g in scan_model_groups(cfg):
-        provider = _provider_hint(g.group, state)
-        for ent in g.entries:
-            cached = (cfg.probe_results.get(provider, {}).get(ent.model) or {}).get("result")
-            if cached:
-                continue
-            result = _run_probe(cfg, g.group, provider, ent.model, tool_by_name)
-            probed.append({"harness": g.group, "provider": provider, "model": ent.model, "result": result})
+    for harness, rows in matrix.items():
+        for row in rows:
+            if not row.is_current:
+                continue  # 只探当前激活供应商的行
+            for m in row.models:
+                if _lookup_probe(cfg, row.provider, m):
+                    continue  # 有缓存结论,跳过
+                base, _key, _proto, reason = probe_target_info(cfg, harness, row.provider, tool_by_name)
+                if not base:
+                    probed.append(
+                        {
+                            "harness": harness,
+                            "provider": row.provider,
+                            "model": m,
+                            "result": None,
+                            "target_found": False,
+                            "reason": reason,
+                        }
+                    )
+                    continue
+                result = _run_probe(cfg, harness, row.provider, m, tool_by_name)
+                probed.append(
+                    {
+                        "harness": harness,
+                        "provider": row.provider,
+                        "model": m,
+                        "result": result,
+                        "target_found": True,
+                        "reason": None,
+                    }
+                )
     return envelope(True, {"probed": len(probed), "results": probed})
 
 
