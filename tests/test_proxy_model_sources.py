@@ -99,3 +99,130 @@ def test_ccswitch_matrix_ignores_other_app_types(tmp_path, monkeypatch):
     _mk_db(db, [("g1", "gemini", "Google", "{}", 1, 0), ("h1", "hermes", "x", "{}", 0, 1)])
     monkeypatch.setattr(ms, "CCSWITCH_DB", str(db))
     assert ms.ccswitch_matrix() == {}
+
+
+# ── Task 2:codex++ / 域名推导 / 编排 ──────────────────────────────
+
+
+def test_codexpp_matrix_reads_profiles(tmp_path, monkeypatch):
+    f = tmp_path / "settings.json"
+    f.write_text(
+        json.dumps(
+            {
+                "activeRelayId": "relay-mt7bt7s3",
+                "relayProfiles": [
+                    {
+                        "id": "relay-mt7bt7s3",
+                        "name": "Openrouter",
+                        "upstreamBaseUrl": "https://openrouter.ai/api/v1",
+                        "modelList": "stealth/ox-alpha\ndeepseek/deepseek-v4-pro",
+                        "relayApiKey": "sk-or-secret",  # 必须被忽略
+                        "modelVlm": '{"stealth/ox-alpha":"vlm"}',  # 用户裁决:禁用,不读
+                    },
+                    {
+                        "id": "relay-mq92h08y",
+                        "name": "opencode",
+                        "upstreamBaseUrl": "https://opencode.ai/zen/go/v1",
+                        "modelList": "deepseek-v4-flash\nminimax-m3",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ms, "CODEXPP_SETTINGS", str(f))
+    rows = ms.codexpp_matrix()
+    assert [(r.provider, r.is_current) for r in rows] == [("Openrouter", True), ("opencode", False)]
+    assert rows[0].models == ["stealth/ox-alpha", "deepseek/deepseek-v4-pro"]
+    assert rows[0].base_url == "https://openrouter.ai/api/v1"
+    assert all(r.tool == "codex-plus" and r.harness == "codex" for r in rows)
+
+
+def test_codexpp_matrix_missing_file_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(ms, "CODEXPP_SETTINGS", str(tmp_path / "nope.json"))
+    assert ms.codexpp_matrix() == []
+
+
+def test_provider_from_url_known_map_and_fallback():
+    assert ms.provider_from_url("https://ark.cn-beijing.volces.com/api/coding") == "volces-ark"
+    assert ms.provider_from_url("https://coding.dashscope.aliyuncs.com/apps/anthropic") == "dashscope"
+    assert ms.provider_from_url("https://openrouter.ai/api/v1") == "openrouter"
+    assert ms.provider_from_url("https://origin.example/api") == "origin.example"  # 未知域名→主机名
+    assert ms.provider_from_url("http://127.0.0.1:8787") is None
+    assert ms.provider_from_url("http://localhost:15721") is None
+    assert ms.provider_from_url("not a url") is None
+
+
+def test_direct_provider_url_prefers_live_then_snapshot(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://live.example/api"}}), encoding="utf-8"
+    )
+    import vision_relay.wiring as W
+
+    monkeypatch.setattr(W, "HOME", str(home))
+    assert ms.direct_provider_url("claude") == "https://live.example/api"
+    # live 是回环(已接线到代理)→ 退 snapshot 的接管前原始值
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"}}), encoding="utf-8"
+    )
+    import vision_relay.snapshot as S
+
+    snap_dir = tmp_path / "cfg"
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(snap_dir))
+    S._path  # noqa: B018 - 确认可导入
+    (snap_dir).mkdir(exist_ok=True)
+    (snap_dir / "snapshots.json").write_text(
+        json.dumps(
+            {
+                "claude": {
+                    "base_url": "https://snap.example/api",
+                    "key_ref": "env.ANTHROPIC_AUTH_TOKEN",
+                    "model": "m",
+                    "second_hop": None,
+                    "ts": 1,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert ms.direct_provider_url("claude") == "https://snap.example/api"
+
+
+def test_resolve_probe_key_env_ref(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_AUTH_TOKEN": "ark-tok-123"}}), encoding="utf-8"
+    )
+    import vision_relay.wiring as W
+
+    monkeypatch.setattr(W, "HOME", str(home))
+    assert ms.resolve_probe_key("claude", "env.ANTHROPIC_AUTH_TOKEN") == "ark-tok-123"
+    assert ms.resolve_probe_key("claude", None) == ""
+    assert ms.resolve_probe_key("claude", "env.NOPE") == ""
+
+
+def test_harness_matrix_direct_fallback_and_current_provider(tmp_path, monkeypatch):
+    from vision_relay.config import ProxyConfig
+
+    monkeypatch.setattr(ms, "CCSWITCH_DB", str(tmp_path / "nope.db"))
+    monkeypatch.setattr(ms, "CODEXPP_SETTINGS", str(tmp_path / "nope.json"))
+    home = tmp_path / "home"
+    (home / ".qwen").mkdir(parents=True)
+    (home / ".qwen" / "settings.json").write_text(
+        json.dumps({"model": {"baseUrl": "https://dashscope.aliyuncs.com/x", "model": "qwen3-coder"}}),
+        encoding="utf-8",
+    )
+    import vision_relay.wiring as W
+
+    monkeypatch.setattr(W, "HOME", str(home))
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+    cfg = ProxyConfig()
+    matrix = ms.harness_matrix(cfg)
+    assert matrix["qwen-code"][0].provider == "dashscope"
+    assert matrix["qwen-code"][0].models == ["qwen3-coder"]
+    assert matrix["qwen-code"][0].is_current is True
+    assert matrix["claude"][0].provider == "?"  # 无工具、无 harness 配置 → 直连未知
+    assert ms.current_provider(cfg, "claude") == "?"

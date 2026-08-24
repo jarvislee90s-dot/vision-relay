@@ -9,9 +9,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 try:  # Python ≥3.11 才有 tomllib;3.10 退正则
     import tomllib
@@ -19,10 +21,11 @@ except ImportError:  # pragma: no cover - 取决于解释器版本
     tomllib = None
 
 from .tools import CCSWITCH_DB as _CCSWITCH_DB_DEFAULT
+from .tools import CODEXPP_SETTINGS as _CODEXPP_DEFAULT
 
 # 模块级常量:测试 monkeypatch 的挂点(默认指向真机路径)
 CCSWITCH_DB = _CCSWITCH_DB_DEFAULT
-CODEXPP_SETTINGS: str = ""  # Task 2 填真实默认值
+CODEXPP_SETTINGS = _CODEXPP_DEFAULT
 
 
 @dataclass(frozen=True)
@@ -139,3 +142,182 @@ def ccswitch_matrix() -> dict[str, list[ProviderRow]]:
             )
         )
     return out
+
+
+def codexpp_matrix() -> list[ProviderRow]:
+    """relayProfiles → codex 行。只取 id/name/upstreamBaseUrl/modelList/activeRelayId;
+    relayApiKey / authContents / modelVlm 一律不读(密钥不出库;modelVlm 用户裁决禁用)。"""
+    try:
+        with open(CODEXPP_SETTINGS, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    active = data.get("activeRelayId")
+    out: list[ProviderRow] = []
+    for p in data.get("relayProfiles") or []:
+        if not isinstance(p, dict):
+            continue
+        raw = p.get("modelList")
+        models = _dedup_keep_order([ln.strip() for ln in str(raw).splitlines()]) if isinstance(raw, str) else []
+        if not models:
+            continue
+        base = p.get("upstreamBaseUrl") or p.get("baseUrl") or ""
+        out.append(
+            ProviderRow(
+                tool="codex-plus",
+                harness="codex",
+                provider=str(p.get("name") or p.get("id") or "?"),
+                base_url=base if isinstance(base, str) else "",
+                is_current=p.get("id") == active,
+                models=models,
+            )
+        )
+    return out
+
+
+_KNOWN_DOMAINS: list[tuple[str, str]] = [
+    ("openrouter.ai", "openrouter"),
+    ("api.openai.com", "openai"),
+    ("api.anthropic.com", "anthropic"),
+    ("api.deepseek.com", "deepseek"),
+    ("dashscope.aliyuncs.com", "dashscope"),
+    ("volces.com", "volces-ark"),
+    ("api.kimi.com", "kimi"),
+    ("bigmodel.cn", "bigmodel"),
+]
+
+
+def _host(url: str) -> str | None:
+    try:
+        h = urlparse(url).hostname
+    except ValueError:
+        return None
+    return (h or "").lower() or None
+
+
+def _is_loopback_url(url: str) -> bool:
+    return _host(url) in ("127.0.0.1", "localhost", "::1")
+
+
+def provider_from_url(url: str) -> str | None:
+    """直连态供应商名:已知域名映射 → 主机名兜底;回环/无效 → None。"""
+    host = _host(url)
+    if not host or host in ("127.0.0.1", "localhost", "::1"):
+        return None
+    for suffix, name in _KNOWN_DOMAINS:
+        if host == suffix or host.endswith("." + suffix):
+            return name
+    return host
+
+
+def direct_provider_url(harness: str) -> str | None:
+    """harness 自身配置的上游:live 文件优先;live 是回环(接线中)→ snapshot 的接管前原始值。"""
+    from . import snapshot, wiring
+
+    h = wiring.HARNESS_CFG.get(harness)
+    live = wiring.read_base_url(wiring._path(wiring.HOME, harness), h) if h else None
+    if live and not _is_loopback_url(live):
+        return live
+    snap = snapshot.load().get(harness)
+    if snap is not None and snap.base_url and not _is_loopback_url(snap.base_url):
+        return snap.base_url
+    return None
+
+
+def resolve_probe_key(harness: str, key_ref: str | None) -> str:
+    """按 snapshot 的 key 位置描述取真实 key 值(仅进程内使用,绝不进 envelope/日志)。
+
+    HOME 用 wiring.HOME(测试 monkeypatch 挂点),绝不读真机 ~。"""
+    if not key_ref:
+        return ""
+    import pathlib
+
+    from . import snapshot as snap_mod
+    from . import wiring
+
+    path: pathlib.Path | None = None
+    file_parts = snap_mod._KEY_FIELDS.get(harness, ((None,), ()))[0]
+    if file_parts and file_parts[0]:
+        cand = pathlib.Path(wiring.HOME).joinpath(*file_parts)
+        path = cand if cand.exists() else None
+    try:
+        if key_ref.startswith("env.") and path is not None:
+            return str(json.loads(path.read_text(encoding="utf-8")).get("env", {}).get(key_ref[4:], "")) or ""
+        if key_ref == "model.apiKey" and path is not None:
+            return str(json.loads(path.read_text(encoding="utf-8")).get("model", {}).get("apiKey", "")) or ""
+        if key_ref.endswith("auth.json"):
+            auth = pathlib.Path(wiring.HOME) / ".codex" / "auth.json"
+            return str(json.loads(auth.read_text(encoding="utf-8")).get("OPENAI_API_KEY", "")) or ""
+    except (OSError, ValueError):
+        return ""
+    return os.environ.get(key_ref, "")
+
+
+def _direct_rows(cfg, harness: str) -> list[ProviderRow]:
+    """直连兜底行:模型来自 live 配置正则扫描;供应商由 base_url 域名推导,未知 → "?"。
+
+    即使无模型也产一行(provider 语义"直连未知"),让 current_provider 恒有结论;
+    空 models 不会产生任何 GUI 行(_scan_triples 按 models 展开)。"""
+    from .onboarding import scan_model_groups
+
+    models: list[str] = []
+    for g in scan_model_groups(cfg):
+        if g.group == harness:
+            models = _dedup_keep_order([e.model for e in g.entries])
+    url = direct_provider_url(harness)
+    provider = provider_from_url(url) if url else None
+    return [
+        ProviderRow(
+            tool="direct",
+            harness=harness,
+            provider=provider or "?",
+            base_url=url or "",
+            is_current=True,
+            models=models,
+        )
+    ]
+
+
+def _ccswitch_installed() -> bool:
+    return os.path.exists(CCSWITCH_DB)
+
+
+def _codexpp_installed() -> bool:
+    return os.path.exists(CODEXPP_SETTINGS)
+
+
+def harness_matrix(cfg) -> dict[str, list[ProviderRow]]:
+    """每 harness 的供应商×模型矩阵。工具已装(磁盘上有档案,与进程在不在线无关)
+    → 工具矩阵;读取失败/为空 → 直连兜底。codex 归属哪个工具以 snapshot.second_hop
+    (接管时的接线真相)为准,缺省 codex-plus,再缺省 cc-switch。"""
+    from . import snapshot
+
+    snap = snapshot.load()
+    out: dict[str, list[ProviderRow]] = {}
+    for harness in cfg.routing.harnesses:
+        rows: list[ProviderRow] = []
+        if harness == "claude" and _ccswitch_installed():
+            rows = ccswitch_matrix().get("claude", [])
+        elif harness == "codex":
+            s = snap.get("codex")
+            tool = s.second_hop if s is not None and s.second_hop else None
+            if tool == "cc-switch" and _ccswitch_installed():
+                rows = ccswitch_matrix().get("codex", [])
+            elif _codexpp_installed():
+                rows = codexpp_matrix()
+            elif _ccswitch_installed():
+                rows = ccswitch_matrix().get("codex", [])
+        if not rows:
+            rows = _direct_rows(cfg, harness)
+        out[harness] = rows
+    return out
+
+
+def current_provider(cfg, harness: str) -> str:
+    for row in harness_matrix(cfg).get(harness, []):
+        if row.is_current:
+            return row.provider
+    from . import snapshot
+
+    s = snapshot.load().get(harness)
+    return s.second_hop if s is not None and s.second_hop else "?"
