@@ -48,13 +48,16 @@ def test_models_page_triset_save_and_retest(env):
     rows = _scan(cfg_dir, home)
     assert any(r["harness"] == "codex" and r["model"] == "gpt-5-codex" and r["value"] is None for r in rows)
     assert any(r["harness"] == "qwen-code" and r["model"] == "qwen3-coder" and r["value"] is None for r in rows)
+    assert any(r["provider"] == "origin.example" for r in rows)  # 直连态:域名推导供应商名
 
     # 切换三态 → 保存（GUI「保存修改」= 一次 models-set 批量写）
     run_cli(
         ["models-set", "--json"],
         cfg_dir,
         home,
-        stdin=json.dumps([{"harness": "codex", "provider": "?", "model": "gpt-5-codex", "value": "image"}]),
+        stdin=json.dumps(
+            [{"harness": "codex", "provider": "origin.example", "model": "gpt-5-codex", "value": "image"}]
+        ),
     )
     rows = _scan(cfg_dir, home)
     row = next(r for r in rows if r["harness"] == "codex" and r["model"] == "gpt-5-codex")
