@@ -65,27 +65,44 @@ def _vl_query(**kw) -> list[dict]:
     return _vl_query_impl(**kw)
 
 
-def _scan_triples(cfg: ProxyConfig) -> list[dict]:
-    """扫描 harness 配置 -> 三元组 + 当前标注值/来源（未标注= value None）。"""
-    from .onboarding import scan_model_groups
+def _lookup_cap(cfg: ProxyConfig, harness: str, provider: str, model: str) -> tuple[str | None, str | None]:
+    """能力读取:精确供应商桶 → legacy 影子桶 → "?" 影子桶(键统一迁移的读侧兜底)。"""
+    for p in (provider, "legacy", "?"):
+        v = cfg.model_capabilities.get(harness, {}).get(p, {}).get(model)
+        if v is not None:
+            s = cfg.capability_sources.get(harness, {}).get(p, {}).get(model)
+            return v, s
+    return None, None
 
-    states = _probe_tools()  # 一次探测全 scan 复用（每组一次会把端口超时放大 N 倍）
+
+def _lookup_probe(cfg: ProxyConfig, provider: str, model: str) -> str | None:
+    for p in (provider, "?"):
+        hit = (cfg.probe_results.get(p, {}).get(model) or {}).get("result")
+        if hit is not None:
+            return hit
+    return None
+
+
+def _scan_triples(cfg: ProxyConfig) -> list[dict]:
+    """模型矩阵扫描:provider×model 来自工具档案(cc-switch DB / Codex++ settings.json,
+    只读);工具未装(直连态)或读取失败 → live 配置正则扫描 + base_url 域名推导供应商。"""
+    from . import model_sources
+
     rows: list[dict] = []
-    for g in scan_model_groups(cfg):
-        provider = _provider_hint(g.group, states)
-        for ent in g.entries:
-            value = cfg.model_capabilities.get(g.group, {}).get(provider, {}).get(ent.model)
-            source = cfg.capability_sources.get(g.group, {}).get(provider, {}).get(ent.model)
-            rows.append(
-                {
-                    "harness": g.group,
-                    "provider": provider,
-                    "model": ent.model,
-                    "value": value,
-                    "source": source,
-                    "probe_cached": (cfg.probe_results.get(provider, {}).get(ent.model) or {}).get("result"),
-                }
-            )
+    for harness, provs in model_sources.harness_matrix(cfg).items():
+        for pr in provs:
+            for m in pr.models:
+                value, source = _lookup_cap(cfg, harness, pr.provider, m)
+                rows.append(
+                    {
+                        "harness": harness,
+                        "provider": pr.provider,
+                        "model": m,
+                        "value": value,
+                        "source": source,
+                        "probe_cached": _lookup_probe(cfg, pr.provider, m),
+                    }
+                )
     return rows
 
 
@@ -171,7 +188,8 @@ def models_scan(cfg: ProxyConfig) -> dict:
 
 
 def config_get(cfg: ProxyConfig) -> dict:
-    """全量配置（打码）：明文 key 绝不出现在输出里（工程宪法）。拷贝后打码，不改调用方的 cfg。"""
+    """全量配置（打码）：明文 key 绝不出现在被动输出里（工程宪法）；
+    刻意豁免仅 vlm-secret 动词（GUI「显示」按钮显式请求）。拷贝后打码，不改调用方的 cfg。"""
 
     def mask(v):
         return "●●●●" if v else v
@@ -296,6 +314,19 @@ def vlm_set(cfg: ProxyConfig) -> dict:
         return envelope(False, {"error": err_text})
     _locked_save(cfg)
     return envelope(True, {"saved": True})
+
+
+def vlm_secret(cfg: ProxyConfig) -> dict:
+    """显式请求才回明文 VLM key —— 工程宪法『输出不带 key』的唯一刻意豁免（spec §6 设置·key 显隐）。
+
+    只在 GUI「显示」按钮点击时经 _JSON_MAP['vlm-secret'] 到达；config/status 等被动输出仍一律打码。
+    纯读，不改调用方 cfg；范围仅 vlm + vlm_by_harness（relays / relay_templates 不回显）。"""
+    by_h = {
+        h: {"api_key": over["api_key"]}
+        for h, over in cfg.vlm_by_harness.items()
+        if isinstance(over, dict) and over.get("api_key")
+    }
+    return envelope(True, {"vlm": {"api_key": cfg.vlm.api_key}, "vlm_by_harness": by_h})
 
 
 def _VLMClient(vlm_cfg):

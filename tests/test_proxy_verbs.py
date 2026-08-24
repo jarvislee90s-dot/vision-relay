@@ -92,28 +92,57 @@ def test_config_get_masks_relay_template_keys(cfg):
     assert cfg.routing.relay_templates["relay-x"]["api_key"] == "sk-hidden"
 
 
-def test_models_scan_probes_tools_once_per_scan(cfg, monkeypatch):
-    """Minor-1: 工具探测按 scan 提升为一次（原每组一次，3 组就放大 3x 端口超时）。"""
-    from vision_relay.onboarding import ModelEntry, ModelGroup
+def test_models_scan_reads_matrix_without_port_probing(cfg, monkeypatch):
+    """矩阵来自工具档案(磁盘),models-scan 不再探测端口——离线/加速两得。"""
+    from vision_relay.model_sources import ProviderRow
 
     calls = []
+    monkeypatch.setattr(verbs, "_probe_tools", lambda: calls.append(1) or [])
+    monkeypatch.setattr(
+        "vision_relay.model_sources.harness_matrix",
+        lambda c: {
+            "claude": [ProviderRow("cc-switch", "claude", "火山Ark", "https://x", True, ["m1", "m2"])],
+            "codex": [ProviderRow("codex-plus", "codex", "Openrouter", "https://y", False, ["gpt-5"])],
+        },
+    )
+    data = verbs.models_scan(cfg)
+    rows = data["data"]["models"]
+    assert [(r["provider"], r["model"]) for r in rows] == [
+        ("火山Ark", "m1"),
+        ("火山Ark", "m2"),
+        ("Openrouter", "gpt-5"),
+    ]
+    assert calls == []  # 不探端口
 
-    def _count():
-        calls.append(1)
-        return []
+
+def test_scan_triples_shadow_bucket_fallback(cfg, monkeypatch):
+    """存量标注挂在 legacy / "?" 影子桶下时,按精确→legacy→"?" 兜底显示(键统一的读侧)。"""
+    from vision_relay.model_sources import ProviderRow
 
     monkeypatch.setattr(
-        "vision_relay.onboarding.scan_model_groups",
-        lambda c: [
-            ModelGroup(group="claude", path="a", entries=[ModelEntry("m1")]),
-            ModelGroup(group="codex", path="b", entries=[ModelEntry("m2")]),
-            ModelGroup(group="qwen-code", path="c", entries=[ModelEntry("m3")]),
-        ],
+        "vision_relay.model_sources.harness_matrix",
+        lambda c: {"claude": [ProviderRow("cc-switch", "claude", "火山Ark", "https://x", True, ["m1", "m2"])]},
     )
-    monkeypatch.setattr(verbs, "_probe_tools", _count)
-    data = verbs.models_scan(cfg)
-    assert len(data["data"]["models"]) == 3
-    assert len(calls) == 1
+    cfg.model_capabilities["claude"] = {
+        "legacy": {"m1": "image"},
+        "?": {"m2": "text_only"},
+    }
+    cfg.capability_sources["claude"] = {"legacy": {"m1": "user"}}
+    rows = verbs._scan_triples(cfg)
+    by_model = {r["model"]: r for r in rows}
+    assert (by_model["m1"]["value"], by_model["m1"]["source"]) == ("image", "user")
+    assert by_model["m2"]["value"] == "text_only"  # "?" 桶兜底
+
+
+def test_scan_triples_probe_cached_shadow_fallback(cfg, monkeypatch):
+    from vision_relay.model_sources import ProviderRow
+
+    monkeypatch.setattr(
+        "vision_relay.model_sources.harness_matrix",
+        lambda c: {"claude": [ProviderRow("cc-switch", "claude", "p1", "https://x", True, ["m1"])]},
+    )
+    cfg.probe_results["?"] = {"m1": {"result": "image", "ts": 1}}
+    assert verbs._scan_triples(cfg)[0]["probe_cached"] == "image"
 
 
 def test_tools(cfg, monkeypatch):
@@ -156,6 +185,7 @@ def test_every_verb_has_contract_version(cfg, monkeypatch):
         verbs.tools,
         verbs.events,
         verbs.visionlog,
+        verbs.vlm_secret,
     ):
         assert fn(cfg)["contract_version"] == verbs.CONTRACT_VERSION
 
@@ -237,6 +267,69 @@ class TestVlmSet:
         assert verbs.vlm_set(cfg)["ok"] is False
         _set_stdin(monkeypatch, {"vlm_by_harness": "abc"})
         assert verbs.vlm_set(cfg)["ok"] is False
+
+
+class TestVlmSecret:
+    """vlm-secret：GUI「显示」按钮按需回显明文 key——工程宪法『输出不带 key』的唯一刻意豁免。"""
+
+    def test_returns_real_keys_global_and_group(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "sk-global"
+        cfg.vlm_by_harness["claude"] = {"model": "m", "api_key": "sk-claude"}
+        data = verbs.vlm_secret(cfg)["data"]
+        assert data["vlm"]["api_key"] == "sk-global"
+        assert data["vlm_by_harness"]["claude"]["api_key"] == "sk-claude"
+
+    def test_readonly_never_mutates(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "sk-global"
+        cfg.vlm_by_harness["claude"] = {"model": "m", "api_key": "sk-claude"}
+        verbs.vlm_secret(cfg)
+        # 回归守卫（对照 config_get 打码不改调用方）：只读动词绝不能动调用方 cfg
+        assert cfg.vlm.api_key == "sk-global"
+        assert cfg.vlm_by_harness["claude"]["api_key"] == "sk-claude"
+
+    def test_omits_harness_without_key(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "sk-global"
+        cfg.vlm_by_harness["claude"] = {"model": "m", "api_key": ""}
+        cfg.vlm_by_harness["codex"] = {"model": "m2"}
+        data = verbs.vlm_secret(cfg)["data"]
+        assert data["vlm"]["api_key"] == "sk-global"
+        assert "claude" not in data["vlm_by_harness"]  # 空 key = 跟随全局，不回显
+        assert "codex" not in data["vlm_by_harness"]
+
+    def test_config_get_still_masks(self, tmp_path, monkeypatch):
+        """被动路径仍打码——本次豁免的显式回归护栏（只有 vlm-secret 才回明文）。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "sk-global"
+        cfg.vlm_by_harness["claude"] = {"model": "m", "api_key": "sk-claude"}
+        text = json.dumps(verbs.config_get(cfg))
+        assert "sk-global" not in text and "sk-claude" not in text
+        data = verbs.config_get(cfg)["data"]
+        assert data["vlm"]["api_key"] == "●●●●"
+        assert data["vlm_by_harness"]["claude"]["api_key"] == "●●●●"
+
+    def test_registered_in_json_map(self):
+        from vision_relay import cli
+
+        assert cli._JSON_MAP["vlm-secret"] is verbs.vlm_secret
+        assert cli.parse_args(["vlm-secret", "--json"]).command == "vlm-secret"
+
+    def test_never_leaks_relay_or_template_keys(self, tmp_path, monkeypatch):
+        """防御纵深（评审补充）：vlm-secret 只回 vlm 作用域，relays / relay_templates 的 key 绝不出现。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.vlm.api_key = "sk-global"
+        cfg.relays.append(RelayConfig(name="r1", protocol="chat", base_url="https://up.example", api_key="sk-relay"))
+        cfg.routing.relay_templates["t1"] = {"base_url": "https://t.example", "api_key": "sk-tpl"}
+        text = json.dumps(verbs.vlm_secret(cfg))
+        assert "sk-relay" not in text and "sk-tpl" not in text
+        assert cfg.relays[0].api_key == "sk-relay"  # 只读，不动调用方
 
 
 class TestVlmTest:
