@@ -16,8 +16,10 @@ from . import wiring
 from .capability import BUILTIN_CAPABILITIES
 from .config import save_config
 
-# 捕获 (变量名, 模型名)：匹配 model / model.xxx / name 等键
-_MODEL_ENTRY = re.compile(r"""(?i)(model\.\w+|model|name|"model")["']?[ \t]*[:=][ \t]*["']([\w@.\-]+)["']""")
+# 捕获 (变量名, 模型名):model.xxx / 带引号 "model" "name"(JSON 键)/ 裸 model(TOML/env 后缀)。
+# 值字符集含 / 与 :(路由前缀 openrouter/x、ollama 标签 x:0731);裸 name 不匹配——
+# TOML [model_providers.x] 表里的 name 是供应商标签,不是模型(qwen 的 JSON "name" 由带引号分支接住)。
+_MODEL_ENTRY = re.compile(r"""(?i)(model\.\w+|"model"|"name"|model)["']?[ \t]*[:=][ \t]*["']([\w@.\-/:]+)["']""")
 
 
 @dataclass
@@ -40,13 +42,12 @@ def _extract_entries(path: str, source_url: str | None) -> list[ModelEntry]:
         txt = open(path, encoding="utf-8", errors="replace").read()
     except OSError:
         return []
-    seen = set()
-    out = []
+    seen: set[str] = set()
+    out: list[ModelEntry] = []
     for var, model in _MODEL_ENTRY.findall(txt):
         model = model.strip()
-        key = (var, model)
-        if model and key not in seen:
-            seen.add(key)
+        if model and model not in seen:  # 按模型值去重：同模型多变量(_MODEL/_NAME)只留首行
+            seen.add(model)
             out.append(ModelEntry(model=model, variable=var, source_url=source_url))
     return out
 
@@ -87,8 +88,19 @@ def scan_model_groups(cfg) -> list[ModelGroup]:
             legacy.append(ModelEntry(model=m, variable="model_capabilities"))
             seen_models.add(m)
         elif isinstance(v, dict):
-            # 已是按组嵌套：若该组还没扫到，补成一个现有组
-            if m not in {g.group for g in groups}:
+            if m in {g.group for g in groups}:
+                # 组已扫到：legacy/? 等桶中该组独有的模型并入(不再静默丢弃)
+                g0 = next(g for g in groups if g.group == m)
+                have = {e.model for e in g0.entries}
+                for bucket in v.values():
+                    if not isinstance(bucket, dict):
+                        continue
+                    for mm in bucket:
+                        if mm not in have:
+                            have.add(mm)
+                            g0.entries.append(ModelEntry(mm, "model_capabilities"))
+            else:
+                # 已是按组嵌套：若该组还没扫到，补成一个现有组
                 groups.append(
                     ModelGroup(
                         group=m,

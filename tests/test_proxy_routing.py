@@ -350,3 +350,54 @@ def test_wiring_backup_does_not_shadow_legacy_bak(tmp_path, monkeypatch):
     cfg = ProxyConfig(bind_port=8787, routing=RoutingConfig(harnesses=["claude"]))
     wiring.wiring_backup_and_rewrite(cfg)
     assert not (claude_dir / "settings.json.vision-relay.bak").exists()
+
+
+# ── models-scan 正则兜底层修复(Task 4):字符集 / 去重 / legacy 并入 ──────
+def test_extract_entries_charset_and_dedupe(tmp_path, monkeypatch):
+    """斜杠/冒号模型名不再漏;同模型多变量只留一行;TOML 裸 name 不再误抓。"""
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+    f = tmp_path / "config.toml"
+    f.write_text(
+        'model = "stealth/ox-alpha"\n'
+        'model.deep_tag = "deepseek-v4-flash:0731"\n'
+        '[model_providers.custom]\nname = "custom"\nbase_url = "http://x"\n',
+        encoding="utf-8",
+    )
+    entries = onboarding._extract_entries(str(f), None)
+    models = [e.model for e in entries]
+    assert models == ["stealth/ox-alpha", "deepseek-v4-flash:0731"]
+    assert "custom" not in models  # 供应商标签不是模型
+
+
+def test_extract_entries_dedupes_same_model_across_vars(tmp_path):
+    """ANTHROPIC_DEFAULT_*_MODEL 与 *_NAME 成对同值 → 一行(原 (var,model) 去重出两行)。"""
+    f = tmp_path / "settings.json"
+    f.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "MiniMax-M3",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Kimi-K2.7-Code",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    entries = onboarding._extract_entries(str(f), None)
+    assert [e.model for e in entries] == ["MiniMax-M3", "Kimi-K2.7-Code"]
+
+
+def test_scan_model_groups_merges_legacy_into_scanned_group(tmp_path, monkeypatch):
+    """legacy 桶里独有的模型(GLM-5.3)并入已扫到的 codex 组,不再静默丢弃。"""
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "config.toml").write_text('model = "gpt-5-codex"\n', encoding="utf-8")
+    import vision_relay.wiring as W
+
+    W.HOME = str(home)
+    cfg = ProxyConfig(model_capabilities={"codex": {"legacy": {"gpt-5-codex": "text_only", "GLM-5.3": "image"}}})
+    groups = onboarding.scan_model_groups(cfg)
+    codex_g = next(g for g in groups if g.group == "codex")
+    assert {e.model for e in codex_g.entries} == {"gpt-5-codex", "GLM-5.3"}
