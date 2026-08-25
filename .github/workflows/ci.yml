@@ -1,37 +1,51 @@
-name: CI
+# GitHub Actions 持续集成（CI）配置。
+# 位于 .github/workflows/ 下的 .yml 会被 GitHub 自动识别；推送后，
+# 云端的一切运行都以本文件的最新版本为准。
+
+name: CI # 工作流名称：Actions 页面里显示的标题
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch: # 仅手动触发：push / PR 都不再自动运行，节省 CI 分钟数
+  # 手动运行方式：仓库页 → Actions → 左侧选 "CI" → 右侧 "Run workflow" 按钮；
+  # 或命令行：gh workflow run ci.yml
 
 permissions:
-  contents: read
+  contents: read # 最小权限原则：给内置 GITHUB_TOKEN 只授"读仓库"，不给写权限
 
 jobs:
+  # ================================================================
+  # job 1：test —— 多平台测试 + Lint
+  # 3 个系统 × 4 个 Python 版本 = 12 个组合并行执行，任一失败整体失败
+  # ================================================================
   test:
-    name: ${{ matrix.os }} / py${{ matrix.python-version }}
+    name: ${{ matrix.os }} / py${{ matrix.python-version }} # 每个组合的展示名
     strategy:
-      fail-fast: false
-      matrix:
+      fail-fast: false # 某个组合失败时不立刻取消其余组合，方便一次看全所有结果
+      matrix: # 矩阵：两个列表做笛卡尔积，值填入下方 ${{ matrix.* }} 变量
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }} # 当前组合所用的虚拟机系统
+
     steps:
+      # 第 1 步：拉取仓库代码到虚拟机（几乎所有 CI 流程的固定第一步）
+      # @ 后是 commit SHA：锁定 action 到具体提交，防上游 tag 被篡改（供应链安全）
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
+          persist-credentials: false # 检出后不在 git 配置中保留访问凭据
 
+      # 第 2 步：安装 uv（Python 包管理器）并准备好对应版本的 Python
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          version: "0.10.9"
-          python-version: ${{ matrix.python-version }}
-          enable-cache: true
+          version: "0.10.9" # uv 版本号
+          python-version: ${{ matrix.python-version }} # 当前矩阵组合的 Python 版本
+          enable-cache: true # 启用依赖缓存，加速后续运行
 
+      # 第 3 步：离线跑单元测试
+      # uv run --no-project = 不读项目配置、临时搭干净环境；--with = 只注入 pytest/httpx
       - name: Run offline tests
         env:
-          PYTHONUTF8: "1"
+          PYTHONUTF8: "1" # 强制 UTF-8，避免 Windows 虚拟机上的编码问题
         run: >-
           uv run --no-project
           --python ${{ matrix.python-version }}
@@ -39,14 +53,19 @@ jobs:
           --with httpx
           python -m pytest -q
 
+      # 第 4 步：Lint —— 静态检查 + 格式检查，任一不通过即失败
       - name: Lint
         run: |
           uv run --no-project --python ${{ matrix.python-version }} --with ruff ruff check .
           uv run --no-project --python ${{ matrix.python-version }} --with ruff ruff format --check .
 
+  # ================================================================
+  # job 2：packaging —— 打包冒烟测试（与上面 test 并行跑）
+  # 验证：项目能构建出 wheel 包，且安装后命令行工具可用
+  # ================================================================
   packaging:
     name: build + install smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # 打包验证只需单系统、单 Python 版本
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,9 +75,10 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.10.9"
-          python-version: "3.12"
+          python-version: "3.12" # 冒烟测试固定用一个 Python 版本
           enable-cache: true
 
+      # 构建 wheel → 新建干净 venv 安装 → 用装好的命令跑 --version 验证
       - name: Build wheel and smoke-test it
         run: |
           uv build

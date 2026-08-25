@@ -90,7 +90,7 @@ flowchart LR
 
 - 服务运行中：每个启用的 harness，base_url 一律指向本代理（始终接管）；转发方向看工具：工具端口在线 → relay 指向工具（两层）；离线 → 一层直连回落，无可用直连 relay 时 GUI 明确警告「该 harness 当前无上游可用」。
 - 服务停止：harness 恢复原状（按接管组合快照），自动添加的 relay 一并撤销。
-- qwen-code 无路由工具，永远一层直连。
+- qwen-code 无路由工具，永远一层直连；且自 0.22.0 起**接管必须条目级**（见下）。
 
 **观测信号（三个）**
 
@@ -105,13 +105,27 @@ flowchart LR
 | 服务在跑，接线正确，relay 与工具状态一致 | 不动任何文件（幂等） |
 | 服务在跑，harness 被工具改指工具端口 | 抢回：base_url → 本代理，relay 确认指向该工具；记录事件 |
 | 服务在跑，工具路由关（端口离线） | base_url 保持本代理；**请求期回落直连**（2026-08-25 落地）：两层 relay 在目标端口死时读工具档案当前供应商真实地址+key 直连，协议跟随档案（CC Switch codex 按 wire_api、Codex++ 按 profile.protocol；chat 上游由本代理做协议转换）；档案不可读保持原 relay（502 可见）+ 警告；端口恢复自动回两层；状态转换记 `relay_fallback` 事件、status 透出 `upstream_effective` |
-| 服务在跑，harness 被改成陌生地址（用户换供应商） | **吸收**：接管回本代理，同时把新地址记为该 harness 的直连上游；GUI 明确告知「检测到上游变为 X，已接管、转发已指向 X」，缺 key 则提醒补 |
+| 服务在跑，harness 被改成陌生地址（用户换供应商） | **吸收**：接管回本代理，同时把新地址记为该 harness 的直连上游；GUI 明确告知「检测到上游变为 X，已接管、转发已指向 X」，缺 key 则提醒补。codex 吸收时同步重打 model catalog 模态补丁（2026-08-26 修订，见主 spec §8.2——换上游常伴新目录，纯文本标注会把图片挡在请求外） |
 | 服务已死，harness 仍指向本代理 | 进入修复流程 |
 | harness 配置出现新模型 | 不碰 base_url；自动探测/按目录标注 + 被动通知可改（文案双向提醒误标代价） |
 
 **备份、快照与回退语义**
 
 - **接管组合快照**：每次接管（含对账吸收新上游）时，把该 harness 的 **base_url + API key 所在位置 + 模型名** 作为一组快照记档（每 harness 只存最新一条，不做历史清单）。动机：CC Switch 直连切换模式会把 live 文件回读进它自己的供应商档案——本代理写入的 8787 可能被它读走，造成其档案内「8787 + 别家 key/模型」的错位污染；本代理不写工具的库（只读硬约束），但凭快照始终持有「正确组合」的真相，任何还原都按组合写回，不受污染备份影响。
+
+**qwen-code 条目级接线（2026-08-26）**
+
+qwen-code ≥0.22.0（2026-08-22 发布）的端点解析：模型选中 `modelProviders` 条目时，请求端点取**条目自身 baseUrl**（解析优先级第二层，高于 CLI/env/settings）；`model.baseUrl` 退化为 `/model` 选择器的消歧提示、不在解析链内。只改全局字段等于没接管（实测请求直连原上游、代理零流量）。因此：
+
+- **接管**：除 `model.baseUrl` 外，改写 `modelProviders.<authType>[]` 全部可改写条目（authType 即协议族，仅 `openai→chat`、`anthropic→anthropic`；gemini/vertex/custom 与 wrapped 旧形态 `{protocol,models}` 原样跳过并计数）。快照新增 `provider_urls` 映射：**键为条目 envKey 名**（位置引用，非 key 值；同 envKey 多条目共用一键=同供应商多模型；同 envKey 不同原始 URL 以 `#id` 消歧；无 envKey 用 `authType|id|index`），值为原始 baseUrl。键只依赖 (envKey,id) 等稳定量——改写后条目 baseUrl 全变代理地址，键计算不得依赖它；还原侧按「#id 优先、裸键兜底」解析。settings.json 的 `env` 段（真实 key 所在）绝不触碰；快照/proxy.json 绝不落 key 值（§13 铁律）。
+- **还原**（stop/对账修复）：按 `provider_urls` 逐条写回原值；守卫=当前条目 baseUrl 仍指向本代理才动（用户运行期改走别处的条目原样保留）。重复接管不把代理地址记成"原始值"（已指本代理者不产生新记录，旧映射保留合并）。
+- **modalities 准入门（2026-08-26）**：qwen-code 的 inputModalities 门（`generationConfig.modalities.image`）不开，Read/粘贴的图片**根本不会进请求体**（实测 injected:0）——接管必须代开（接管后"所有模型都识图"：文本模型由本代理转写，门一律 image=true；对齐既有 codex catalog `input_modalities` 补丁语义）。原值记入快照 `provider_modalities`（`~absent~` 哨兵=原本无字段），stop 按原值还原（避免直连态图片被塞给纯文本上游报错）；对账发现门被关则重开；用户手动开过的门不产生记录（幂等、还原不动）。
+- **一层直连 relay**：接管时按 (协议, 原始 baseUrl) 分组自动建 `qwen-{host}` relay（`models`=条目 id 精确匹配，**prepend** 到 relays 头部——`_select_relay` 按序首匹配，须先于通配 `"*"` 的 cc-codex 命中）；原值指向工具端口（cc-switch/codex++）的组不建（两层语义，由既有 relay 服务）；stop/还原随 `activated_relays` 移除；对账发现缺失即重建、原值从快照消失即清理。
+- **重启生效**：qwen 0.22.0 在会话启动时加载 provider 配置，接线后已开的会话需重启（start 输出与 GUI qwen 卡提示）。
+
+**统一上游鉴权优先级链（2026-08-26，无标记位）**
+
+转发上游时带什么 key：`relay.api_key 非空 → 用它` > `via-relay（两层经工具 / 工具档案回落）→ 不透传客户端头`（防把客户端 key 泄给工具或与其注入的 key 冲突；回落场景 key 来自档案 §13 窄豁免）> `其余 direct relay 且无自有 key → 透传客户端入站 Authorization / x-api-key / anthropic-version 头` > `不带`。**行为变更**：原先"无 key 的 direct relay"转发不带任何鉴权头，现在会透传客户端头（客户端没配 key 则上游 401 如实透传，责任在客户端配置）。价值：任何 OpenAI/Anthropic 兼容客户端（qwen-code、Py 脚本、OpenCode、OpenClaw…）只需把 base_url 指到本代理，key 自动随行——新 harness 接入零 per-tool key 适配代码；代理全程不读、不存 key 值，客户端换 key 自动跟随。安全边界：透传仅限 direct relay；服务只绑 127.0.0.1。
 - **备份**只记「本代理第一次接管之前的原始值」，之后反复抢线不覆盖（防止备份被污染成本代理地址）；恢复即回到那个原始状态。正常 stop 的主还原依据是接管组合快照（最新），.bak 仅在该 harness 快照缺失时兜底（2026-08-23 决策）。
 - 每次抢回 / 修复 / 吸收 / 自动标注事件进事件日志（何时、哪个 harness、从什么改成什么），GUI 可查。
 
@@ -266,3 +280,5 @@ flowchart LR
 | stop 还原依据（2026-08-23） | 统一为最新接管组合快照；快照缺失的 harness 退回第一次接管前的整文件 .bak 兜底 |
 | 探测节奏与过目语义（2026-08-23） | 探针只在新组合首次出现时自动跑一次并把待确认结果推给用户；向导/模型页的过目（保存或修改）即为用户意图（user），此后自动标注不再覆盖；重测是显式动作 |
 | 配置文件定位（2026-08-23） | 详情抽屉提供配置文件路径与系统打开入口；不做行号定位（收窄 §6 原表述） |
+| qwen-code 条目级接线（2026-08-26） | qwen 0.22.0 起 modelProviders 条目 baseUrl 优先于 model.baseUrl：接管改写全部可改写条目（openai/anthropic 协议族；gemini/custom/wrapped 跳过计数）；快照 `provider_urls` 以 envKey 名为键记原始 baseUrl（不存 key 值、不碰 env 段）；还原守卫"仍指本代理才动"；自动建 `qwen-{host}` 一层直连 relay（条目 id 精确匹配、prepend 先于通配）；modalities 准入门接管代开/stop 按原值还原（快照 `provider_modalities`）；接线后需重启 qwen 会话 |
+| 统一上游鉴权链（2026-08-26） | relay.api_key 优先 > via-relay 不透传（回落读档案）> 无 key 的 direct relay 透传客户端 Authorization/x-api-key/anthropic-version > 不带；行为变更（无 key direct relay 从不带头变为透传）记档；透传仅限 direct relay、服务只绑回环；新客户端接入零 key 适配 |

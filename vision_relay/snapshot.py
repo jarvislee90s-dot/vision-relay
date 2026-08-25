@@ -28,6 +28,13 @@ class Snapshot:
     key_ref: str  # key 所在位置描述（非值）
     model: str
     second_hop: str | None = None  # 接管时该 harness 的第二跳工具名（cc-switch / codex-plus）
+    # qwen-code ≥0.22.0 条目级接线（modelProviders[].baseUrl 优先于 model.baseUrl）：
+    # 条目原始 baseUrl 映射，键为 envKey 名（位置引用，非 key 值；无 envKey 时为
+    # "authType|id|index" 复合键）。只存 URL，绝不存 env 段的密钥值。
+    provider_urls: dict[str, str] | None = None
+    # 同键的 modalities 准入门原值（接管代开 image 门，还原按原值回写；
+    # "~absent~" = 原本没有该字段，还原时删除）。空 dict = 全部门本就开着。
+    provider_modalities: dict[str, object] | None = None
     ts: float = 0.0
 
     def __post_init__(self) -> None:
@@ -58,7 +65,7 @@ def save(harness: str, snap: Snapshot) -> None:
     os.replace(tmp, _path())
 
 
-_KNOWN_FIELDS = ("base_url", "key_ref", "model", "second_hop", "ts")
+_KNOWN_FIELDS = ("base_url", "key_ref", "model", "second_hop", "provider_urls", "provider_modalities", "ts")
 
 
 def load() -> dict[str, Snapshot]:

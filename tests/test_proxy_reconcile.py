@@ -98,6 +98,26 @@ class TestMatrix:
         direct = [r for r in cfg.relays if r.base_url == "https://new.upstream.example/api"]
         assert direct, "吸收的新地址必须成为直连 relay"
 
+    def test_absorb_codex_repatches_catalog_modalities(self, env, monkeypatch):
+        """Codex++ 切供应商生成新目录（纯文本模态）后 absorb 重接管：目录须重新补 image，
+        否则 Codex 按 catalog 拒绝 view_image/贴图，图片进不了请求、代理转写收不到图。"""
+        home, cfgdir = env
+        p = os.path.join(str(home), ".codex", "config.toml")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w", encoding="utf-8").write(
+            'base_url = "https://new.upstream.example/v1"\nmodel_catalog_json = "model-catalogs/relay-new.json"\n'
+        )
+        cat = os.path.join(str(home), ".codex", "model-catalogs", "relay-new.json")
+        os.makedirs(os.path.dirname(cat), exist_ok=True)
+        json.dump({"models": [{"slug": "m-text", "input_modalities": ["text"]}]}, open(cat, "w", encoding="utf-8"))
+
+        cfg = ProxyConfig()
+        _set_running(monkeypatch, cfgdir, True)
+        report = reconcile.reconcile(cfg, tool_states=[], expected_wired={"codex"})
+        assert any(a["type"] == "absorb" and a["harness"] == "codex" for a in report["actions"])
+        mods = json.load(open(cat, encoding="utf-8"))["models"][0]["input_modalities"]
+        assert "image" in mods
+
     def test_dead_and_wired_with_routing_on_triggers_restart(self, env, monkeypatch):
         home, cfgdir = env
         _write_harness(home, "claude", "http://127.0.0.1:8787")

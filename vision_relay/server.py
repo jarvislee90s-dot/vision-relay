@@ -130,13 +130,38 @@ def _is_loopback(url: str) -> bool:
     return host in ("localhost", "::1") or host.startswith("127.") or host == "0.0.0.0"
 
 
-def _forward(cfg: RelayConfig, body: dict, stream: bool):
+# 客户端入站鉴权头（透传白名单）：qwen-code 等客户端把 key 以请求头送上门，
+# direct relay 无自有 key 时原样转交上游——代理全程不读、不存 key 值。
+_PASSTHROUGH_HEADER_NAMES = ("Authorization", "x-api-key", "anthropic-version")
+
+
+def _client_auth_headers(headers) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for name in _PASSTHROUGH_HEADER_NAMES:
+        v = headers.get(name)
+        if v:
+            out[name] = v
+    return out
+
+
+def _passthrough_headers_for(relay, client_headers: dict[str, str] | None) -> dict[str, str] | None:
+    """统一鉴权链的透传闸门：via-relay（两层经工具/工具档案回落）绝不透传客户端头
+    （防把 key 泄给工具或与其注入的 key 冲突）；direct relay 且客户端带了头才透传。
+    relay.api_key 优先级更高（在 _forward 内判定）。"""
+    if getattr(relay, "via", None) or not client_headers:
+        return None
+    return client_headers
+
+
+def _forward(cfg: RelayConfig, body: dict, stream: bool, passthrough_headers: dict[str, str] | None = None):
     headers = {}
     if cfg.api_key:
         if cfg.protocol == "anthropic":
             headers = {"x-api-key": cfg.api_key, "anthropic-version": "2023-06-01"}
         else:
             headers = {"Authorization": f"Bearer {cfg.api_key}"}
+    elif passthrough_headers:
+        headers = dict(passthrough_headers)
     path = (
         "/chat/completions" if cfg.protocol == "chat" else "/messages" if cfg.protocol == "anthropic" else "/responses"
     )
@@ -145,7 +170,11 @@ def _forward(cfg: RelayConfig, body: dict, stream: bool):
     trust_env = not _is_loopback(cfg.base_url)
     with httpx.Client(timeout=300.0, trust_env=trust_env) as client:
         resp = client.post(_upstream_url(cfg, path), json=body, headers=headers)
-        return resp.status_code, resp.text
+        # 流式请求上游回 SSE：Content-Type 必须原样透传给客户端——OpenAI SDK 等
+        # 严格客户端按响应头判定 SSE，写死 application/json 会被当作协议错误拒绝
+        ctype = resp.headers.get("content-type") or ""
+        upstream_ctype = "text/event-stream" if "text/event-stream" in ctype else "application/json"
+        return resp.status_code, resp.text, upstream_ctype
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -175,6 +204,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._json_error(400, str(exc))
                 return
         started = time.time()
+        client_auth = _client_auth_headers(self.headers)
         try:
             ir = _PARSERS[proto](body)
             harness = _HARNESS_BY_PROTO.get(proto)
@@ -199,8 +229,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 vlm=vlm_arg,
             )
             out_body = _SERIALIZERS[eff_relay.protocol](result.ir)
+            passthrough = _passthrough_headers_for(relay, client_auth)
             try:
-                status, text = _forward(eff_relay, out_body, ir.stream)
+                status, text, ctype = _forward(eff_relay, out_body, ir.stream, passthrough_headers=passthrough)
             except httpx.ConnectError:
                 # 两层工具端口请求中途死掉：作废缓存、强制按离线重解析、重试一次。
                 # 直连远端自身连不上不重试（与现状一致）。
@@ -212,7 +243,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     raise  # 档案不可读，无处可落
                 eff_relay = eff2
                 out_body = _SERIALIZERS[eff_relay.protocol](result.ir)
-                status, text = _forward(eff_relay, out_body, ir.stream)
+                status, text, ctype = _forward(eff_relay, out_body, ir.stream, passthrough_headers=passthrough)
             log_json(
                 {
                     "event": "proxy_request",
@@ -228,7 +259,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             )
             body_bytes = text.encode("utf-8")
             self.send_response(status)
-            self.send_header("content-type", "application/json")
+            self.send_header("content-type", ctype)
             self.send_header("content-length", str(len(body_bytes)))
             self.end_headers()
             self.wfile.write(body_bytes)

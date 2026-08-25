@@ -177,6 +177,9 @@ def _absorb(cfg: ProxyConfig, harness: str, new_base: str) -> None:
     cfg.relays.append(RelayConfig(name=name, protocol=proto, base_url=new_base, models=["*"]))
     save_config(cfg)  # relay 先落盘；此步失败则中止在接管之前（下轮重试整个 absorb）
     ok = wiring.write_base_url(wiring._path(HOME, harness), wiring.HARNESS_CFG[harness], _expected_base(cfg))
+    if harness == "codex" and ok:
+        # 新上游常伴新 catalog（Codex++ 切供应商重新生成）——重接管须重打模态补丁
+        wiring._patch_codex_catalog_modalities(wiring._path(HOME, harness))
     append_event("absorb", harness, {"new_base_url": new_base, "needs_key": True, "ok": ok})
 
 
@@ -269,7 +272,12 @@ def reconcile(
             if obs["service_alive"] and name in expected_wired:
                 # 服务在跑 + 该接管：始终接管（spec §3）
                 if owner == "ours":
-                    pass  # 幂等：无漂移不写文件
+                    # qwen 0.22.0 条目级接线：全局字段 ours 不代表条目没漂——
+                    # 条目被外部改走时重接管并把新原值吸收进快照（absorb 语义）
+                    if name == "qwen-code":
+                        res = wiring.reconcile_qwen_providers(cfg)
+                        if res:
+                            actions.append({"type": "provider_absorb", "harness": name, "rewritten": res["rewritten"]})
                 elif owner in tools.TOOL_DOSSIERS:
                     if _reclaim(cfg, name, cur or ""):
                         actions.append({"type": "reclaim", "harness": name, "from": cur})
@@ -300,6 +308,12 @@ def reconcile(
                     needs_you.append(
                         {"type": "unresolvable", "harness": name, "hint": "快照缺失且服务未运行：需手选修复目标"}
                     )
+        # qwen 一层直连 relay 维护（漂移吸收后快照已更新，故置于循环之后；
+        # 缺失重建/原值消失清理，与 ensure_tool_relays 同风格）
+        if obs["service_alive"] and "qwen-code" in expected_wired:
+            for n in wiring.ensure_qwen_relays(cfg):
+                actions.append({"type": "relay_added", "name": n})
+                append_event("relay_added", None, {"name": n})
         if actions:
             save_config(cfg)  # relay 增删/吸收落盘（持锁内）
     # 服务重启必须在 config_lock 之外 spawn：子进程 cmd_start 内部的
