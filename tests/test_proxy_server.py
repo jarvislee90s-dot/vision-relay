@@ -209,7 +209,7 @@ def test_proxy_two_layer_responses_preserves_model_and_strips_image(upstream):
         resp = httpx.Client(trust_env=False).post(
             f"http://127.0.0.1:{server_port}/v1/responses",
             json={
-                "model": "kimi-k2.7",
+                "model": "test-model-x",  # 任意未标注名（勿用 kimi 等--启发式目录会建议 image，测的就不是未标注回落了）
                 "input": [
                     {
                         "role": "user",
@@ -223,7 +223,7 @@ def test_proxy_two_layer_responses_preserves_model_and_strips_image(upstream):
         )
         assert resp.status_code == 200
         sent = upstream.received[-1]
-        assert sent["model"] == "kimi-k2.7"  # model 保留
+        assert sent["model"] == "test-model-x"  # model 保留
         assert sent.get("input") is not None  # 同协议（responses input）形态不变
         blob = json.dumps(sent)
         assert "fake description" in blob  # 图片被转写注入

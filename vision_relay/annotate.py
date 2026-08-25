@@ -9,10 +9,9 @@ probe_results 缓存；目录建议（内置名单命中）写 source=catalog；
 
 from __future__ import annotations
 
-import fnmatch
 import time
 
-from .capability import BUILTIN_CAPABILITIES
+from .capability import suggest
 from .config import CAPABILITY_VALUES, ProxyConfig, save_config
 from .locking import config_lock
 from .probe import probe_modality
@@ -95,10 +94,8 @@ def run_probe(
 
 
 def _catalog_suggest(model: str) -> str | None:
-    for pattern, cap in BUILTIN_CAPABILITIES.items():
-        if fnmatch.fnmatch(model, pattern):
-            return cap
-    return None
+    """目录建议（fnmatch 精确表 + 正则启发式统一入口，capability.suggest）。"""
+    return suggest(model)
 
 
 def auto_annotate(
