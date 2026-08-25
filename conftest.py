@@ -11,6 +11,7 @@ class RecordingUpstream:
 
     def __init__(self):
         self.received: list[dict] = []
+        self.received_headers: list[dict] = []
         self._server = None
         self.port = None
         self.content = "ok"
@@ -24,6 +25,7 @@ class RecordingUpstream:
             def do_POST(self):
                 length = int(self.headers.get("content-length", 0))
                 up.received.append(json.loads(self.rfile.read(length)))
+                up.received_headers.append(dict(self.headers))
                 payload = json.dumps({"choices": [{"message": {"content": up.content}}]}, ensure_ascii=False).encode(
                     "utf-8"
                 )

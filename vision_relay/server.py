@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import http.server
 import json
+import threading
 import time
 
 import httpx
 
+from . import route_fallback, tools
 from .cache import DescriptionCache
 from .config import ProxyConfig, RelayConfig, load_config
 from .ir import (
@@ -68,6 +70,17 @@ def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "") -> Rela
         if relay.protocol == inbound_proto:
             return relay
     return RelayConfig(name="default", protocol=inbound_proto, base_url="", api_key="")
+
+
+_SHARED_ROUTE_CACHE: route_fallback.PortCache | None = None
+
+
+def _shared_route_cache() -> route_fallback.PortCache:
+    """handler 拿不到 server 级缓存时的兜底单例（run_server 正常都会挂 route_cache）。"""
+    global _SHARED_ROUTE_CACHE
+    if _SHARED_ROUTE_CACHE is None:
+        _SHARED_ROUTE_CACHE = route_fallback.PortCache()
+    return _SHARED_ROUTE_CACHE
 
 
 def _upstream_url(cfg: RelayConfig, path: str) -> str:
@@ -166,6 +179,10 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             ir = _PARSERS[proto](body)
             harness = _HARNESS_BY_PROTO.get(proto)
             relay = _select_relay(self._cfg, proto, ir.model)
+            # 请求期两层/直连解析（spec §5 工具离线→relay 回落直连）：端口在线经工具；
+            # 离线回落工具档案当前供应商（协议跟随档案，codex++ chat 上游做协议转换）。
+            route_cache = getattr(self.server, "route_cache", None) or _shared_route_cache()
+            eff_relay, fallback = route_fallback.resolve_effective_relay(relay, route_cache)
             # 按 harness 请求级选用 VLM（spec §7.1，I-1）：clients 挂在 pipeline 上
             # （run_server 配套注入），经 process(vlm=...) 请求级注入，不变异共享
             # pipeline.vlm；pipeline 被测试整体替换时无此属性，vlm_arg=None 回落
@@ -181,8 +198,21 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 session_id=extract_session_id(proto, body),
                 vlm=vlm_arg,
             )
-            out_body = _SERIALIZERS[proto](result.ir)
-            status, text = _forward(relay, out_body, ir.stream)
+            out_body = _SERIALIZERS[eff_relay.protocol](result.ir)
+            try:
+                status, text = _forward(eff_relay, out_body, ir.stream)
+            except httpx.ConnectError:
+                # 两层工具端口请求中途死掉：作废缓存、强制按离线重解析、重试一次。
+                # 直连远端自身连不上不重试（与现状一致）。
+                if not getattr(relay, "via", None) or not _is_loopback(eff_relay.base_url):
+                    raise
+                route_cache.invalidate(relay.via)
+                eff2, fallback = route_fallback.resolve_effective_relay(relay, route_cache, force_offline=True)
+                if eff2 is relay:
+                    raise  # 档案不可读，无处可落
+                eff_relay = eff2
+                out_body = _SERIALIZERS[eff_relay.protocol](result.ir)
+                status, text = _forward(eff_relay, out_body, ir.stream)
             log_json(
                 {
                     "event": "proxy_request",
@@ -191,6 +221,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     "stripped": result.stripped,
                     "injected": result.injected,
                     "fail_open": result.fail_open,
+                    "fallback": fallback,
                     "upstream_status": status,
                     "duration_ms": int((time.time() - started) * 1000),
                 }
@@ -241,4 +272,22 @@ def run_server(cfg: ProxyConfig | None = None, handler_cls=ProxyHandler):
     # pipeline.vlm；初始 vlm 复用 clients["_default"]，不再另建冗余 client。
     pipeline.vlm_clients = clients  # type: ignore[attr-defined]
     server.tool_provider_cache = {}  # type: ignore[attr-defined]
+    server.route_cache = route_fallback.PortCache()  # type: ignore[attr-defined]
+    _start_provider_cache_refresher(server)
     return server
+
+
+def _start_provider_cache_refresher(server) -> None:
+    """接活 tool_provider_cache 死钩子：30s 懒刷新 {工具名: 激活供应商名}（能力判定用）。"""
+
+    def loop():
+        while True:
+            try:
+                for st in tools.probe_tools():
+                    if st.online and st.active_provider:
+                        server.tool_provider_cache[st.name] = st.active_provider
+            except Exception:  # noqa: BLE001 - 可观测辅助，不 gate 服务
+                pass
+            time.sleep(30)
+
+    threading.Thread(target=loop, daemon=True).start()

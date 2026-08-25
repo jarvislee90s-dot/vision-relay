@@ -104,7 +104,7 @@ flowchart LR
 |---|---|
 | 服务在跑，接线正确，relay 与工具状态一致 | 不动任何文件（幂等） |
 | 服务在跑，harness 被工具改指工具端口 | 抢回：base_url → 本代理，relay 确认指向该工具；记录事件 |
-| 服务在跑，工具路由关（端口离线） | base_url 保持本代理；relay 回落直连；无直连 relay 则警告 |
+| 服务在跑，工具路由关（端口离线） | base_url 保持本代理；**请求期回落直连**（2026-08-25 落地）：两层 relay 在目标端口死时读工具档案当前供应商真实地址+key 直连，协议跟随档案（CC Switch codex 按 wire_api、Codex++ 按 profile.protocol；chat 上游由本代理做协议转换）；档案不可读保持原 relay（502 可见）+ 警告；端口恢复自动回两层；状态转换记 `relay_fallback` 事件、status 透出 `upstream_effective` |
 | 服务在跑，harness 被改成陌生地址（用户换供应商） | **吸收**：接管回本代理，同时把新地址记为该 harness 的直连上游；GUI 明确告知「检测到上游变为 X，已接管、转发已指向 X」，缺 key 则提醒补 |
 | 服务已死，harness 仍指向本代理 | 进入修复流程 |
 | harness 配置出现新模型 | 不碰 base_url；自动探测/按目录标注 + 被动通知可改（文案双向提醒误标代价） |
@@ -133,6 +133,8 @@ flowchart LR
 1. 一层直连：relay 的 base_url 即答案（本代理配置，必然可得）；
 2. 两层经工具：读工具自身的配置获得当前激活供应商及其 base_url（Codex++ 读其 settings.json；CC Switch 读其配置库，读不到退而调其端口上的状态接口）；
 3. 都失败：诚实显示「由某工具决定（未知）」——不猜。
+
+**工具离线时的转发回落**（2026-08-25，本表第 2 条不可用时转发不中断）：按工具档案（CC Switch providers 表 / Codex++ relayProfiles）解析当前供应商直连目标——TTL 端口缓存判定在线（~2s），转发遇 ConnectError 再强制重解析重试一次；密钥窄豁免见 §13。
 
 显示规则：**优先显示 base_url（端点），拿不到才退到供应商名 / 模型名**。工具探测全部只读，绝不写工具的配置。清单可扩展（TRAE / Kimi 等未来加条目即接入）。
 
@@ -244,7 +246,10 @@ flowchart LR
 | 多写者机制 | 期望状态 + 对账（原子写 / 自方文件锁 / 文件通知监听 / 幂等收敛），不做跨进程排队 |
 | 修复语义 | 全自动：漂移抢回 / 僵死 PID 直接执行；僵尸接线按崩溃前意图推导（路由开 → 重启保持接管；关 → 按快照组合还原）；缺 key 被动提示；仅「快照读不到且服务起不来」才出现手选入口 |
 | 接管组合快照 | 接管时记 base_url + key 位置 + 模型的组合，防外部工具档案污染造成的错位；第二跳归属（CC Switch 也可能路由 Codex）以快照为准、探测兜底 |
-| 真实上游显示 | 直连 = relay base_url；两层 = 读工具激活供应商（Codex++ settings.json / CC Switch 配置库 / 状态接口）；都失败诚实显示未知；优先显示 base_url |
+| 真实上游显示 | 直连 = relay base_url；两层 = 读工具激活供应商（Codex++ settings.json / CC Switch 配置库 / 状态接口）；工具离线 = 回落地址（status `upstream_effective`）；都失败诚实显示未知；优先显示 base_url |
+| 工具离线回落直连 | 两层 relay 端口死时请求期读工具档案当前供应商直连（TTL 端口缓存 + 转发 ConnectError 强制重解析重试一次）；协议跟随档案（wire_api / profile.protocol），chat 上游由本代理做转换；**密钥窄豁免**：档案密钥（ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY / authContents）仅进程内存进转发头，不落盘/不进日志/status/GUI（先例：probe 按 key_ref 取 key） |
+| codex 双工具归属 | 不随机：入站协议确定选线（chat→CC Switch 线 / responses→Codex++ 线）；跨协议不转发 |
+| Codex++ 路由语义 | 不以应用开关/端口判断：profile.protocol="chatCompletions"（上游 chat，需转换）= 开路由；"responses"（上游原生）= 不开路由（直连配置）；official（ChatGPT OAuth）模式不做直连回落 |
 | VLM 分组 | 按 harness（入站协议判组）+ 全局兜底 |
 | 识图记录 | 一级 harness / 二级会话（尽力识别，短名读 harness 会话目录、读不到显示截断 ID）；三段明细；本地留存 7 天可关闭 |
 | 识图提示词 | Tier1/Tier2 默认提示词可在 GUI 自定义、保存、一键恢复默认；测试支持默认/自选 × Tier1/Tier2 四种模式，可选自选测试图（仅诊断用不留痕） |

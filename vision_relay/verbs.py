@@ -10,6 +10,7 @@ import sys
 
 import httpx
 
+from . import route_fallback
 from .config import ProxyConfig, save_config
 from .locking import config_lock
 from .reconcile import observe as _observe_impl
@@ -130,18 +131,27 @@ def status(cfg: ProxyConfig) -> dict:
     from .snapshot import load as load_snapshots
 
     obs = _observe_for_status(cfg)
-    relays = [
-        {
-            "name": r.name,
-            "protocol": r.protocol,
-            "base_url": r.base_url,
-            "via": r.via,
-            "models": r.models,
-            "suppressed": r.name in cfg.routing.suppressed_relays,
-            "has_key": bool(r.api_key),
-        }
-        for r in cfg.relays
-    ]
+    tool_online = {t.get("name"): t.get("online") for t in obs.get("tools", [])}
+    relays = []
+    for r in cfg.relays:
+        # upstream_effective（spec §5 离线回落）：两层经工具=relay 地址；工具离线=档案
+        # 当前供应商真实地址（仅取 base_url，档案 key 绝不进 status 输出）。
+        eff = r.base_url
+        if getattr(r, "via", None) and not tool_online.get(r.via):
+            direct = route_fallback.archive_direct(r.via, r)
+            eff = direct.base_url if direct else None
+        relays.append(
+            {
+                "name": r.name,
+                "protocol": r.protocol,
+                "base_url": r.base_url,
+                "via": r.via,
+                "models": r.models,
+                "suppressed": r.name in cfg.routing.suppressed_relays,
+                "has_key": bool(r.api_key),
+                "upstream_effective": eff,
+            }
+        )
     snaps = load_snapshots()
     obs["relays"] = relays
     obs["snapshots"] = {
