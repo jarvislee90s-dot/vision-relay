@@ -1535,6 +1535,8 @@ git commit -m "feat(gui): overview — status banner, dynamic chains, drawers, a
 
 ### Task 9: 模型能力页（三元组表 + 切换/保存 + 行内重测 + 探测全部 + 拉清单）
 
+> **2026-08-25 修订（探测体验重做）**：本任务原稿的「重测无反馈、批量走单次 `--all-untested`、全部行平铺」已被取代——非当前激活供应商行默认折叠（重测禁用+tooltip，`is_current` 随 models-scan 透出）；重测防连点+行内 spinner+状态行轻提示（仅不可达弹窗）；「探测全部未测」改前端逐行驱动（实时进度 N/M、实测列逐行刷新、结束弹汇总）；拉清单空结果解释回环原因；busy 行键改三元组 key；探针判定本身改纯接收（见 spec §5 与 2026-08-25 提交系列）。下方原稿保留为历史记录。
+
 **Files:**
 - Create: `gui/src/pages/Models.tsx`
 
