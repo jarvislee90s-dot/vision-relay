@@ -1,4 +1,8 @@
-"""verifiable modality probe (spec §5 模型能力标注): red-pixel PNG + three-way verdict."""
+"""verifiable modality probe (spec §5): red-pixel PNG + acceptance-based verdict.
+
+纯接收判定（2026-08-25 决策，参考 dsh-image-vision「检测」机制）：200 即 image，
+回答内容一律不看；报错含「不支持」类模态语义 -> text_only；其余不下结论。
+"""
 
 import json
 import zlib
@@ -22,44 +26,32 @@ class TestVerdict:
     def _classify(self, status, text):
         return probe._verdict(status, text)
 
-    def test_200_correct_color_means_image(self):
+    def test_200_means_image_regardless_of_answer(self):
+        # 接收判定：带图请求被接受即识图；thinking-only 正文为空同样算接受
         assert self._classify(200, "红色") == "image"
         assert self._classify(200, "It is RED") == "image"
-
-    def test_200_wrong_answer_means_text_only(self):
-        assert self._classify(200, "蓝色") == "text_only"  # 200 但没读图
-        assert self._classify(200, "我不知道") == "text_only"  # 吞图
+        assert self._classify(200, "蓝色") == "image"  # 旧「答错颜色->text_only」已废弃（用户拍板）
+        assert self._classify(200, "我不知道") == "image"  # 吞图降级同样废弃
+        assert self._classify(200, "") == "image"
 
     def test_modality_error_means_text_only(self):
         assert (
             self._classify(400, json.dumps({"error": {"message": "model does not support image input"}})) == "text_only"
         )
         assert self._classify(400, "This model does not support vision content") == "text_only"
+        assert self._classify(400, "该模型不支持图片输入") == "text_only"
+        assert self._classify(400, "此模型为多模态受限模型") == "text_only"
 
-    def test_auth_notfound_5xx_timeout_are_inconclusive(self):
+    def test_format_errors_are_inconclusive_not_text_only(self):
+        # 我方图片格式/尺寸类报错 != 模型不识图，不得误判 text_only（旧裸词 "image" 会误伤）
+        assert self._classify(400, "invalid image format") is None
+        assert self._classify(413, "image too large") is None
+
+    def test_auth_notfound_5xx_are_inconclusive(self):
         assert self._classify(401, "unauthorized") is None
         assert self._classify(403, "forbidden") is None
         assert self._classify(404, "model not found") is None
         assert self._classify(500, "oops") is None
-        assert self._classify(200, None) is None  # 解析失败=含糊
-
-    def test_english_substring_words_not_misjudged_image(self):
-        # "hundred"/"credit" 含子串 red 但不是颜色词 → 不得误判 image（词边界）
-        assert self._classify(200, "hundred") == "text_only"
-        assert self._classify(200, "credit balance: 0") == "text_only"
-
-    def test_chinese_substring_and_english_word_still_match(self):
-        assert self._classify(200, "深红色") == "image"  # 中文保持子串
-        assert self._classify(200, "It is RED") == "image"  # 英文整词（大小写不敏感）
-
-
-class TestTextSniffWordBoundary:
-    def test_hundred_credit_not_sniffed_as_red(self):
-        assert probe._extract_from_text("chat", "total: hundred credits") is None
-
-    def test_standalone_red_sniffed(self):
-        assert probe._extract_from_text("chat", 'the color is "red".') == "红"  # 引号/句读不破坏词边界
-        assert probe._extract_from_text("chat", "红色") == "红"
 
 
 class TestAnthropicUrl:
@@ -68,10 +60,6 @@ class TestAnthropicUrl:
 
         class _Resp:
             status_code = 401
-
-            def json(self):
-                return {}
-
             text = ""
 
         def fake_post(url, **kw):
@@ -113,11 +101,7 @@ class TestProbeCall:
 
         class _Resp:
             status_code = 200
-
-            def json(self):
-                return {"choices": [{"message": {"content": "红色"}}]}
-
-            text = '{"ok":1}'
+            text = '{"choices": [{"message": {"content": "红色"}}]}'
 
         def fake_post(url, json=None, headers=None, timeout=None, trust_env=None):
             seen["url"], seen["body"], seen["headers"] = url, json, headers
@@ -131,4 +115,16 @@ class TestProbeCall:
         assert content[0]["type"] == "text" and "颜色" in content[0]["text"]
         assert content[1]["type"] == "image_url" and content[1]["image_url"]["url"].startswith("data:image/png;base64,")
         assert seen["headers"]["Authorization"] == "Bearer sk-k"
-        # 结果已按 (provider, model) 缓存 —— 由调用方写入 probe_results；本函数只回判定
+        # 结果已按 (provider, model) 缓存 -- 由调用方写入 probe_results；本函数只回判定
+
+    def test_200_thinking_only_body_is_image(self, monkeypatch):
+        # 思考模型把 max_tokens 烧在 thinking 块上、无 text 块：接收判定下仍是 image
+        class _Resp:
+            status_code = 200
+            text = '{"content": [{"type": "thinking", "thinking": "我们被要求只回答一个颜色词，但图片是unsupported，看不到。"}]}'
+
+        def fake_post(url, **kw):
+            return _Resp()
+
+        monkeypatch.setattr(probe.httpx, "post", fake_post)
+        assert probe.probe_modality("https://x", "", "m", "anthropic") == "image"
