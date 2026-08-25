@@ -113,6 +113,8 @@ def test_models_scan_reads_matrix_without_port_probing(cfg, monkeypatch):
         ("Openrouter", "gpt-5"),
     ]
     assert calls == []  # 不探端口
+    # is_current 透出（2026-08-25）：GUI 折叠非当前供应商行 + 前端批量探测筛候选
+    assert [r["is_current"] for r in rows] == [True, True, False]
 
 
 def test_scan_triples_shadow_bucket_fallback(cfg, monkeypatch):
@@ -562,6 +564,19 @@ class TestModelsFetch:
         out = verbs.models_fetch(cfg)
         assert out["ok"] is True and out["data"]["providers"]["r"] == []
         assert out["data"]["errors"]["r"]
+
+    def test_loopback_and_suppressed_relays_reported_in_skipped(self, tmp_path, monkeypatch):
+        """回环/被抑制 relay 不拉但要在 skipped 里说明原因（GUI 据此弹「清单在工具界面」文案）。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig()
+        cfg.relays.append(RelayConfig(name="cc", protocol="chat", base_url="http://127.0.0.1:15721", models=["*"]))
+        cfg.relays.append(RelayConfig(name="quiet", protocol="chat", base_url="https://up.example", models=["*"]))
+        cfg.routing.suppressed_relays = ["quiet"]
+        monkeypatch.setattr(verbs.httpx, "get", lambda url, **k: (_ for _ in ()).throw(AssertionError("不应发起请求")))
+        out = verbs.models_fetch(cfg)
+        assert out["ok"] is True
+        assert out["data"]["providers"] == {} and out["data"]["errors"] == {}
+        assert out["data"]["skipped"] == {"cc": "loopback", "quiet": "suppressed"}
 
 
 class TestSettingsSetHardening:
