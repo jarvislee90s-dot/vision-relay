@@ -10,6 +10,7 @@ import sys
 
 import httpx
 
+from . import route_fallback
 from .config import ProxyConfig, save_config
 from .locking import config_lock
 from .reconcile import observe as _observe_impl
@@ -101,6 +102,7 @@ def _scan_triples(cfg: ProxyConfig) -> list[dict]:
                         "value": value,
                         "source": source,
                         "probe_cached": _lookup_probe(cfg, pr.provider, m),
+                        "is_current": pr.is_current,  # GUI 折叠非当前供应商行 + 前端批量探测筛候选
                     }
                 )
     return rows
@@ -130,18 +132,27 @@ def status(cfg: ProxyConfig) -> dict:
     from .snapshot import load as load_snapshots
 
     obs = _observe_for_status(cfg)
-    relays = [
-        {
-            "name": r.name,
-            "protocol": r.protocol,
-            "base_url": r.base_url,
-            "via": r.via,
-            "models": r.models,
-            "suppressed": r.name in cfg.routing.suppressed_relays,
-            "has_key": bool(r.api_key),
-        }
-        for r in cfg.relays
-    ]
+    tool_online = {t.get("name"): t.get("online") for t in obs.get("tools", [])}
+    relays = []
+    for r in cfg.relays:
+        # upstream_effective（spec §5 离线回落）：两层经工具=relay 地址；工具离线=档案
+        # 当前供应商真实地址（仅取 base_url，档案 key 绝不进 status 输出）。
+        eff = r.base_url
+        if getattr(r, "via", None) and not tool_online.get(r.via):
+            direct = route_fallback.archive_direct(r.via, r)
+            eff = direct.base_url if direct else None
+        relays.append(
+            {
+                "name": r.name,
+                "protocol": r.protocol,
+                "base_url": r.base_url,
+                "via": r.via,
+                "models": r.models,
+                "suppressed": r.name in cfg.routing.suppressed_relays,
+                "has_key": bool(r.api_key),
+                "upstream_effective": eff,
+            }
+        )
     snaps = load_snapshots()
     obs["relays"] = relays
     obs["snapshots"] = {
@@ -553,12 +564,20 @@ def probe_all_untested(cfg: ProxyConfig) -> dict:
 
 
 def models_fetch(cfg: ProxyConfig) -> dict:
-    """可选：从上游 /v1/models 拉模型 ID 清单（spec §5；只补清单，能力以探针/目录为准）。"""
+    """可选：从上游 /v1/models 拉模型 ID 清单（spec §5；只补清单，能力以探针/目录为准）。
+
+    回环/被抑制 relay 不拉（工具端口两层，清单在工具自己界面上），但在 skipped 里
+    透出原因——GUI 据此解释「为什么拉不到」而不是弹一个空对象。"""
     providers: dict[str, list[str]] = {}
     errors: dict[str, str] = {}
+    skipped: dict[str, str] = {}
     for r in cfg.relays:
-        if r.name in cfg.routing.suppressed_relays or not r.base_url or r.base_url.startswith("http://127.0.0.1"):
-            continue  # 工具端口两层不拉（清单在工具自己界面上）；只拉直连上游
+        if r.name in cfg.routing.suppressed_relays:
+            skipped[r.name] = "suppressed"
+            continue
+        if not r.base_url or r.base_url.startswith("http://127.0.0.1"):
+            skipped[r.name] = "loopback"
+            continue
         url = r.base_url.rstrip("/") + "/models"
         headers = {"Authorization": f"Bearer {r.api_key}"} if r.api_key else {}
         try:
@@ -571,4 +590,4 @@ def models_fetch(cfg: ProxyConfig) -> dict:
         except Exception as exc:  # noqa: BLE001 - 单个上游失败不致命
             providers[r.name] = []
             errors[r.name] = str(exc)[:120]
-    return envelope(True, {"providers": providers, "errors": errors})
+    return envelope(True, {"providers": providers, "errors": errors, "skipped": skipped})

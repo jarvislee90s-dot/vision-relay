@@ -56,6 +56,17 @@ class TestAutoAnnotate:
         assert "zzz-unknown" not in cfg.model_capabilities.get("claude", {}).get("bigmodel", {})  # 未标注=不落键
         assert any(r["model"] == "zzz-unknown" and r["result"] is None for r in report)
 
+    def test_heuristic_catalog_suggestion_when_probe_inconclusive(self, tmp_path, monkeypatch):
+        """探针无结论时，正则启发式目录（大小写不敏感）作为回落写入 source=catalog。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        cfg = ProxyConfig.from_dict({})
+        scan = [{"harness": "claude", "provider": "any", "model": "Qwen3-VL-Plus"}]
+        monkeypatch.setattr(annotate, "_probe_one", lambda provider, model, *a: None)
+        report = annotate.auto_annotate(cfg, scan, probe_targets={"Qwen3-VL-Plus": ("http://t", "", "chat")})
+        assert cfg.model_capabilities["claude"]["any"]["Qwen3-VL-Plus"] == "image"
+        assert cfg.capability_sources["claude"]["any"]["Qwen3-VL-Plus"] == "catalog"
+        assert report[0]["by"] == "catalog"
+
     def test_existing_user_value_untouched(self, tmp_path, monkeypatch):
         monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
         cfg = ProxyConfig.from_dict(

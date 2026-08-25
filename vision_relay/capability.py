@@ -11,6 +11,7 @@ judge 只返回 "image" | "text_only"：存量 "vision" 在 config 层(from_dict
 from __future__ import annotations
 
 import fnmatch
+import re
 
 from .config import ProxyConfig
 
@@ -27,6 +28,27 @@ BUILTIN_CAPABILITIES: dict[str, str] = {
     "kimi-k2.7-code*": "image",
     "openrouter/deepseek/*": "text_only",
 }
+
+# 正则启发式（2026-08-25，借鉴 dsh-image-vision guessVision）：fnmatch 表未命中才走；
+# 大小写不敏感（fnmatch 大小写敏感盖不住 "Kimi-K2.7-Code" 这类形态）。负向词边界优先
+# 于正向--语音/嵌入/重排与识图互斥，且 text_only 是安全侧。
+_VISION_RE = re.compile(
+    r"vision|vl|4o|omni|gpt-4|claude|gemini|glm-4v|llava|pixtral|kimi|qwen.*(?:vl|omni|image|vision|ocr)",
+    re.IGNORECASE,
+)
+_TEXT_RE = re.compile(r"(?:^|[-_])(?:tts|asr|voice|whisper|embedding|rerank)(?:[-_]|$)", re.IGNORECASE)
+
+
+def suggest(model: str) -> str | None:
+    """内置目录建议：fnmatch 精确表优先，其后正则启发式；都不中返回 None（未标注）。"""
+    for pattern, cap in BUILTIN_CAPABILITIES.items():
+        if fnmatch.fnmatch(model, pattern):
+            return cap
+    if _TEXT_RE.search(model):
+        return "text_only"
+    if _VISION_RE.search(model):
+        return "image"
+    return None
 
 
 def _norm(cap: str) -> str:
@@ -119,10 +141,10 @@ class CapabilityTable:
                 if hit is not None:
                     return _norm(hit[0])
 
-        # 4) 内置建议名单（模式匹配）
-        for pattern, cap in BUILTIN_CAPABILITIES.items():
-            if fnmatch.fnmatch(model, pattern):
-                return cap
+        # 4) 内置建议名单（fnmatch 精确表 + 正则启发式，suggest 统一入口）
+        hit = suggest(model)
+        if hit is not None:
+            return hit
 
         # 5) 未标注 -> 开关（默认 text_only 安全侧）
         return _norm(cfg.routing.unknown_default)

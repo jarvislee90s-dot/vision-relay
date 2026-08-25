@@ -35,6 +35,32 @@ def _is_retryable(exc: Exception) -> bool:
     return isinstance(exc, VLMError) and exc.reason in VLM_RETRYABLE
 
 
+def _api_root(base_url: str, fmt: str) -> str:
+    """base_url 允许填 API 根或完整端点（如 https://host/v1/chat/completions）——
+    客户端会拼回端点后缀，因此完整端点需先剥掉，避免双拼（/chat/completions/chat/completions → 404 HTML）。
+    2026-08-25 实测触发：opencode.ai/zen 配置填了完整端点。"""
+    suffix = "/messages" if fmt == "anthropic" else "/chat/completions"
+    root = base_url.rstrip("/")
+    if root.endswith(suffix):
+        return root[: -len(suffix)]
+    return root
+
+
+def _http_error(resp: httpx.Response) -> VLMError:
+    """非 200 响应 → VLMError。上游返回 HTML 网页（404 着陆页等）时给可读提示，
+    而不是把原始 HTML 倾倒进错误信息（常见诱因：base_url 填了完整端点被双拼）。"""
+    body = resp.text or ""
+    ctype = resp.headers.get("content-type", "")
+    if "text/html" in ctype or body.lstrip().lower().startswith(("<!doctype", "<html")):
+        return VLMError(
+            _classify(resp.status_code),
+            f"上游返回 HTML 网页而非 JSON API（HTTP {resp.status_code} · {ctype}）——"
+            "请检查 base URL 应为 API 根路径（如 https://host/v1），不要包含 /chat/completions 等端点后缀。"
+            f"响应开头: {body[:120]}",
+        )
+    return VLMError(_classify(resp.status_code), body[:200])
+
+
 class VLMClient:
     def __init__(self, cfg: VLMConfig):
         self.cfg = cfg
@@ -62,7 +88,7 @@ class VLMClient:
         }
         resp = self._http.post(url, json=body, headers={})
         if resp.status_code != 200:
-            raise VLMError(_classify(resp.status_code), resp.text[:200])
+            raise _http_error(resp)
         return self._parse_response(resp, self._chat_text)
 
     # -- prompt ---------------------------------------------------------------
@@ -114,7 +140,7 @@ class VLMClient:
         return desc
 
     def _describe_chat(self, image: ImageBlock, prompt: str) -> str:
-        url = self.cfg.base_url.rstrip("/") + "/chat/completions"
+        url = _api_root(self.cfg.base_url, "chat") + "/chat/completions"
         body = {
             "model": self.cfg.model,
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, self._image_content(image)]}],
@@ -123,11 +149,11 @@ class VLMClient:
         headers = {"Authorization": f"Bearer {self.cfg.api_key}"} if self.cfg.api_key else {}
         resp = self._http.post(url, json=body, headers=headers)
         if resp.status_code != 200:
-            raise VLMError(_classify(resp.status_code), resp.text[:200])
+            raise _http_error(resp)
         return self._parse_response(resp, self._chat_text)
 
     def _describe_anthropic(self, image: ImageBlock, prompt: str) -> str:
-        url = self.cfg.base_url.rstrip("/") + "/messages"
+        url = _api_root(self.cfg.base_url, "anthropic") + "/messages"
         body = {
             "model": self.cfg.model,
             "max_tokens": self.cfg.max_tokens,
@@ -151,7 +177,7 @@ class VLMClient:
         headers = {"x-api-key": self.cfg.api_key, "anthropic-version": "2023-06-01"} if self.cfg.api_key else {}
         resp = self._http.post(url, json=body, headers=headers)
         if resp.status_code != 200:
-            raise VLMError(_classify(resp.status_code), resp.text[:200])
+            raise _http_error(resp)
         return self._parse_response(resp, self._anthropic_text)
 
     @staticmethod

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import http.server
 import json
+import threading
 import time
 
 import httpx
 
+from . import route_fallback, tools
 from .cache import DescriptionCache
 from .config import ProxyConfig, RelayConfig, load_config
 from .ir import (
@@ -70,6 +72,17 @@ def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "") -> Rela
     return RelayConfig(name="default", protocol=inbound_proto, base_url="", api_key="")
 
 
+_SHARED_ROUTE_CACHE: route_fallback.PortCache | None = None
+
+
+def _shared_route_cache() -> route_fallback.PortCache:
+    """handler 拿不到 server 级缓存时的兜底单例（run_server 正常都会挂 route_cache）。"""
+    global _SHARED_ROUTE_CACHE
+    if _SHARED_ROUTE_CACHE is None:
+        _SHARED_ROUTE_CACHE = route_fallback.PortCache()
+    return _SHARED_ROUTE_CACHE
+
+
 def _upstream_url(cfg: RelayConfig, path: str) -> str:
     """按协议拼接上游 URL。
 
@@ -117,13 +130,38 @@ def _is_loopback(url: str) -> bool:
     return host in ("localhost", "::1") or host.startswith("127.") or host == "0.0.0.0"
 
 
-def _forward(cfg: RelayConfig, body: dict, stream: bool):
+# 客户端入站鉴权头（透传白名单）：qwen-code 等客户端把 key 以请求头送上门，
+# direct relay 无自有 key 时原样转交上游——代理全程不读、不存 key 值。
+_PASSTHROUGH_HEADER_NAMES = ("Authorization", "x-api-key", "anthropic-version")
+
+
+def _client_auth_headers(headers) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for name in _PASSTHROUGH_HEADER_NAMES:
+        v = headers.get(name)
+        if v:
+            out[name] = v
+    return out
+
+
+def _passthrough_headers_for(relay, client_headers: dict[str, str] | None) -> dict[str, str] | None:
+    """统一鉴权链的透传闸门：via-relay（两层经工具/工具档案回落）绝不透传客户端头
+    （防把 key 泄给工具或与其注入的 key 冲突）；direct relay 且客户端带了头才透传。
+    relay.api_key 优先级更高（在 _forward 内判定）。"""
+    if getattr(relay, "via", None) or not client_headers:
+        return None
+    return client_headers
+
+
+def _forward(cfg: RelayConfig, body: dict, stream: bool, passthrough_headers: dict[str, str] | None = None):
     headers = {}
     if cfg.api_key:
         if cfg.protocol == "anthropic":
             headers = {"x-api-key": cfg.api_key, "anthropic-version": "2023-06-01"}
         else:
             headers = {"Authorization": f"Bearer {cfg.api_key}"}
+    elif passthrough_headers:
+        headers = dict(passthrough_headers)
     path = (
         "/chat/completions" if cfg.protocol == "chat" else "/messages" if cfg.protocol == "anthropic" else "/responses"
     )
@@ -132,7 +170,11 @@ def _forward(cfg: RelayConfig, body: dict, stream: bool):
     trust_env = not _is_loopback(cfg.base_url)
     with httpx.Client(timeout=300.0, trust_env=trust_env) as client:
         resp = client.post(_upstream_url(cfg, path), json=body, headers=headers)
-        return resp.status_code, resp.text
+        # 流式请求上游回 SSE：Content-Type 必须原样透传给客户端——OpenAI SDK 等
+        # 严格客户端按响应头判定 SSE，写死 application/json 会被当作协议错误拒绝
+        ctype = resp.headers.get("content-type") or ""
+        upstream_ctype = "text/event-stream" if "text/event-stream" in ctype else "application/json"
+        return resp.status_code, resp.text, upstream_ctype
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -162,10 +204,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._json_error(400, str(exc))
                 return
         started = time.time()
+        client_auth = _client_auth_headers(self.headers)
         try:
             ir = _PARSERS[proto](body)
             harness = _HARNESS_BY_PROTO.get(proto)
             relay = _select_relay(self._cfg, proto, ir.model)
+            # 请求期两层/直连解析（spec §5 工具离线→relay 回落直连）：端口在线经工具；
+            # 离线回落工具档案当前供应商（协议跟随档案，codex++ chat 上游做协议转换）。
+            route_cache = getattr(self.server, "route_cache", None) or _shared_route_cache()
+            eff_relay, fallback = route_fallback.resolve_effective_relay(relay, route_cache)
             # 按 harness 请求级选用 VLM（spec §7.1，I-1）：clients 挂在 pipeline 上
             # （run_server 配套注入），经 process(vlm=...) 请求级注入，不变异共享
             # pipeline.vlm；pipeline 被测试整体替换时无此属性，vlm_arg=None 回落
@@ -181,8 +228,22 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 session_id=extract_session_id(proto, body),
                 vlm=vlm_arg,
             )
-            out_body = _SERIALIZERS[proto](result.ir)
-            status, text = _forward(relay, out_body, ir.stream)
+            out_body = _SERIALIZERS[eff_relay.protocol](result.ir)
+            passthrough = _passthrough_headers_for(relay, client_auth)
+            try:
+                status, text, ctype = _forward(eff_relay, out_body, ir.stream, passthrough_headers=passthrough)
+            except httpx.ConnectError:
+                # 两层工具端口请求中途死掉：作废缓存、强制按离线重解析、重试一次。
+                # 直连远端自身连不上不重试（与现状一致）。
+                if not getattr(relay, "via", None) or not _is_loopback(eff_relay.base_url):
+                    raise
+                route_cache.invalidate(relay.via)
+                eff2, fallback = route_fallback.resolve_effective_relay(relay, route_cache, force_offline=True)
+                if eff2 is relay:
+                    raise  # 档案不可读，无处可落
+                eff_relay = eff2
+                out_body = _SERIALIZERS[eff_relay.protocol](result.ir)
+                status, text, ctype = _forward(eff_relay, out_body, ir.stream, passthrough_headers=passthrough)
             log_json(
                 {
                     "event": "proxy_request",
@@ -191,13 +252,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     "stripped": result.stripped,
                     "injected": result.injected,
                     "fail_open": result.fail_open,
+                    "fallback": fallback,
                     "upstream_status": status,
                     "duration_ms": int((time.time() - started) * 1000),
                 }
             )
             body_bytes = text.encode("utf-8")
             self.send_response(status)
-            self.send_header("content-type", "application/json")
+            self.send_header("content-type", ctype)
             self.send_header("content-length", str(len(body_bytes)))
             self.end_headers()
             self.wfile.write(body_bytes)
@@ -241,4 +303,22 @@ def run_server(cfg: ProxyConfig | None = None, handler_cls=ProxyHandler):
     # pipeline.vlm；初始 vlm 复用 clients["_default"]，不再另建冗余 client。
     pipeline.vlm_clients = clients  # type: ignore[attr-defined]
     server.tool_provider_cache = {}  # type: ignore[attr-defined]
+    server.route_cache = route_fallback.PortCache()  # type: ignore[attr-defined]
+    _start_provider_cache_refresher(server)
     return server
+
+
+def _start_provider_cache_refresher(server) -> None:
+    """接活 tool_provider_cache 死钩子：30s 懒刷新 {工具名: 激活供应商名}（能力判定用）。"""
+
+    def loop():
+        while True:
+            try:
+                for st in tools.probe_tools():
+                    if st.online and st.active_provider:
+                        server.tool_provider_cache[st.name] = st.active_provider
+            except Exception:  # noqa: BLE001 - 可观测辅助，不 gate 服务
+                pass
+            time.sleep(30)
+
+    threading.Thread(target=loop, daemon=True).start()

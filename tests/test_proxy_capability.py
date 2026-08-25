@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from vision_relay.capability import CapabilityTable
+from vision_relay.capability import CapabilityTable, suggest
 from vision_relay.config import ProxyConfig
 
 BUILTIN = {
@@ -145,6 +145,44 @@ class TestTripleResolution:
         cfg = _cfg(probe={"a": {"m": {"result": "image", "ts": 1}}})
         assert t.judge("m", cfg, "claude", "a") == "image"
         assert t.judge("m", cfg, "claude", "b") == "text_only"  # 同名模型不同 provider 不同结果
+
+
+# ---- 2026-08-25: fnmatch 表之后的正则启发式层（借鉴 dsh-image-vision guessVision） ----
+
+
+class TestHeuristicSuggest:
+    def test_regex_covers_case_insensitive_gap(self):
+        # fnmatch 大小写敏感，"Kimi-K2.7-Code" 实际匹配不上 "kimi-k2.7-code*"；正则兜住
+        assert suggest("Kimi-K2.7-Code") == "image"
+        assert suggest("Qwen3-VL-Plus") == "image"
+
+    def test_suffix_and_family_heuristics(self):
+        assert suggest("glm-4v-flash") == "image"
+        assert suggest("llava-1.6-34b") == "image"
+        assert suggest("pixtral-large") == "image"
+        assert suggest("gpt-4o-mini") == "image"
+        assert suggest("gemini-3-pro") == "image"
+        assert suggest("my-model-vision") == "image"
+
+    def test_negative_word_boundary_wins_over_positive(self):
+        # 语音/嵌入/重排类与识图互斥，负向词边界优先（安全侧）
+        assert suggest("qwen2-audio-tts") == "text_only"
+        assert suggest("bge-embedding-large") == "text_only"
+        assert suggest("whisper-large-v3") == "text_only"
+        assert suggest("jina-rerank-v2") == "text_only"
+
+    def test_fnmatch_table_beats_regex(self):
+        assert suggest("deepseek/vl2") == "text_only"  # 厂商前缀形态命中精确表（deepseek/* -> text_only）
+        assert suggest("deepseek-vl2") == "image"  # 无前缀形态表不中，落到正则 vl
+
+    def test_unknown_returns_none(self):
+        assert suggest("fable") is None
+        assert suggest("MiniMax-M3") is None
+
+    def test_resolve_heuristic_sits_between_stored_and_unknown_default(self):
+        # _resolve 第 4 级 = suggest()：启发式命中先于 unknown_default 开关
+        assert CapabilityTable().judge("Qwen3-VL-Plus", _cfg(unknown="text_only"), "claude", "p") == "image"
+        assert CapabilityTable().judge("bge-embedding-large", _cfg(unknown="image"), "claude", "p") == "text_only"
 
 
 class TestLadderThreeStoredNonUser:

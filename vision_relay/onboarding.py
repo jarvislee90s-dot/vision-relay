@@ -6,14 +6,13 @@ capability_confirmed 置位后后续全自动。交互键盘可注入(测试用)
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import re
 import sys
 from dataclasses import dataclass, field
 
 from . import wiring
-from .capability import BUILTIN_CAPABILITIES
+from .capability import suggest
 from .config import save_config
 
 # 捕获 (变量名, 模型名):model.xxx / 带引号 "model" "name"(JSON 键)/ 裸 model(TOML/env 后缀)。
@@ -114,10 +113,7 @@ def scan_model_groups(cfg) -> list[ModelGroup]:
 
 
 def _default_cap(model: str) -> str:
-    for pat, cap in BUILTIN_CAPABILITIES.items():
-        if fnmatch.fnmatch(model, pat):
-            return cap
-    return "text_only"
+    return suggest(model) or "text_only"
 
 
 def _map_key(k: str) -> str:

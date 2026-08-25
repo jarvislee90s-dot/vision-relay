@@ -208,3 +208,89 @@ class TestRestoreOnStop:
         open(p, "w", encoding="utf-8").write(json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://elsewhere.example"}}))
         wiring.wiring_restore_on_stop(ProxyConfig())
         assert json.load(open(p, encoding="utf-8"))["env"]["ANTHROPIC_BASE_URL"] == "https://elsewhere.example"
+
+
+def _write_codex_catalog(home, models):
+    """codex config.toml 带 model_catalog_json 引用 + 对应目录文件；返回目录路径。"""
+    p = wiring._path(str(home), "codex")
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    open(p, "w", encoding="utf-8").write(
+        'model = "gpt-5"\nbase_url = "http://127.0.0.1:57321/v1"\nmodel_catalog_json = "model-catalogs/relay-x.json"\n'
+    )
+    cat = os.path.join(str(home), ".codex", "model-catalogs", "relay-x.json")
+    os.makedirs(os.path.dirname(cat), exist_ok=True)
+    json.dump({"models": models}, open(cat, "w", encoding="utf-8"))
+    return cat
+
+
+_CATALOG_MODELS = [
+    {"slug": "m-text", "input_modalities": ["text"]},
+    {"slug": "m-image", "input_modalities": ["text", "image"]},
+    {"slug": "m-none"},
+]
+
+
+class TestCodexCatalogModalities:
+    """接管期目录模态补丁：Codex 按 catalog 的 input_modalities 放行 view_image/贴图，
+    纯文本标注把图片挡在请求之外（代理转写收不到图）。接管时统一补 image，stop 还原。"""
+
+    def _env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        return ProxyConfig()
+
+    def test_patch_adds_image_to_all_models(self, tmp_path, monkeypatch):
+        cfg = self._env(tmp_path, monkeypatch)
+        cat = _write_codex_catalog(tmp_path, [dict(m) for m in _CATALOG_MODELS])
+        msgs = wiring.wiring_backup_and_rewrite(cfg)
+        mods = {m["slug"]: m.get("input_modalities") for m in json.load(open(cat, encoding="utf-8"))["models"]}
+        assert "image" in mods["m-text"]
+        assert mods["m-image"].count("image") == 1  # 已支持者不重复加
+        assert "image" in mods["m-none"]  # 缺字段视为可补
+        assert os.path.exists(cat + wiring.BAK_SUFFIX)
+        assert any("catalog" in m for m in msgs)
+
+    def test_patch_idempotent_backup_keeps_original(self, tmp_path, monkeypatch):
+        cfg = self._env(tmp_path, monkeypatch)
+        cat = _write_codex_catalog(tmp_path, [dict(m) for m in _CATALOG_MODELS])
+        wiring.wiring_backup_and_rewrite(cfg)
+        wiring.wiring_backup_and_rewrite(cfg)
+        orig = json.load(open(cat + wiring.BAK_SUFFIX, encoding="utf-8"))
+        assert orig["models"][0]["input_modalities"] == ["text"]  # 备份始终是首次接管前内容
+        cur = json.load(open(cat, encoding="utf-8"))
+        assert cur["models"][0]["input_modalities"] == ["text", "image"]
+
+    def test_stop_restores_catalog(self, tmp_path, monkeypatch):
+        cfg = self._env(tmp_path, monkeypatch)
+        cat = _write_codex_catalog(tmp_path, [dict(m) for m in _CATALOG_MODELS])
+        wiring.wiring_backup_and_rewrite(cfg)
+        msgs = wiring.wiring_restore_on_stop(cfg)
+        mods = {m["slug"]: m.get("input_modalities") for m in json.load(open(cat, encoding="utf-8"))["models"]}
+        assert mods["m-text"] == ["text"]  # 还原为原始标注
+        assert not os.path.exists(cat + wiring.BAK_SUFFIX)
+        assert any("catalog" in m for m in msgs)
+
+    def test_stop_skips_catalog_when_base_url_not_ours(self, tmp_path, monkeypatch):
+        cfg = self._env(tmp_path, monkeypatch)
+        cat = _write_codex_catalog(tmp_path, [dict(m) for m in _CATALOG_MODELS])
+        wiring.wiring_backup_and_rewrite(cfg)
+        p = wiring._path(str(tmp_path), "codex")
+        wiring.write_base_url(p, wiring.HARNESS_CFG["codex"], "https://elsewhere.example/v1")
+        wiring.wiring_restore_on_stop(cfg)
+        mods = {m["slug"]: m.get("input_modalities") for m in json.load(open(cat, encoding="utf-8"))["models"]}
+        assert "image" in mods["m-text"]  # 守卫生效：目录补丁与备份原样保留
+        assert os.path.exists(cat + wiring.BAK_SUFFIX)
+
+    def test_no_catalog_reference_is_noop(self, tmp_path, monkeypatch):
+        cfg = self._env(tmp_path, monkeypatch)
+        _write_harness(tmp_path, "codex", "http://127.0.0.1:57321/v1")
+        msgs = wiring.wiring_backup_and_rewrite(cfg)
+        assert not any("catalog" in m for m in msgs)
+
+    def test_invalid_catalog_json_skipped(self, tmp_path, monkeypatch):
+        cfg = self._env(tmp_path, monkeypatch)
+        cat = _write_codex_catalog(tmp_path, [])
+        open(cat, "w", encoding="utf-8").write("{not json")
+        msgs = wiring.wiring_backup_and_rewrite(cfg)  # 不抛异常
+        assert not any("catalog" in m for m in msgs)
+        assert not os.path.exists(cat + wiring.BAK_SUFFIX)

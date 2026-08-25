@@ -1,8 +1,14 @@
+use std::io::Read;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::Emitter;
 use tauri::Manager;
+
+/// core 子进程最长等待。无超时的 wait 会把「core 挂死」变成 GUI 永远「探测中…」（2026-08-25）。
+const CORE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[tauri::command]
 fn which_core() -> Option<String> {
@@ -46,12 +52,41 @@ fn spawn_core(core: &str, args: &[String], stdin: Option<String>) -> Result<Stri
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(data.as_bytes());
             let _ = si.flush();
+        } // si 在此 drop 关闭管道，core 读到 stdin EOF
+    }
+    // stdout/stderr 各起读线程攒字节：管道缓冲(64KB 级)写满会反压阻塞子进程，
+    // 且超时 kill 前主循环不能占着读端
+    let out_pipe = child.stdout.take().map(|mut p| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = p.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let err_pipe = child.stderr.take().map(|mut p| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = p.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let deadline = Instant::now() + CORE_TIMEOUT;
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(_) => break,
+            None if Instant::now() > deadline => {
+                let _ = child.kill();
+                let verb = args.first().map(String::as_str).unwrap_or(core);
+                return Err(format!("core 超时（{}s）已被终止：{verb}", CORE_TIMEOUT.as_secs()));
+            }
+            None => std::thread::sleep(Duration::from_millis(50)),
         }
     }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let out_buf = out_pipe.and_then(|t| t.join().ok()).unwrap_or_default();
+    let err_buf = err_pipe.and_then(|t| t.join().ok()).unwrap_or_default();
+    let stdout = String::from_utf8_lossy(&out_buf).to_string();
     if stdout.trim().is_empty() {
-        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let stderr = String::from_utf8_lossy(&err_buf).to_string();
         return Err(format!("core produced no output; stderr: {stderr}"));
     }
     Ok(stdout)

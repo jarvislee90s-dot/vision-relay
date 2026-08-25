@@ -132,6 +132,70 @@ def test_describe_anthropic_malformed_content_raises_parse():
     assert exc.value.reason == "PARSE"
 
 
+# ---- 2026-08-25 修正：base_url 填了完整端点时的双拼 + HTML 倾倒 ----
+# 实测（opencode.ai/zen）：base_url=https://…/v1/chat/completions 时客户端再拼一次
+# /chat/completions → …/chat/completions/chat/completions → 404 HTML 页面被当错误倾倒。
+
+
+def test_chat_base_url_full_endpoint_no_double_suffix():
+    """base_url 含完整 /chat/completions 端点时不再双拼（回归：用户把完整端点填进 base_url）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions", (
+            request.url.path
+        )  # 不能是 .../chat/completions/chat/completions
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    cfg = VLMConfig(model="qwen-vl-max", base_url="https://dashscope.example/v1/chat/completions", api_key="k")
+    client = VLMClient(cfg)
+    client._http = httpx.Client(transport=httpx.MockTransport(handler))
+    assert client.describe(ImageBlock(url="data:image/png;base64,QUJD")) == "ok"
+
+
+def test_anthropic_base_url_full_endpoint_no_double_suffix():
+    """anthropic 格式 base_url 含完整 /messages 端点时同样不双拼。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/messages", request.url.path
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "ok"}]})
+
+    cfg = VLMConfig(
+        model="qwen-vl-max", base_url="https://dashscope.example/v1/messages", api_key="k", format="anthropic"
+    )
+    client = VLMClient(cfg)
+    client._http = httpx.Client(transport=httpx.MockTransport(handler))
+    assert client.describe(ImageBlock(base64="ZGF0YQ==", media_type="image/png")) == "ok"
+
+
+def test_html_404_raises_clear_error_not_raw_dump():
+    """上游返回 HTML 网页（404 着陆页等）→ 可读提示（base URL 应为 API 根路径），而非倾倒原始 HTML。"""
+    html = '<!DOCTYPE html><html lang="en" dir="ltr"><head><meta name="viewport" content="width=device-width"></head></html>'
+    client = _client_with(
+        httpx.MockTransport(
+            lambda r: httpx.Response(404, text=html, headers={"content-type": "text/html; charset=utf-8"})
+        )
+    )
+    with pytest.raises(VLMError) as exc:
+        client.describe(ImageBlock(url="data:image/png;base64,QUJD"))
+    assert exc.value.reason == "HTTP"
+    msg = str(exc.value)
+    assert msg.startswith("上游返回 HTML")  # 主体是可读提示，而非原始 HTML 倾倒
+    assert "base URL" in msg  # 提示修复方向
+
+
+def test_non_html_error_keeps_snippet():
+    """非 HTML 的上游错误仍保留响应片段（不破坏既有行为）。"""
+    client = _client_with(
+        httpx.MockTransport(
+            lambda r: httpx.Response(500, text="upstream exploded", headers={"content-type": "text/plain"})
+        )
+    )
+    with pytest.raises(VLMError) as exc:
+        client.describe(ImageBlock(url="data:image/png;base64,QUJD"))
+    assert exc.value.reason == "HTTP"
+    assert "upstream exploded" in str(exc.value)
+
+
 # ---- Phase2 M1: describe_detail for vision log ----
 
 

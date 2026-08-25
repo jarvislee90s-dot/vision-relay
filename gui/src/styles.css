@@ -78,3 +78,7 @@ html, body, #root { height: 100%; }
 
 /* 识图记录：三段明细代码块（Task 10 追加） */
 .codebox { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px; white-space:pre-wrap; word-break:break-word; }
+
+/* 模型探测：行内等待 spinner（2026-08-25 探测体验重做，全局唯一动画） */
+.spinner { display:inline-block; width:12px; height:12px; border:2px solid #d1d5db; border-top-color:#2563eb; border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:-2px; }
+@keyframes spin { to { transform: rotate(360deg); } }

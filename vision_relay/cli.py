@@ -124,6 +124,8 @@ def cmd_start(cfg) -> int:
             print(f"  [relay] {msg}")
         for msg in wiring_backup_and_rewrite(cfg):
             print(f"  [wire] {msg}")
+        if "qwen-code" in cfg.routing.harnesses:
+            print("  [wire] qwen-code: 接线在会话启动时加载，已开的 qwen 会话需重启才走本代理")
     _write_pid()
     cmd_start_intent(True)
     if cfg.routing.auto_wire:

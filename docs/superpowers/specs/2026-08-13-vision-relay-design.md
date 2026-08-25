@@ -385,6 +385,7 @@ api_key 只存本地配置（600 权限）；客户端只发识别 relay 用的�
   - Claude Code：`~/.claude/settings.json` 的 `env.ANTHROPIC_BASE_URL`。
   - Codex：`~/.codex/config.toml` 的 `base_url`。
   - Qwen Code：`~/.qwen/settings.json` 的 `model.baseUrl`。
+- **Codex 目录模态补丁（2026-08-26 修订）**：Codex CLI 按 `config.toml` 引用的 model catalog（`model_catalog_json`）中各模型的 `input_modalities` 决定是否放行 `view_image`/贴图——标注纯文本（如 `["text"]`）的模型图片根本进不了请求（实测 502 之外的又一"无声不识图"形态），代理转写无从谈起，而本代理的存在意义正是替纯文本模型看图。`start` 接管时自动给当前目录所有模型补 `image`（已含者不动、缺字段设 `["text","image"]`；整文件备份 `<catalog>.vision-relay.bak`、重复接管不覆盖、幂等）；`stop`/快照还原在 base_url 守卫通过后对称还原（整文件还原路径先还原目录再换回 config，因当前 config 仍引用被补丁目录）；对账 absorb 重接管（外部工具换新上游常伴新目录）同样重打补丁；读/解析失败静默跳过不打断接线。仅 codex（claude/qwen-code 无此门控），不动 `model_catalog_json` 指针与其他字段。
 - 旧版 `~/.qwen-mm-plugins/proxy.json` 会被自动读取并迁移（读旧写新，见 rebrand spec §5.3）。
 
 ### 8.3 运行命令

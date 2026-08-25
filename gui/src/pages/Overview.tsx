@@ -51,6 +51,7 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
           return (
             <div className="card" key={h}>
               <div className="row between"><b>{h}</b><span className={"tag " + (s.harnesses[h].ownership === "ours" ? "ok" : "gray")}>{s.harnesses[h].ownership === "ours" ? "✓ 已接管" : s.harnesses[h].ownership}</span></div>
+              {h === "qwen-code" && <div className="small dim">接线在会话启动时加载，已开的 qwen 会话需重启才走本代理</div>}
               <div className="chain">
                 {hops.map((hop, i) => (
                   <div key={i}>
