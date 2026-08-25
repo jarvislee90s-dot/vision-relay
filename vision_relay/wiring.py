@@ -119,7 +119,8 @@ def _qwen_resolve_key(auth: str, idx: int, entry: dict, provider_urls: dict[str,
     return key if key in provider_urls else None
 
 
-def _qwen_save(path: str, data: dict) -> bool:
+def _json_save_atomic(path: str, data: dict) -> bool:
+    """JSON 原子写（tmp + replace，失败清 tmp）；qwen settings 与 codex catalog 共用。"""
     tmp = path + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -180,7 +181,7 @@ def _rewrite_qwen_providers(path: str, proxy_url: str) -> tuple[dict[str, str], 
         if not _modalities_open(e):
             mod_originals[key] = _open_modalities(e)
             gated += 1
-    if (url_originals or mod_originals) and not _qwen_save(path, d):
+    if (url_originals or mod_originals) and not _json_save_atomic(path, d):
         return {}, {}, skipped, 0, 0
     return url_originals, mod_originals, skipped, rewritten, gated
 
@@ -218,7 +219,7 @@ def _restore_qwen_providers(
         if touched:
             restored += 1
     if restored:
-        _qwen_save(path, d)
+        _json_save_atomic(path, d)
     return restored
 
 
@@ -462,17 +463,7 @@ def _patch_codex_catalog_modalities(config_path: str) -> str | None:
             shutil.copyfile(cat, cat + BAK_SUFFIX)
         except OSError:
             pass
-    tmp = cat + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
-        os.replace(tmp, cat)
-    except OSError:
-        try:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-        except OSError:
-            pass
+    if not _json_save_atomic(cat, d):
         return None
     return f"catalog {os.path.basename(cat)}: +image modalities ({patched} models)"
 
