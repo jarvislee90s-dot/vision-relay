@@ -542,6 +542,8 @@ def probe_target_info(
     base, key, proto = probe_target_for(cfg, harness, provider, tool_by_name)
     if base:
         return base, key, proto, None
+    if harness == "zcode":  # M7: zcode 无路由工具，无目标=找不到该供应商的原始上游
+        return base, key, proto, f"{harness}: 未找到该供应商的原始上游（供应商不存在或未接管）"
     return base, key, proto, f"{harness}: 路由工具不在线,且未配置可探测的直连上游"
 
 

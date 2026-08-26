@@ -569,3 +569,14 @@ class TestZcodeZombieReconcile:
         monkeypatch.setattr(reconcile, "_restart_service", lambda c: True)
         res = reconcile.reconcile(cfg)
         assert any(a["type"] == "auto_fix" and a.get("fix") == "restart" for a in res["actions"])
+
+
+def test_probe_reason_zcode_accurate(monkeypatch):
+    """M7: zcode 无目标的 reason 不能再说「路由工具不在线」——zcode 没有路由工具概念。"""
+    from vision_relay import model_sources, verbs
+    from vision_relay.config import ProxyConfig
+
+    monkeypatch.setattr(model_sources, "zcode_probe_target", lambda cfg, provider: ("", "", "chat"))
+    _base, _key, _proto, reason = verbs.probe_target_info(ProxyConfig(), "zcode", "ghost-provider", {})
+    assert reason is not None and reason.startswith("zcode:")
+    assert "路由工具" not in reason
