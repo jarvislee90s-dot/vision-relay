@@ -462,3 +462,40 @@ def test_data_plane_hot_reloads_config_on_change(tmp_path, monkeypatch, upstream
         if server is not None:
             server.shutdown()
         up2.stop()
+
+
+def test_retention_once_removes_expired_and_keeps_fresh(tmp_path, monkeypatch):
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+    from vision_relay import server
+    from vision_relay.config import ProxyConfig, VisionLogConfig
+
+    d = tmp_path / "visionlog"
+    d.mkdir()
+    (d / "2020-01-01.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+    (d / "2999-01-01.jsonl").write_text('{"x":2}\n', encoding="utf-8")
+    cfg = ProxyConfig(vision_log=VisionLogConfig(enabled=True, retention_days=7))
+    server._retention_once(cfg)
+    assert not (d / "2020-01-01.jsonl").exists()
+    assert (d / "2999-01-01.jsonl").exists()
+
+
+def test_retention_disabled_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+    from vision_relay import server
+    from vision_relay.config import ProxyConfig, VisionLogConfig
+
+    d = tmp_path / "visionlog"
+    d.mkdir()
+    (d / "2020-01-01.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+    server._retention_once(ProxyConfig(vision_log=VisionLogConfig(enabled=False)))
+    assert (d / "2020-01-01.jsonl").exists()
+
+
+def test_retention_worker_disabled_never_starts(monkeypatch):
+    from vision_relay import server
+    from vision_relay.config import ProxyConfig, VisionLogConfig
+
+    called = []
+    monkeypatch.setattr(server, "_retention_once", lambda cfg: called.append(1))
+    server._start_retention_worker(ProxyConfig(vision_log=VisionLogConfig(enabled=False)))
+    assert not called, "disabled 时不该有任何清理动作"

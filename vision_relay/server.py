@@ -354,6 +354,38 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
+def _retention_once(cfg: ProxyConfig) -> None:
+    """识图留痕留存清理（M3-B，spec §7）：删过期日文件，清理量入事件日志。fail-open。"""
+    if not cfg.vision_log.enabled:
+        return
+    from . import reconcile, visionlog  # 函数内导入，避免与 reconcile 的导入环
+
+    try:
+        removed = visionlog.cleanup(cfg.vision_log.retention_days)
+        if removed:
+            reconcile.append_event(
+                "visionlog_cleanup",
+                None,
+                {"removed": removed, "retention_days": cfg.vision_log.retention_days},
+            )
+    except Exception:  # fail-open：清理绝不影响代理主链路
+        pass
+
+
+def _start_retention_worker(cfg: ProxyConfig) -> None:
+    """启动即清一次，此后每 24h 重复；vision_log.enabled=false 时完全不起线程。"""
+    if not cfg.vision_log.enabled:
+        return
+
+    def loop() -> None:
+        _retention_once(cfg)
+        while True:
+            time.sleep(24 * 3600)
+            _retention_once(cfg)
+
+    threading.Thread(target=loop, name="visionlog-retention", daemon=True).start()
+
+
 def run_server(cfg: ProxyConfig | None = None, handler_cls=ProxyHandler):
     """Build the ThreadingHTTPServer with cfg + pipeline attached; caller calls serve_forever()."""
     cfg = cfg or load_config()
@@ -369,6 +401,7 @@ def run_server(cfg: ProxyConfig | None = None, handler_cls=ProxyHandler):
     server.tool_provider_cache = {}  # type: ignore[attr-defined]
     server.route_cache = route_fallback.PortCache()  # type: ignore[attr-defined]
     _start_provider_cache_refresher(server)
+    _start_retention_worker(cfg)
     return server
 
 
