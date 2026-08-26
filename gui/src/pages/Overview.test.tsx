@@ -198,12 +198,26 @@ describe("Overview (G2/G3/G4 UI)", () => {
   it("M1: zcode 重启失败时给出错误反馈（不再静默）", async () => {
     coreMock.mockImplementation(async (verb: string) => {
       if (verb === "events") return [...EVENTS];
-      if (verb === "zcode-restart") return { ok: false, restarted: false }; // kill 成功但拉起失败
+      // parseEnvelope 对 envelope ok:false 抛异常（kill 成功但拉起失败的真实表现）
+      if (verb === "zcode-restart") return Promise.reject(new Error("envelope ok:false"));
       return {};
     });
     renderOverview({ ...STATUS, zcode_runtime: { running: true, needs_restart: true } } as unknown as StatusData);
     fireEvent.click(screen.getByTestId("zcode-restart-hint").querySelector("button")!);
     await waitFor(() => expect(screen.getByTestId("zcode-restart-err")).toBeTruthy());
     expect(screen.getByTestId("zcode-restart-err").textContent).toMatch(/重启失败/);
+  });
+
+  it("M1: zcode 重启成功（{restarted:true}，无 ok 字段）不再误报失败", async () => {
+    // parseEnvelope 成功时只返回 e.data={restarted:bool}——旧实现读 r.ok===undefined 会误报「重启失败」
+    coreMock.mockImplementation(async (verb: string) => {
+      if (verb === "events") return [...EVENTS];
+      if (verb === "zcode-restart") return { restarted: true };
+      return {};
+    });
+    const { refresh } = renderOverview({ ...STATUS, zcode_runtime: { running: true, needs_restart: true } } as unknown as StatusData);
+    fireEvent.click(screen.getByTestId("zcode-restart-hint").querySelector("button")!);
+    await waitFor(() => expect(refresh).toHaveBeenCalled()); // 点击处理器已走完（catch 分支未触发）
+    expect(screen.queryByTestId("zcode-restart-err")).toBeNull();
   });
 });

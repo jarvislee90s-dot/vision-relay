@@ -48,8 +48,11 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
           <span>⚡ {t(p.lang, "zcodePendingRestart")}</span>
           <button className="btn" onClick={async () => {
             setRestartErr(null);
-            const r = await core<{ ok: boolean }>("zcode-restart");
-            if (!r.ok) setRestartErr("zcode 重启失败：已停止但未能拉起，请稍后重试或手动启动 zcode。"); // M1
+            try {
+              await core("zcode-restart");
+            } catch {  // parseEnvelope 对 envelope ok:false 抛异常=重启失败（M1）
+              setRestartErr("zcode 重启失败：已停止但未能拉起，请稍后重试或手动启动 zcode。");
+            }
             p.refresh();
           }}>{t(p.lang, "restartZcodeNow")}</button>
         </div>
