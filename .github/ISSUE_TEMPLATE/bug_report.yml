@@ -11,9 +11,28 @@ body:
     id: harness
     attributes:
       label: Agent harness / client
-      description: For example, Claude Code, Codex, Qwen Code, Gemini CLI, or a raw HTTP client.
+      description: For example, Claude Code, Codex, Qwen Code, zcode, Gemini CLI, or a raw HTTP client.
     validations:
       required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **Before pasting logs or diagnostic reports**: `vision-relay diagnose --json` output may contain
+        provider base URLs and model names. Scrub API keys, tokens, and anything you consider private
+        before posting.
 
   - type: input
     id: upstream

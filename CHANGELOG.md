@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-27
+
+首个公开版本：一期数据面（三协议透明代理 + VLM 转述 + fail-open）+ 二期控制面（GUI 控制台、对账与自动修复、模型能力实测、识图留痕、四 harness 支持）+ 三平台安装包分发（装完即用零 Python 依赖）。
+
 ### Changed
 - Renamed the Python package `qwen_mm_plugins_proxy` to `vision_relay`; the console script is now `vision-relay` only (the `qwen-mm-plugins-proxy` alias is gone).
 - Configuration moved from `~/.qwen-mm-plugins/` to `~/.vision-relay/`; an existing `~/.qwen-mm-plugins/proxy.json` is read automatically and migrates on next save.
@@ -26,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `status --json` 暴露每个 harness 的 `config_path` 与顶层 `bind_port`；GUI 详情抽屉提供配置文件路径与系统打开入口，总览不再硬编码 8787。
 - 事件日志页「导出」：`events --json --limit 0` 拉全量并下载 JSONL。
 - `probe --json` 无结论（含糊不下结论）改返回 `ok:true, result:null`（合法三态而非错误）。
+- zcode harness 接入：接管/还原/模态门、密钥指纹选路（同名跨协议认家）、zcode-restart 动词与三选弹窗、路由范围勾选（harnesses 白名单）。
+- 三平台安装包与发布流水线（Windows NSIS exe / macOS DMG / Linux AppImage+deb，GUI + PyInstaller 冻结核心单包分发，零 Python 依赖；GitHub Actions 手动触发构建，Draft Release 人工验收后发布）。
+- 识图留痕留存策略生效：默认 7 天自动清理、可关闭（启动即清 + 每 24h 周期，fail-open，清理量入事件日志）。
+- 版本对齐脚本 `scripts/set_version.py`（一次写核心 / tauri.conf / gui package.json 三处）；CI 新增 GUI 门禁 job（vitest + tsc/vite build + cargo check）。
 
 ### Fixed
 - `settings-set` 接受 `retention_days=0` 会写出下次 `load_config` 必报 ConfigError 的 proxy.json（`VisionLogConfig` 要求 ≥1）；现入口直接拒绝（关闭留存请用 `vision_log.enabled=false`），GUI 留存输入不再把空值强制成 0，设置保存失败会弹出错误。
@@ -33,3 +41,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 僵尸接线自动重启三处缺陷：重启 spawn 原在 `config_lock` 内，与子进程 `start` 的对账互等（锁倒置死锁，`ok` 恒 False）；多 harness 僵尸会重复 spawn；Windows PID 复用 + 残留 pid 文件会让重启子进程误判 "already running" 后退出。现在 spawn 移到锁外、整组只重启一次、重启前清理残留 pid、端口等待窗口 2s→8s。
 - 正常 stop 的还原依据统一为最新接管组合快照（运行中吸收过新供应商时不再回跳最早的原始地址）；快照缺失的 harness 退回第一次接管前的整文件备份兜底。
 - pid 文件升级为 `{pid, token}`（进程创建时间指纹）：Windows PID 复用不再导致 status 误报“运行中”、stop 误杀无关进程；老格式纯数字文件保持兼容。
+- 停用转发的 relay 选路全层不可见（suppressed_relays 收严：坏条目停用后不再被三层选路选中，杜绝全线 502 无法自救）。
+- zcode 重启失败给出 UI 错误反馈（M1）；无 baseURL 供应商纳入统计并以「未接线」呈现（M3）；「保留勾选」后复选框回滚到已保存值（M4）；模态门还原清除模型级 `zcode:{}` 空壳（M5）；zcode 探测无目标 reason 文案与实际原因对齐（M7）。

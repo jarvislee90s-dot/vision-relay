@@ -12,6 +12,8 @@
 
 - [ ] `python -m pytest -q` passes
 - [ ] `ruff format --check .` and `ruff check .` pass
+- [ ] `pnpm test` (in `gui/`) passes when frontend/GUI code changed
+- [ ] Behavior changes update the matching spec under `docs/superpowers/specs/`
 
 ## Compatibility
 
