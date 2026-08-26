@@ -426,3 +426,65 @@ class TestZcodeProc:
 
         monkeypatch.setattr(zcode_proc, "find_zcode_processes", lambda force=False: [])
         assert zcode_proc.restart_zcode() is False
+
+
+class TestSettingsSetHarnesses:
+    def _stdin(self, monkeypatch, payload):
+        import io
+
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+
+    def test_harnesses_update_and_uncheck_restores(self, tmp_path, monkeypatch):
+        from vision_relay import snapshot, verbs
+
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        p = _write_zcode_config(tmp_path, {"k": _provider(models={"m": _text_model()})})
+        cfg = ProxyConfig()
+        cfg.routing.harnesses = ["zcode"]
+        wiring.wiring_backup_and_rewrite(cfg)
+        assert json.load(open(p, encoding="utf-8"))["provider"]["k"]["options"]["baseURL"] == "http://127.0.0.1:8787"
+        snap = snapshot.load()["zcode"]
+
+        self._stdin(monkeypatch, {"routing": {"harnesses": ["claude", "codex", "qwen-code"]}})
+        out = verbs.settings_set(cfg)
+        assert out["ok"] is True
+        d = json.load(open(p, encoding="utf-8"))
+        assert d["provider"]["k"]["options"]["baseURL"] == "https://open.bigmodel.cn/api/anthropic"  # 取消即还原
+        assert "restored" in out["data"] and any("zcode" in m for m in out["data"]["restored"])
+        assert cfg.routing.harnesses == ["claude", "codex", "qwen-code"]
+        assert snap.provider_urls  # 快照在还原前已存在（守卫还原的依据）
+
+    def test_unknown_harness_rejected(self, monkeypatch):
+        from vision_relay import verbs
+        from vision_relay.config import ProxyConfig as PC
+
+        cfg = PC()
+        self._stdin(monkeypatch, {"routing": {"harnesses": ["claude", "nope"]}})
+        out = verbs.settings_set(cfg)
+        assert out["ok"] is False and "unknown" in out["data"]["error"]
+
+    def test_empty_or_duplicate_rejected(self, monkeypatch):
+        from vision_relay import verbs
+        from vision_relay.config import ProxyConfig as PC
+
+        cfg = PC()
+        self._stdin(monkeypatch, {"routing": {"harnesses": []}})
+        assert verbs.settings_set(cfg)["ok"] is False
+        self._stdin(monkeypatch, {"routing": {"harnesses": ["claude", "claude"]}})
+        assert verbs.settings_set(cfg)["ok"] is False
+
+    def test_zcode_uncheck_reports_needs_restart(self, tmp_path, monkeypatch):
+        from vision_relay import verbs, zcode_proc
+
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        _write_zcode_config(tmp_path, {"k": _provider()})
+        cfg = ProxyConfig()
+        cfg.routing.harnesses = ["zcode", "claude"]
+        monkeypatch.setattr(
+            zcode_proc, "find_zcode_processes", lambda force=False: [{"pid": 1, "start_ts": 0.0, "exe": ""}]
+        )
+        self._stdin(monkeypatch, {"routing": {"harnesses": ["claude"]}})
+        out = verbs.settings_set(cfg)
+        assert out["data"].get("needs_zcode_restart") is True

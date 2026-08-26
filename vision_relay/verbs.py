@@ -407,11 +407,13 @@ def vlm_test(cfg: ProxyConfig, payload: dict | None = None) -> dict:
 
 
 def settings_set(cfg: ProxyConfig) -> dict:
-    """stdin: {"routing": {...白名单键...}, "vision_log": {...}}。白名单外键拒绝。"""
+    """stdin: {"routing": {...白名单键...}, "vision_log": {...}}。白名单外键拒绝。
+    routing.harnesses = 路由范围勾选（spec §8）：被移除的 harness 立即单 harness 还原
+    （取消即还原），zcode 在跑时附 needs_zcode_restart 供 GUI 弹窗/提示条。"""
     payload, err = _stdin_json("object")
     if err is not None:
         return err
-    routing_ok = {"unknown_default"}
+    routing_ok = {"unknown_default", "harnesses"}
     log_ok = {"enabled", "retention_days"}
     r = payload.get("routing") or {}
     v = payload.get("vision_log") or {}
@@ -424,7 +426,16 @@ def settings_set(cfg: ProxyConfig) -> dict:
     if "retention_days" in v and (not isinstance(v["retention_days"], int) or v["retention_days"] < 1):
         # VisionLogConfig 要求 >=1：0 落盘会让下次 load_config 抛 ConfigError（关留存用 enabled=false）
         return envelope(False, {"error": "retention_days must be an int >= 1 (disable via vision_log.enabled=false)"})
-    cfg.routing.unknown_default = r.get("unknown_default", cfg.routing.unknown_default)
+    removed: list[str] = []
+    if "harnesses" in r:
+        hs = r["harnesses"]
+        if not isinstance(hs, list) or not hs or not all(isinstance(x, str) for x in hs):
+            return envelope(False, {"error": "harnesses must be a non-empty list of harness names"})
+        from .config import HARNESSES
+
+        if [x for x in hs if x not in HARNESSES] or len(set(hs)) != len(hs):
+            return envelope(False, {"error": f"unknown/duplicate harness in {hs!r}; must be in {list(HARNESSES)}"})
+        removed = [h for h in cfg.routing.harnesses if h not in hs]
     if "enabled" in v:
         enabled = v["enabled"]
         if not isinstance(enabled, bool):
@@ -432,8 +443,28 @@ def settings_set(cfg: ProxyConfig) -> dict:
         cfg.vision_log.enabled = enabled
     if "retention_days" in v:
         cfg.vision_log.retention_days = v["retention_days"]
+    cfg.routing.unknown_default = r.get("unknown_default", cfg.routing.unknown_default)
+    restore_msgs: list[str] = []
+    if "harnesses" in r:
+        cfg.routing.harnesses = list(r["harnesses"])
+        if removed:  # 取消勾选即还原（spec §8）：与 stop 同一单 harness 还原步骤
+            from . import wiring
+            from .reconcile import append_event
+
+            for h in removed:
+                for msg in wiring.wiring_restore_harness(cfg, h):
+                    restore_msgs.append(msg)
+                    append_event("uncheck_restore", h, {"detail": msg})
     _locked_save(cfg)
-    return envelope(True, {"saved": True})
+    data: dict = {"saved": True}
+    if restore_msgs:
+        data["restored"] = restore_msgs
+    if "zcode" in removed:
+        from . import zcode_proc
+
+        if zcode_proc.find_zcode_processes():  # 进程在跑 → 还原待重启（GUI 弹窗三选/提示条）
+            data["needs_zcode_restart"] = True
+    return envelope(True, data)
 
 
 def relay_set(cfg: ProxyConfig) -> dict:
