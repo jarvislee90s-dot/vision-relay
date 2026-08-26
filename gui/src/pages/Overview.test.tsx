@@ -194,4 +194,16 @@ describe("Overview (G2/G3/G4 UI)", () => {
     await waitFor(() => expect(h.stopService).toHaveBeenCalledTimes(1));
     expect(h.startService).not.toHaveBeenCalled();
   });
+
+  it("M1: zcode 重启失败时给出错误反馈（不再静默）", async () => {
+    coreMock.mockImplementation(async (verb: string) => {
+      if (verb === "events") return [...EVENTS];
+      if (verb === "zcode-restart") return { ok: false, restarted: false }; // kill 成功但拉起失败
+      return {};
+    });
+    renderOverview({ ...STATUS, zcode_runtime: { running: true, needs_restart: true } } as unknown as StatusData);
+    fireEvent.click(screen.getByTestId("zcode-restart-hint").querySelector("button")!);
+    await waitFor(() => expect(screen.getByTestId("zcode-restart-err")).toBeTruthy());
+    expect(screen.getByTestId("zcode-restart-err").textContent).toMatch(/重启失败/);
+  });
 });

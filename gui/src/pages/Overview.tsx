@@ -12,6 +12,7 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
   const [events, setEvents] = useState<EventRow[]>([]);
   const [diag, setDiag] = useState<DiagReport | null>(null);
   const [drawer, setDrawer] = useState<string | null>(null);
+  const [restartErr, setRestartErr] = useState<string | null>(null);
   const loadEvents = async () => { try { const rows = await core<EventRow[]>("events"); setEvents(rows.slice(-20).reverse()); } catch { /* 被动 */ } };
   useEffect(() => { loadEvents(); const t = setInterval(loadEvents, 8000); return () => clearInterval(t); }, []);
   useEffect(() => { if (p.showDiag) runDiag(); }, [p.showDiag]);
@@ -45,9 +46,15 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
       {s.zcode_runtime?.needs_restart && (
         <div className="alert-err row between" data-testid="zcode-restart-hint">
           <span>⚡ {t(p.lang, "zcodePendingRestart")}</span>
-          <button className="btn" onClick={async () => { await core("zcode-restart"); p.refresh(); }}>{t(p.lang, "restartZcodeNow")}</button>
+          <button className="btn" onClick={async () => {
+            setRestartErr(null);
+            const r = await core<{ ok: boolean }>("zcode-restart");
+            if (!r.ok) setRestartErr("zcode 重启失败：已停止但未能拉起，请稍后重试或手动启动 zcode。"); // M1
+            p.refresh();
+          }}>{t(p.lang, "restartZcodeNow")}</button>
         </div>
       )}
+      {restartErr && <div className="alert-err" data-testid="zcode-restart-err">{restartErr}</div>}
       <div className="cols3">
         {Object.keys(s.harnesses).map((h) => {
           // 工具归属逐 harness 判定（2026-08-26）：配置文件 ownership 优先，接管态用快照 second_hop
