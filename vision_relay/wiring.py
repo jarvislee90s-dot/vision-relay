@@ -494,9 +494,14 @@ def _zcode_relay_desired(
     return out
 
 
+def _is_zcode_relay(r) -> bool:
+    """zcode 自动条目判定：provider_id + 前缀双条件（手编同名前缀 relay 不误伤）。"""
+    return bool(getattr(r, "provider_id", None)) and r.name.startswith(_ZCODE_RELAY_PREFIX)
+
+
 def ensure_zcode_relays(cfg) -> list[str]:
     """按现场 config.json + 快照维护 zcode 一层直连 relay（spec §6）：一供应商一条、激活优先、
-    指纹随行。现状（成员/字段/顺序）与期望不一致 → 整块重建；返回新增 name 列表。"""
+    指纹随行。现状（成员/字段/顺序/指纹）与期望不一致 → 整块重建；返回新增 name 列表。"""
     p = _path(HOME, "zcode")
     if not os.path.exists(p):
         return []
@@ -507,20 +512,19 @@ def ensure_zcode_relays(cfg) -> list[str]:
     snap = snapshot.load().get("zcode")
     proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
     desired = _zcode_relay_desired(d, getattr(snap, "provider_urls", None), proxy_url, cfg.bind_port)
-    current = [r for r in cfg.relays if getattr(r, "provider_id", None) and r.name.startswith(_ZCODE_RELAY_PREFIX)]
+    current = [r for r in cfg.relays if _is_zcode_relay(r)]
     same = [r.provider_id for r in current] == [r.provider_id for r in desired] and all(
-        c.protocol == w.protocol and c.base_url == w.base_url and list(c.models) == list(w.models)
+        c.protocol == w.protocol
+        and c.base_url == w.base_url
+        and list(c.models) == list(w.models)
+        and list(c.auth_hints or []) == list(w.auth_hints or [])  # 密钥轮换 → 指纹必须跟随重建（评审⑤）
         for c, w in zip(current, desired)
     )
     if same:
         return []
     names_before = {r.name for r in current}
-    taken = {
-        r.name for r in cfg.relays if not (getattr(r, "provider_id", None) and r.name.startswith(_ZCODE_RELAY_PREFIX))
-    }
-    cfg.relays = [
-        r for r in cfg.relays if not (getattr(r, "provider_id", None) and r.name.startswith(_ZCODE_RELAY_PREFIX))
-    ]
+    taken = {r.name for r in cfg.relays if not _is_zcode_relay(r)}
+    cfg.relays = [r for r in cfg.relays if not _is_zcode_relay(r)]
     added: list[str] = []
     for i, r in enumerate(desired):
         name = r.name
@@ -537,6 +541,18 @@ def ensure_zcode_relays(cfg) -> list[str]:
             added.append(name)
     save_config(cfg)
     return added
+
+
+def remove_zcode_relays(cfg) -> list[str]:
+    """移除全部 zcode 自动 relay 并清出 activated_relays（「取消勾选 zcode」配套，评审④）：
+    残留条目会继续参与选路且停止跟随现场。返回被移除的 name 列表。"""
+    removed = [r.name for r in cfg.relays if _is_zcode_relay(r)]
+    if not removed:
+        return []
+    cfg.relays = [r for r in cfg.relays if not _is_zcode_relay(r)]
+    cfg.routing.activated_relays = [n for n in cfg.routing.activated_relays if n not in set(removed)]
+    save_config(cfg)
+    return removed
 
 
 def reconcile_zcode_providers(cfg) -> dict | None:

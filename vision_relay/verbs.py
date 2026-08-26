@@ -220,7 +220,14 @@ def config_get(cfg: ProxyConfig) -> dict:
         h: ({**over, "api_key": "●●●●"} if isinstance(over, dict) and over.get("api_key") else over)
         for h, over in data.get("vlm_by_harness", {}).items()
     }
-    data["relays"] = [{**r, "api_key": "●●●●"} if r.get("api_key") else r for r in data.get("relays", [])]
+    # auth_hints 是密钥指纹：spec §3 明文不进日志/GUI——输出层逐条剥离该键。
+    relays_out = []
+    for r in data.get("relays", []):
+        r = {k: v for k, v in r.items() if k != "auth_hints"}
+        if r.get("api_key"):
+            r = {**r, "api_key": "●●●●"}
+        relays_out.append(r)
+    data["relays"] = relays_out
     # 手编 relay_templates 的 api_key 会被 wiring 展开进 RelayConfig 真实用于上游认证——同样打码。
     data["routing"] = {
         **data["routing"],
@@ -455,6 +462,10 @@ def settings_set(cfg: ProxyConfig) -> dict:
                 for msg in wiring.wiring_restore_harness(cfg, h):
                     restore_msgs.append(msg)
                     append_event("uncheck_restore", h, {"detail": msg})
+                if h == "zcode":
+                    # 评审④：残留的一层直连 relay 会继续参与选路且停止跟随现场——同步移除
+                    for name in wiring.remove_zcode_relays(cfg):
+                        append_event("relay_removed", "zcode", {"name": name})
     _locked_save(cfg)
     data: dict = {"saved": True}
     if restore_msgs:

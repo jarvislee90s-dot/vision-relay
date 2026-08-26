@@ -371,16 +371,34 @@ class TestZcodeRelays:
 
 
 class TestZcodeProc:
-    def test_find_parses_tasklist(self, monkeypatch):
+    def test_find_parses_batched_details(self, monkeypatch):
+        """评审⑦：Windows 枚举收敢单次 PowerShell（JSON 三元组），不再逐 pid 双查询。"""
+        from vision_relay import zcode_proc
+
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, timeout=3.0):
+            calls.append(cmd)
+            return '[{"id":4242,"ts":100,"exe":"C:/zcode.exe"}]'
+
+        monkeypatch.setattr(zcode_proc, "_run", fake_run)
+        procs = zcode_proc.find_zcode_processes(force=True)
+        assert procs == [{"pid": 4242, "start_ts": 100.0, "exe": "C:/zcode.exe"}]
+        powershell_calls = [c for c in calls if c and c[0] == "powershell"]
+        assert len(powershell_calls) == 1  # 单次批量，而非每进程 2 次
+
+    def test_find_skips_relay_self(self, monkeypatch):
         from vision_relay import zcode_proc
 
         monkeypatch.setattr(
-            zcode_proc, "_run", lambda cmd, timeout=3.0: '"zcode.exe","4242","Console","1","1,234 K"\r\n'
+            zcode_proc,
+            "_run",
+            lambda cmd, timeout=3.0: (
+                '[{"id":1,"ts":5,"exe":"C:\\\\tools\\\\zcode-relay.exe"},{"id":2,"ts":6,"exe":"C:/zcode.exe"}]'
+            ),
         )
-        monkeypatch.setattr(zcode_proc, "_win_start_ts", lambda pid: 100.0)
-        monkeypatch.setattr(zcode_proc, "_win_exe", lambda pid: "C:/zcode.exe")
         procs = zcode_proc.find_zcode_processes(force=True)
-        assert procs == [{"pid": 4242, "start_ts": 100.0, "exe": "C:/zcode.exe"}]
+        assert [p["pid"] for p in procs] == [2]  # 本代理自身不误报
 
     def test_needs_restart_logic(self, monkeypatch):
         from vision_relay import zcode_proc
@@ -488,3 +506,66 @@ class TestSettingsSetHarnesses:
         self._stdin(monkeypatch, {"routing": {"harnesses": ["claude"]}})
         out = verbs.settings_set(cfg)
         assert out["data"].get("needs_zcode_restart") is True
+
+    def test_uncheck_removes_zcode_relays(self, tmp_path, monkeypatch):
+        """评审④：取消勾选 zcode 时，其一层直连 relay 同步移除并清出 activated_relays。"""
+        from vision_relay import verbs
+
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        _write_zcode_config(tmp_path, {"k": _provider(models={"m": _text_model()})})
+        cfg = ProxyConfig()
+        cfg.routing.harnesses = ["zcode"]
+        wiring.wiring_backup_and_rewrite(cfg)
+        assert [r for r in cfg.relays if r.provider_id]  # 前置：接管已建 relay
+        self._stdin(monkeypatch, {"routing": {"harnesses": ["claude"]}})
+        out = verbs.settings_set(cfg)
+        assert out["ok"] is True
+        assert not [r for r in cfg.relays if getattr(r, "provider_id", None)]
+        assert not [r for r in cfg.relays if r.name.startswith("zcode-")]
+        assert not [n for n in cfg.routing.activated_relays if n.startswith("zcode-")]
+
+
+class TestZcodeRelayRotation:
+    def test_ensure_rebuilds_on_key_rotation(self, tmp_path, monkeypatch):
+        """评审⑤：用户换 key 后指纹必须跟随现场更新，不得静默过期。"""
+        from vision_relay.fingerprint import key_fingerprint
+
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        _write_zcode_config(tmp_path, {"k": _provider(key="k-old1234567890")})
+        cfg = ProxyConfig()
+        assert wiring.ensure_zcode_relays(cfg)  # 首建
+        assert cfg.relays[0].auth_hints == [key_fingerprint("k-old1234567890")]
+        _write_zcode_config(tmp_path, {"k": _provider(key="k-new1234567890")})  # 密钥轮换
+        assert wiring.ensure_zcode_relays(cfg) == []  # 成员/地址未变 → 无「新增」
+        assert cfg.relays[0].auth_hints == [key_fingerprint("k-new1234567890")]  # 但指纹已重建
+
+
+class TestZcodeZombieReconcile:
+    def test_dead_service_wired_entries_trigger_restart(self, tmp_path, monkeypatch):
+        """评审⑥：激活供应商是空 key 未接管者（全局 owner≠ours）时，僵尸接线判定改用
+        条目级信号——有已接线供应商就按崩溃前意图修复，不留断头接管。"""
+        from vision_relay import reconcile
+
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        # 激活供应商空 key 直连别处；另一家已接管（baseURL=本代理）
+        _write_zcode_config(
+            tmp_path,
+            {
+                "idle": _provider(key="", url="https://elsewhere.example"),
+                "wired": _provider(url="http://127.0.0.1:8787", enabled=False),
+            },
+        )
+        from vision_relay.config import ProxyConfig as PC
+
+        cfg = PC()
+        cfg.routing.harnesses = ["zcode"]
+        monkeypatch.setattr(reconcile.tools, "probe_tools", lambda: [])
+        monkeypatch.setattr(reconcile, "_service_alive", lambda c: False)
+        monkeypatch.setattr(reconcile, "get_routing_on", lambda: True)
+        monkeypatch.setattr(reconcile, "_clear_stale_pid", lambda: None)
+        monkeypatch.setattr(reconcile, "_restart_service", lambda c: True)
+        res = reconcile.reconcile(cfg)
+        assert any(a["type"] == "auto_fix" and a.get("fix") == "restart" for a in res["actions"])

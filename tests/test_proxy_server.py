@@ -268,7 +268,28 @@ class TestSelectRelayAuthHints:
         assert _select_relay(cfg, "anthropic", "m", None).name == "zcode-a"
         assert _select_relay(cfg, "anthropic", "m", "unknown…fp@10").name == "zcode-a"
 
-    def test_fingerprint_requires_model_match(self):
+    def test_fingerprint_mismatch_skips_hinted_in_model_layer(self):
+        """评审①：指纹不匹配时第②层不得命中带 auth_hints 的 zcode 条目——防跨工具错家透传。"""
+        from vision_relay.config import ProxyConfig, RelayConfig
+        from vision_relay.server import _select_relay
+
+        cfg = ProxyConfig()
+        cfg.relays = [
+            RelayConfig(
+                name="zcode-a",
+                protocol="chat",
+                base_url="https://a.example",
+                models=["GLM"],
+                provider_id="a",
+                auth_hints=["zzzz…aaaa@20"],
+            ),
+            RelayConfig(name="qwen-wild", protocol="chat", base_url="https://q.example", models=["*"]),
+        ]
+        r = _select_relay(cfg, "chat", "GLM", "wwww…qqqq@30")
+        assert r.name == "qwen-wild"  # 外来指纹不得被 prepend 的 zcode 条目截胡
+
+    def test_protocol_fallback_hinted_last_resort(self):
+        """评审②：某协议仅剩指纹条目时，③层兜底命中它——失败形态是错家 401 自愈（spec P1-3），不是不可用。"""
         from vision_relay.config import ProxyConfig, RelayConfig
         from vision_relay.server import _select_relay
 
@@ -282,7 +303,9 @@ class TestSelectRelayAuthHints:
                 auth_hints=["fp@10"],
             )
         ]
-        assert _select_relay(cfg, "anthropic", "GLM-5.3", "fp@10").name == "default"  # 模型不匹配不得命中
+        r = _select_relay(cfg, "anthropic", "GLM-5.3", "fp@99")
+        assert r.name == "zcode-a"  # 未列名模型+指纹未命中：协议级兜底仍走该条目（上游 401 可见）
+        assert _select_relay(cfg, "anthropic", "GLM-5.3", None).name == "zcode-a"  # 不带鉴权头同样兜底
 
 
 class TestHarnessAttribution:

@@ -65,7 +65,10 @@ def _resolve_provider(cfg: ProxyConfig, relay: RelayConfig, tool_states_cache: d
 
 def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "", auth_fp: str | None = None) -> RelayConfig:
     """按 spec §6.3 选 relay：①(模型,协议,密钥指纹)精确 → ②(模型,协议)顺序 → ③仅协议 → 默认。
-    指纹层为 zcode 同名模型消歧主路径（spec 2026-08-26 §6）；无指纹/未命中退回顺序命中。"""
+    指纹层为 zcode 同名模型消歧主路径（spec 2026-08-26 §6）；无指纹退回顺序命中。
+    带 auth_hints 的条目=供应商身份钉死：②层仅在请求未带指纹或指纹匹配时参与（防外来
+    key 被错家截胡透传）；③层先通用条目、指纹条目殿后——错家命中是可见的 401 自愈
+    （spec P1-3/P2-2），不可用才是最坏形态。"""
     import fnmatch
 
     if auth_fp:
@@ -78,12 +81,18 @@ def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "", auth_fp
             ):
                 return relay
     for relay in cfg.relays:
-        if relay.protocol == inbound_proto and any(fnmatch.fnmatch(model, p) for p in relay.models):
+        hints = getattr(relay, "auth_hints", None)
+        if (
+            relay.protocol == inbound_proto
+            and any(fnmatch.fnmatch(model, p) for p in relay.models)
+            and not (hints and auth_fp and auth_fp not in hints)
+        ):
             return relay
-    # 仅协议兜底不含指纹专属条目（带 auth_hints=供应商身份钉死）：未列名模型不得被
-    # 错家捕获（计划测试与 spec §6.4 语义），无指纹的通用条目保持既有兜底行为。
     for relay in cfg.relays:
         if relay.protocol == inbound_proto and not getattr(relay, "auth_hints", None):
+            return relay
+    for relay in cfg.relays:
+        if relay.protocol == inbound_proto:
             return relay
     return RelayConfig(name="default", protocol=inbound_proto, base_url="", api_key="")
 

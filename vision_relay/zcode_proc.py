@@ -1,10 +1,11 @@
 """zcode 进程检测与重启（spec §7.2/§10）：平台 best-effort，绝不抛出、检测不到=空。
 
-无 psutil 依赖（工程约束），Windows 用 tasklist+PowerShell、unix 用 ps。全部子进程
-短超时；结果短 TTL 缓存（status 每 5s 轮询，避免每次都枚举进程）。"""
+无 psutil 依赖（工程约束），Windows 单次 PowerShell 批量取三元组、unix 用 ps。
+全部子进程短超时；结果短 TTL 缓存（status 每 5s 轮询，避免每次都枚举进程）。"""
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -21,43 +22,47 @@ def _run(cmd: list[str], timeout: float = 3.0) -> str:
         return ""
 
 
-def _win_start_ts(pid: int) -> float:
-    out = _run(
-        [
-            "powershell",
-            "-NoProfile",
-            "-c",
-            f"[int64]((Get-Process -Id {pid}).StartTime.ToUniversalTime() - [datetime]::new(1970,1,1)).TotalSeconds",
-        ],
-        timeout=5.0,
-    )
+_PSWIN_DETAILS = (
+    "Get-Process -Name zcode* -ErrorAction SilentlyContinue | "
+    "ForEach-Object { $exe=''; $ts=0; "
+    "try { $exe=$_.Path; $ts=[int64](($_.StartTime.ToUniversalTime()-[datetime]::new(1970,1,1)).TotalSeconds) } catch {} ; "
+    "[pscustomobject]@{ id=$_.Id; ts=$ts; exe=$exe } } | ConvertTo-Json -Compress"
+)
+
+
+def _win_details() -> list[dict]:
+    """单次 PowerShell 批量取 {id, ts(epoch 秒), exe}（评审⑦：逐 pid 串行子进程会让
+    status 每 5s 的轮询阻塞数秒）。StartTime 不可读（权限/已退出）→ ts=0（视为待重启）。"""
+    out = _run(["powershell", "-NoProfile", "-c", _PSWIN_DETAILS], timeout=5.0)
     try:
-        return float(out.strip())
+        d = json.loads(out) if out.strip() else []
     except ValueError:
-        return 0.0
-
-
-def _win_exe(pid: int) -> str:
-    out = _run(["powershell", "-NoProfile", "-c", f"(Get-Process -Id {pid}).Path"], timeout=5.0)
-    return out.strip().strip('"')
+        return []
+    if isinstance(d, dict):
+        d = [d]
+    return d if isinstance(d, list) else []
 
 
 def find_zcode_processes(force: bool = False) -> list[dict]:
-    """[{pid, start_ts, exe}]——best-effort。误报防护：跳过本代理自身（vision-relay/zcode-relay）。"""
+    """[{pid, start_ts, exe}]——best-effort。误报防护：跳过本代理自身（zcode-relay.exe）。"""
     now = time.time()
     if not force and now - _cache["ts"] < _TTL:
         return _cache["procs"]
     procs: list[dict] = []
     if os.name == "nt":
-        out = _run(["tasklist", "/FO", "CSV", "/NH"])
-        for line in out.splitlines():
-            parts = [p.strip('"') for p in line.split('","')]
-            if len(parts) >= 2 and parts[0].lower().startswith("zcode") and parts[0].lower() != "zcode-relay.exe":
-                try:
-                    pid = int(parts[1])
-                except ValueError:
-                    continue
-                procs.append({"pid": pid, "start_ts": _win_start_ts(pid), "exe": _win_exe(pid)})
+        for e in _win_details():
+            try:
+                pid = int(e.get("id"))
+            except (TypeError, ValueError):
+                continue
+            exe = str(e.get("exe") or "")
+            if os.path.basename(exe.replace("/", "\\")).lower() == "zcode-relay.exe":
+                continue
+            try:
+                start_ts = float(e.get("ts"))
+            except (TypeError, ValueError):
+                start_ts = 0.0
+            procs.append({"pid": pid, "start_ts": start_ts, "exe": exe})
     else:
         out = _run(["ps", "-eo", "pid,comm"])
         for line in out.splitlines():

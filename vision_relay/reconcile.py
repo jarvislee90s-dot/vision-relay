@@ -308,7 +308,19 @@ def reconcile(
                 # 吸收/抢回后可能缺 key（被动提醒，不代填）
                 if any(a.get("type") == "absorb" and a.get("harness") == name for a in actions):
                     needs_you.append({"type": "missing_key", "harness": name, "hint": f"direct-{name} 需补 API key"})
-            elif not obs["service_alive"] and owner == "ours":
+            elif not obs["service_alive"] and (
+                owner == "ours"
+                or (
+                    name == "zcode"
+                    and (
+                        name in snapshot.load()
+                        # 评审⑥：激活供应商可能是空 key 未接管者，全局 owner≠ours 不代表
+                        # 没有断头接管——僵尸判定用条目级信号（有已接线供应商即算）。
+                        or wiring._zcode_provider_stats(wiring._path(wiring.HOME, name), _expected_base(cfg))["wired"]
+                        > 0
+                    )
+                )
+            ):
                 # 僵尸接线：按崩溃前意图推导（spec §5 修复流程）
                 if obs["routing_on"]:
                     pending_restart.append(name)

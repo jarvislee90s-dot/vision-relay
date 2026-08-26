@@ -92,6 +92,22 @@ def test_config_get_masks_relay_template_keys(cfg):
     assert cfg.routing.relay_templates["relay-x"]["api_key"] == "sk-hidden"
 
 
+def test_config_get_strips_auth_hints(cfg):
+    """评审③（zcode 2026-08-26）：密钥指纹不进 GUI 通道（spec §3）——config 输出整体剥离 auth_hints。"""
+    from vision_relay.config import RelayConfig
+
+    cfg.relays.append(
+        RelayConfig(
+            name="zcode-k", protocol="anthropic", base_url="https://x", provider_id="k", auth_hints=["963b…9NVz@49"]
+        )
+    )
+    data = verbs.config_get(cfg)
+    text = json.dumps(data)
+    assert "auth_hints" not in text and "963b" not in text
+    assert all("auth_hints" not in r for r in data["data"]["relays"])
+    assert cfg.relays[0].auth_hints == ["963b…9NVz@49"]  # 输出层剥离，不改调用方
+
+
 def test_models_scan_reads_matrix_without_port_probing(cfg, monkeypatch):
     """矩阵来自工具档案(磁盘),models-scan 不再探测端口——离线/加速两得。"""
     from vision_relay.model_sources import ProviderRow
