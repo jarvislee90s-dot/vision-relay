@@ -368,3 +368,61 @@ class TestZcodeRelays:
 
         merged = snapshot.load()["zcode"].provider_urls
         assert merged["k::anthropic"] == "https://new.example/api"  # 新原值吸收
+
+
+class TestZcodeProc:
+    def test_find_parses_tasklist(self, monkeypatch):
+        from vision_relay import zcode_proc
+
+        monkeypatch.setattr(
+            zcode_proc, "_run", lambda cmd, timeout=3.0: '"zcode.exe","4242","Console","1","1,234 K"\r\n'
+        )
+        monkeypatch.setattr(zcode_proc, "_win_start_ts", lambda pid: 100.0)
+        monkeypatch.setattr(zcode_proc, "_win_exe", lambda pid: "C:/zcode.exe")
+        procs = zcode_proc.find_zcode_processes(force=True)
+        assert procs == [{"pid": 4242, "start_ts": 100.0, "exe": "C:/zcode.exe"}]
+
+    def test_needs_restart_logic(self, monkeypatch):
+        from vision_relay import zcode_proc
+
+        monkeypatch.setattr(
+            zcode_proc, "find_zcode_processes", lambda force=False: [{"pid": 1, "start_ts": 100.0, "exe": "x"}]
+        )
+        assert zcode_proc.zcode_needs_restart(200.0) is True  # 启动早于改写
+        assert zcode_proc.zcode_needs_restart(50.0) is False  # 改写后已重启
+        assert zcode_proc.zcode_needs_restart(0.0) is False  # 无改写记录
+
+    def test_needs_restart_not_running(self, monkeypatch):
+        from vision_relay import zcode_proc
+
+        monkeypatch.setattr(zcode_proc, "find_zcode_processes", lambda force=False: [])
+        assert zcode_proc.zcode_needs_restart(999.0) is False
+
+    def test_restart_kills_and_relaunches(self, monkeypatch, tmp_path):
+        from vision_relay import zcode_proc
+
+        exe = tmp_path / "zcode.exe"
+        exe.write_bytes(b"x")
+        launched: list[list[str]] = []
+        monkeypatch.setattr(
+            zcode_proc,
+            "find_zcode_processes",
+            lambda force=False: [{"pid": 7, "start_ts": 0.0, "exe": str(exe)}],
+        )
+        monkeypatch.setattr(zcode_proc, "_run", lambda cmd, timeout=3.0: launched.append(cmd) or "")
+        monkeypatch.setattr(
+            zcode_proc.subprocess,
+            "Popen",
+            lambda argv, **kw: launched.append(argv),
+        )
+        assert zcode_proc.restart_zcode() is True
+        assert any(
+            "kill" in " ".join(map(str, c)).lower() or "taskkill" in " ".join(map(str, c)).lower() for c in launched
+        )
+        assert launched[-1] == [str(exe)]  # 最后拉起 exe
+
+    def test_restart_no_process_returns_false(self, monkeypatch):
+        from vision_relay import zcode_proc
+
+        monkeypatch.setattr(zcode_proc, "find_zcode_processes", lambda force=False: [])
+        assert zcode_proc.restart_zcode() is False

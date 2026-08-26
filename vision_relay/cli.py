@@ -32,6 +32,7 @@ _JSON_MAP = {
     "vlm-secret": verbs.vlm_secret,  # 设置页「显示」按钮按需回显明文 VLM key（config 仍打码）
     "settings-set": verbs.settings_set,  # Task 3: stdin 白名单设置（unknown_default / vision_log）
     "relay-set": verbs.relay_set,  # Task 3: 停用压制 / 补 key
+    "zcode-restart": verbs.zcode_restart,  # zcode 待重启提示条/弹窗选项①共用
     "probe": verbs.probe_one,  # Task 3: --json 探针（main 特判补 harness/provider/model）
     "models-fetch": verbs.models_fetch,  # Task 3: 拉上游模型 ID 清单（spec §5）
 }
@@ -74,6 +75,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sub.add_parser("vlm-secret", parents=[common])  # 设置页「显示」按钮按需回显明文 VLM key
     sub.add_parser("settings-set", parents=[common])  # Task 3: stdin 白名单设置（unknown_default / vision_log）
     sub.add_parser("relay-set", parents=[common])  # Task 3: 停用压制 / 补 key
+    sub.add_parser("zcode-restart", parents=[common])  # zcode 待重启提示条/弹窗选项①共用
     sub.add_parser("models-fetch", parents=[common])  # Task 3: 拉上游模型 ID 清单（spec §5）
     return parser.parse_args(argv)
 

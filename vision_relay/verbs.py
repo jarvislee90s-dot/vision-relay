@@ -179,6 +179,13 @@ def status(cfg: ProxyConfig) -> dict:
         "capability_confirmed": cfg.routing.capability_confirmed,
         "vlm_configured": bool(cfg.vlm.api_key),
     }
+    # zcode 重启交互支撑（spec §7.2）：进程在跑且其启动早于本代理最后一次改写 → 待重启
+    from . import wiring, zcode_proc
+
+    obs["zcode_runtime"] = {
+        "running": bool(zcode_proc.find_zcode_processes()),
+        "needs_restart": zcode_proc.zcode_needs_restart(wiring.zcode_rewrite_ts()),
+    }
     # spec §6 向导触发：无配置 / 首次确认未置位 / VLM 未配（第①步必填）
     obs["first_run"] = (not has_config) or (not cfg.routing.capability_confirmed) or (not cfg.vlm.api_key)
     return envelope(True, obs)
@@ -454,6 +461,16 @@ def relay_set(cfg: ProxyConfig) -> dict:
         relay.api_key = key
     _locked_save(cfg)
     return envelope(True, {"name": name})
+
+
+def zcode_restart(cfg: ProxyConfig) -> dict:
+    """立即重启 zcode（弹窗选项①/提示条按钮共用）；best-effort，结果进事件日志。"""
+    from . import zcode_proc
+    from .reconcile import append_event
+
+    ok = zcode_proc.restart_zcode()
+    append_event("zcode_restart", "zcode", {"ok": ok})
+    return envelope(ok, {"restarted": ok})
 
 
 def probe_target_for(cfg: ProxyConfig, harness: str, provider: str, tool_by_name: dict) -> tuple[str, str, str]:
