@@ -459,6 +459,10 @@ def relay_set(cfg: ProxyConfig) -> dict:
 def probe_target_for(cfg: ProxyConfig, harness: str, provider: str, tool_by_name: dict) -> tuple[str, str, str]:
     """探测目标：两层=工具端口（无 key）；直连=harness 自身配置或对应 relay 的 base_url+key。
     （由 cli.py 上移：verbs 是更低层，原 verbs→cli 反向导入是层次倒置。）"""
+    if harness == "zcode":  # zcode 探测目标=该供应商原始上游+自带 key（spec §9）
+        from . import model_sources
+
+        return model_sources.zcode_probe_target(cfg, provider)
     proto = {"claude": "anthropic", "codex": "responses", "qwen-code": "chat"}.get(harness, "chat")
     for name, d in TOOL_DOSSIERS.items():
         if harness in d.harnesses and tool_by_name.get(name, {}).get("online"):

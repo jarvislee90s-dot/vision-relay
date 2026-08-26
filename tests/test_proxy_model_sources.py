@@ -226,3 +226,85 @@ def test_harness_matrix_direct_fallback_and_current_provider(tmp_path, monkeypat
     assert matrix["qwen-code"][0].is_current is True
     assert matrix["claude"][0].provider == "?"  # 无工具、无 harness 配置 → 直连未知
     assert ms.current_provider(cfg, "claude") == "?"
+
+
+class TestZcodeMatrix:
+    def _setup(self, tmp_path, monkeypatch, providers):
+        from vision_relay import wiring
+
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        p = tmp_path / ".zcode" / "v2" / "config.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"provider": providers}), encoding="utf-8")
+        return wiring
+
+    def test_matrix_rows_and_empty_key_excluded(self, tmp_path, monkeypatch):
+        self._setup(
+            tmp_path,
+            monkeypatch,
+            {
+                "builtin:bigmodel": {
+                    "name": "B",
+                    "kind": "anthropic",
+                    "options": {"apiKey": "k-1234567890", "baseURL": "https://b.example"},
+                    "enabled": True,
+                    "models": {"GLM-5-Turbo": {"name": "glm-5-turbo"}, "GLM-5.3": {}},
+                },
+                "nokey": {
+                    "name": "N",
+                    "kind": "anthropic",
+                    "options": {"apiKey": "", "baseURL": "https://n.example"},
+                    "enabled": False,
+                    "models": {"m": {}},
+                },
+            },
+        )
+        from vision_relay.config import ProxyConfig
+
+        rows = ms.zcode_matrix(ProxyConfig())
+        assert len(rows) == 1  # 空 key 供应商整行不产
+        r = rows[0]
+        assert r.provider == "builtin:bigmodel" and r.is_current is True
+        assert r.models == ["glm-5-turbo", "GLM-5.3"]  # API 名（name 优先）
+        assert r.tool == "zcode" and r.harness == "zcode"
+
+    def test_harness_matrix_has_zcode_no_direct_fallback(self, tmp_path, monkeypatch):
+        self._setup(
+            tmp_path,
+            monkeypatch,
+            {"k": {"kind": "anthropic", "options": {"apiKey": "k", "baseURL": "https://x"}, "models": {"m": {}}}},
+        )
+        from vision_relay.config import ProxyConfig
+
+        cfg = ProxyConfig()
+        cfg.routing.harnesses = ["zcode"]
+        out = ms.harness_matrix(cfg)
+        assert len(out["zcode"]) == 1 and out["zcode"][0].tool == "zcode"
+
+    def test_probe_target_uses_snapshot_original(self, tmp_path, monkeypatch):
+        self._setup(
+            tmp_path,
+            monkeypatch,
+            {
+                "k": {
+                    "kind": "openai",
+                    "options": {"apiKey": "sk-abcdefgh", "baseURL": "http://127.0.0.1:8787"},
+                    "models": {},
+                }
+            },
+        )
+        from vision_relay import snapshot
+        from vision_relay.config import ProxyConfig
+
+        snapshot.save(
+            "zcode",
+            snapshot.Snapshot(
+                base_url="x",
+                key_ref="provider[].options.apiKey",
+                model="",
+                provider_urls={"k::openai": "https://real.example/v1"},
+            ),
+        )
+        base, key, proto = ms.zcode_probe_target(ProxyConfig(), "k")
+        assert (base, key, proto) == ("https://real.example/v1", "sk-abcdefgh", "chat")

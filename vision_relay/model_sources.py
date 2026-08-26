@@ -298,6 +298,8 @@ def harness_matrix(cfg) -> dict[str, list[ProviderRow]]:
         rows: list[ProviderRow] = []
         if harness == "claude" and _ccswitch_installed():
             rows = ccswitch_matrix().get("claude", [])
+        elif harness == "zcode":
+            rows = zcode_matrix(cfg)
         elif harness == "codex":
             s = snap.get("codex")
             tool = s.second_hop if s is not None and s.second_hop else None
@@ -307,10 +309,85 @@ def harness_matrix(cfg) -> dict[str, list[ProviderRow]]:
                 rows = codexpp_matrix()
             elif _ccswitch_installed():
                 rows = ccswitch_matrix().get("codex", [])
-        if not rows:
+        if not rows and harness != "zcode":  # zcode 矩阵真相=config.json，文件缺失=空矩阵，不走直连兜底
             rows = _direct_rows(cfg, harness)
         out[harness] = rows
     return out
+
+
+def _zcode_config_path() -> str:
+    from . import wiring
+
+    return wiring._path(wiring.HOME, "zcode")
+
+
+def _zcode_load() -> dict:
+    try:
+        with open(_zcode_config_path(), encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def zcode_matrix(cfg) -> list[ProviderRow]:
+    """zcode config.json → ProviderRow（spec §9）：可接管供应商一行（空 key/未知 kind 整行
+    不产），provider=供应商 ID（唯一可反查、与请求期能力键同键），enabled 即当前，
+    models=API 名（name 优先）。现场地址指代理时显示快照原值。"""
+    from . import snapshot, wiring
+
+    d = _zcode_load()
+    items, _nokey, _bad = wiring._zcode_entries(d)
+    snap = snapshot.load().get("zcode")
+    snap_urls = (snap.provider_urls if snap is not None and snap.provider_urls else {}) or {}
+    rows: list[ProviderRow] = []
+    for pid, kind, e in items:
+        models: list[str] = []
+        models_obj = e.get("models")
+        if isinstance(models_obj, dict):
+            for mid, m in models_obj.items():
+                if isinstance(m, dict):
+                    api = m.get("name")
+                    models.append(api if isinstance(api, str) and api else mid)
+        url = e["options"]["baseURL"]
+        if wiring.classify_base_url(url, cfg.bind_port) == "ours":
+            url = snap_urls.get(wiring._zcode_key(pid, kind)) or url
+        rows.append(
+            ProviderRow(
+                tool="zcode",
+                harness="zcode",
+                provider=pid,
+                base_url=url,
+                is_current=e.get("enabled") is True,
+                models=_dedup_keep_order(models),
+            )
+        )
+    return rows
+
+
+def zcode_probe_target(cfg, provider: str) -> tuple[str, str, str]:
+    """(base, key, proto)：原始上游=现场（非代理）→快照原值；key 仅进程内使用（spec §9）。"""
+    from . import snapshot, wiring
+
+    d = _zcode_load()
+    provs = d.get("provider")
+    if isinstance(provs, dict):
+        e = provs.get(provider)
+        if isinstance(e, dict) and isinstance(e.get("options"), dict):
+            kind = e.get("kind")
+            opts = e["options"]
+            if kind in wiring._ZCODE_PROTO:
+                base = opts.get("baseURL")
+                if isinstance(base, str) and wiring.classify_base_url(base, cfg.bind_port) == "ours":
+                    snap = snapshot.load().get("zcode")
+                    base = (snap.provider_urls or {}).get(wiring._zcode_key(provider, str(kind))) if snap else None
+                key = opts.get("apiKey")
+                return (
+                    base if isinstance(base, str) else "",
+                    key if isinstance(key, str) else "",
+                    wiring._ZCODE_PROTO[kind],
+                )
+    return "", "", "chat"
 
 
 def current_provider(cfg, harness: str) -> str:
