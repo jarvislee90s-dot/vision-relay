@@ -271,7 +271,19 @@ def reconcile(
             cur, owner = row["base_url"], row["ownership"]
             if obs["service_alive"] and name in expected_wired:
                 # 服务在跑 + 该接管：始终接管（spec §3）
-                if owner == "ours":
+                if name == "zcode":
+                    # zcode 纯条目级：无全局 base_url 归属分支，任何漂移由重写+吸收收敛（spec §7.1）
+                    res = wiring.reconcile_zcode_providers(cfg)
+                    if res:
+                        actions.append(
+                            {
+                                "type": "provider_absorb",
+                                "harness": name,
+                                "rewritten": res["rewritten"],
+                                "gated": res["gated"],
+                            }
+                        )
+                elif owner == "ours":
                     # qwen 0.22.0 条目级接线：全局字段 ours 不代表条目没漂——
                     # 条目被外部改走时重接管并把新原值吸收进快照（absorb 语义）
                     if name == "qwen-code":
@@ -312,6 +324,10 @@ def reconcile(
         # 缺失重建/原值消失清理，与 ensure_tool_relays 同风格）
         if obs["service_alive"] and "qwen-code" in expected_wired:
             for n in wiring.ensure_qwen_relays(cfg):
+                actions.append({"type": "relay_added", "name": n})
+                append_event("relay_added", None, {"name": n})
+        if obs["service_alive"] and "zcode" in expected_wired:
+            for n in wiring.ensure_zcode_relays(cfg):
                 actions.append({"type": "relay_added", "name": n})
                 append_event("relay_added", None, {"name": n})
         if actions:

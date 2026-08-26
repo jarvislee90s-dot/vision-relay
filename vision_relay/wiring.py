@@ -8,7 +8,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from . import snapshot
+from . import fingerprint, snapshot
 from .config import RelayConfig, save_config
 from .tools import _TEMPLATES, TOOL_DOSSIERS
 
@@ -450,6 +450,127 @@ def ensure_qwen_relays(cfg) -> list[str]:
     return added
 
 
+def _zcode_slug(pid: str) -> str:
+    return re.sub(r"[^a-z0-9.-]+", "-", pid.lower()).strip("-") or "provider"
+
+
+def _zcode_relay_desired(
+    d: dict, provider_urls: dict[str, str] | None, proxy_url: str, bind_port: int
+) -> list[RelayConfig]:
+    """期望 zcode relay 列表（有序：激活供应商最前）。一供应商一条；原值=现场非代理地址
+    优先、现场指代理时取快照原值；ours/工具端口不建（防回环）。名称待 ensure 侧消歧。"""
+    items, _nokey, _bad = _zcode_entries(d)
+    provider_urls = provider_urls or {}
+    ordered = [t for t in items if t[2].get("enabled") is True] + [t for t in items if t[2].get("enabled") is not True]
+    out: list[RelayConfig] = []
+    for pid, kind, e in ordered:
+        key = _zcode_key(pid, kind)
+        live = e["options"]["baseURL"]
+        orig = live
+        if live == proxy_url or live.startswith(proxy_url + "/"):
+            orig = provider_urls.get(key) or live
+        owner = classify_base_url(orig, bind_port)
+        if owner == "ours" or owner in TOOL_DOSSIERS:
+            continue
+        names: list[str] = []
+        models = e.get("models")
+        if isinstance(models, dict):
+            for mid, m in models.items():
+                if isinstance(m, dict):
+                    names.append(mid)
+                    api = m.get("name")
+                    if isinstance(api, str) and api and api != mid:
+                        names.append(api)  # 双名收录（spec §6.3）
+        out.append(
+            RelayConfig(
+                name=_ZCODE_RELAY_PREFIX + _zcode_slug(pid),  # 暂定名，ensure 侧查重
+                protocol=_ZCODE_PROTO[kind],
+                base_url=orig,
+                models=names,
+                provider_id=pid,
+                auth_hints=[fingerprint.key_fingerprint(e["options"]["apiKey"])],
+            )
+        )
+    return out
+
+
+def ensure_zcode_relays(cfg) -> list[str]:
+    """按现场 config.json + 快照维护 zcode 一层直连 relay（spec §6）：一供应商一条、激活优先、
+    指纹随行。现状（成员/字段/顺序）与期望不一致 → 整块重建；返回新增 name 列表。"""
+    p = _path(HOME, "zcode")
+    if not os.path.exists(p):
+        return []
+    try:
+        d = json.load(open(p, encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    snap = snapshot.load().get("zcode")
+    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
+    desired = _zcode_relay_desired(d, getattr(snap, "provider_urls", None), proxy_url, cfg.bind_port)
+    current = [r for r in cfg.relays if getattr(r, "provider_id", None) and r.name.startswith(_ZCODE_RELAY_PREFIX)]
+    same = [r.provider_id for r in current] == [r.provider_id for r in desired] and all(
+        c.protocol == w.protocol and c.base_url == w.base_url and list(c.models) == list(w.models)
+        for c, w in zip(current, desired)
+    )
+    if same:
+        return []
+    names_before = {r.name for r in current}
+    taken = {
+        r.name for r in cfg.relays if not (getattr(r, "provider_id", None) and r.name.startswith(_ZCODE_RELAY_PREFIX))
+    }
+    cfg.relays = [
+        r for r in cfg.relays if not (getattr(r, "provider_id", None) and r.name.startswith(_ZCODE_RELAY_PREFIX))
+    ]
+    added: list[str] = []
+    for i, r in enumerate(desired):
+        name = r.name
+        n = 2
+        while name in taken:  # slug 撞名消歧（与 qwen _qwen_relay_name 同风格）
+            name = f"{r.name}-{n}"
+            n += 1
+        taken.add(name)
+        r.name = name
+        cfg.relays.insert(i, r)  # 整块插头部：先于通配 "*" 既有 relay（prepend 语义同 qwen）
+        if name not in cfg.routing.activated_relays:
+            cfg.routing.activated_relays.append(name)
+        if name not in names_before:
+            added.append(name)
+    save_config(cfg)
+    return added
+
+
+def reconcile_zcode_providers(cfg) -> dict | None:
+    """接管态校正 zcode 条目漂移（spec §7.1）：非本代理条目重指、关门重开、新原值吸收进
+    快照合并映射。返回 None 或摘要 {rewritten, gated}。"""
+    p = _path(HOME, "zcode")
+    if not os.path.exists(p):
+        return None
+    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
+    new_urls, new_mods, _stats = _rewrite_zcode_providers(p, proxy_url)
+    if not new_urls and not new_mods:
+        return None
+    old = snapshot.load().get("zcode")
+    merged = dict(old.provider_urls or {}) if old and old.provider_urls else {}
+    merged.update(new_urls)
+    merged_mod = dict(old.provider_modalities or {}) if old and old.provider_modalities else {}
+    merged_mod.update(new_mods)
+    try:
+        snapshot.save(
+            "zcode",
+            snapshot.Snapshot(
+                base_url=old.base_url if old else proxy_url,
+                key_ref=snapshot.key_ref_for("zcode"),
+                model=old.model if old else "",
+                second_hop=None,
+                provider_urls=merged or None,
+                provider_modalities=merged_mod or None,
+            ),
+        )
+    except Exception:  # 快照尽力而为，不打断重接管
+        pass
+    return {"rewritten": len(new_urls), "gated": len(new_mods)}
+
+
 def reconcile_qwen_providers(cfg) -> dict | None:
     """接管态下校正 qwen provider 条目漂移：非本代理的条目重指本代理、被关的
     modalities 门重开，新原值吸收进快照（对应 absorb 语义，spec §5 始终接管）。
@@ -670,10 +791,15 @@ def wiring_backup_and_rewrite(cfg) -> list[str]:
                 pass
         # qwen 条目级改写（必须在备份之后；快照需要合并条目原值映射）
         qwen_new, qwen_mod, qwen_skipped, qwen_rewritten, qwen_gated = (None, None, 0, 0, 0)
+        zcode_new: dict = {}
+        zcode_mod: dict = {}
+        zcode_stats: dict = {}
         if name == "qwen-code":
             qwen_new, qwen_mod, qwen_skipped, qwen_rewritten, qwen_gated = _rewrite_qwen_providers(p, proxy_url)
+        elif name == "zcode":
+            zcode_new, zcode_mod, zcode_stats = _rewrite_zcode_providers(p, proxy_url)
         base_changed = bool(original) and classify_base_url(original, cfg.bind_port) != "ours"
-        if base_changed or qwen_new or qwen_mod:
+        if base_changed or qwen_new or qwen_mod or zcode_new or zcode_mod:
             # 接管前组合快照：base_url + key 位置 + 模型 + 第二跳归属（spec §5）；
             # 条目映射与既有快照合并（重复 start 时已指本代理的条目保留首次记录）
             second_hop = classify_base_url(original, cfg.bind_port) if original else None
@@ -681,9 +807,9 @@ def wiring_backup_and_rewrite(cfg) -> list[str]:
             model = _first_model(p)  # 内部自吞读取失败（返回空串），无需再包
             old = snapshot.load().get(name)
             merged = dict(old.provider_urls or {}) if old and old.provider_urls else {}
-            merged.update(qwen_new or {})
+            merged.update(qwen_new or zcode_new or {})
             merged_mod = dict(old.provider_modalities or {}) if old and old.provider_modalities else {}
-            merged_mod.update(qwen_mod or {})
+            merged_mod.update(qwen_mod or zcode_mod or {})
             try:
                 snapshot.save(
                     name,
@@ -698,15 +824,22 @@ def wiring_backup_and_rewrite(cfg) -> list[str]:
                 )
             except Exception:  # 快照尽力而为，绝不打断接管（保护面不依赖 snapshot 内部实现）
                 pass
-        ok = write_base_url(p, h, proxy_url)
-        msg = f"{name}: base_url -> {proxy_url} ({'ok' if ok else 'FAIL'})"
-        if name == "qwen-code":
-            msg += (
-                f"; providers {qwen_rewritten} entries -> proxy"
-                + (f", {qwen_gated} modalities gate opened" if qwen_gated else "")
-                + f", {qwen_skipped} skipped"
+        if name == "zcode":
+            changed.append(
+                f"zcode: providers {zcode_stats.get('rewritten', 0)} -> proxy"
+                + (f", {zcode_stats.get('gated', 0)} modalities gated" if zcode_stats.get("gated") else "")
+                + f", {zcode_stats.get('skipped_nokey', 0)} nokey skipped, {zcode_stats.get('skipped_kind', 0)} unknown-kind skipped"
             )
-        changed.append(msg)
+        else:
+            ok = write_base_url(p, h, proxy_url)
+            msg = f"{name}: base_url -> {proxy_url} ({'ok' if ok else 'FAIL'})"
+            if name == "qwen-code":
+                msg += (
+                    f"; providers {qwen_rewritten} entries -> proxy"
+                    + (f", {qwen_gated} modalities gate opened" if qwen_gated else "")
+                    + f", {qwen_skipped} skipped"
+                )
+            changed.append(msg)
         # base 已指本代理的重复接管也补（捕获 Codex++ 运行期重新生成的目录）
         if name == "codex":
             cat_msg = _patch_codex_catalog_modalities(p)
@@ -715,6 +848,9 @@ def wiring_backup_and_rewrite(cfg) -> list[str]:
     if any(h == "qwen-code" for h in cfg.routing.harnesses):
         for n in ensure_qwen_relays(cfg):
             changed.append(f"qwen-code: relay {n} added (一层直连, 鉴权透传客户端头)")
+    if any(h == "zcode" for h in cfg.routing.harnesses):
+        for n in ensure_zcode_relays(cfg):
+            changed.append(f"zcode: relay {n} added (一层直连, 鉴权透传, 指纹选路)")
     return changed
 
 
@@ -790,7 +926,9 @@ def relays_restore(cfg) -> list[str]:
     templates = cfg.routing.relay_templates
     remaining = []
     for r in cfg.relays:
-        if r.name.startswith(_QWEN_RELAY_PREFIX) and r.name in cfg.routing.activated_relays:
+        if (
+            r.name.startswith(_QWEN_RELAY_PREFIX) or r.name.startswith(_ZCODE_RELAY_PREFIX)
+        ) and r.name in cfg.routing.activated_relays:
             msgs.append(f"relay {r.name} 已还原移除")
         elif (
             r.name in cfg.routing.activated_relays
@@ -932,6 +1070,12 @@ def wiring_report(cfg) -> list[dict]:
             stats = _qwen_provider_stats(p, proxy_url)
             row["providers"] = stats
             row["wired"] = row["wired"] and stats["eligible"] == stats["wired"] and stats["eligible"] == stats["gated"]
+        if name == "zcode" and os.path.exists(p):
+            stats = _zcode_provider_stats(p, proxy_url)
+            row["providers"] = stats
+            # zcode 纯条目级：wired 只看 eligible 全覆盖+门全开（激活供应商可能是空 key 未接管者，
+            # 其直连地址不代表接管失败）
+            row["wired"] = stats["eligible"] > 0 and stats["eligible"] == stats["wired"] == stats["gated"]
         out.append(row)
     return out
 

@@ -265,3 +265,106 @@ class TestZcodeRestore:
         d = json.load(open(p, encoding="utf-8"))
         assert d["provider"]["k"]["options"]["baseURL"] == "https://open.bigmodel.cn/api/anthropic"
         assert any("providers restored" in m for m in msgs)
+
+
+class TestZcodeRelays:
+    def test_one_relay_per_provider_with_fingerprint(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        _write_zcode_config(
+            tmp_path,
+            {
+                "builtin:bigmodel": _provider(
+                    enabled=True, models={"GLM-5-Turbo": {"name": "glm-5-turbo", "modalities": {"input": ["text"]}}}
+                ),
+                "ark": _provider(
+                    url="https://ark.cn-beijing.volces.com/api/coding/v3",
+                    key="ark-xyz1234567890",
+                    kind="openai",
+                    enabled=False,
+                    models={"DeepSeek-V4-Flash": {"name": "deepseek-v4-flash"}},
+                ),
+            },
+        )
+        cfg = ProxyConfig()
+        added = wiring.ensure_zcode_relays(cfg)
+        zs = [r for r in cfg.relays if r.provider_id]
+        assert len(zs) == 2
+        assert zs[0].provider_id == "builtin:bigmodel"  # 激活供应商排最前
+        ark = next(r for r in zs if r.provider_id == "ark")
+        assert ark.protocol == "chat"  # openai kind → chat
+        assert zs[0].protocol == "anthropic"
+        assert set(zs[0].models) == {"GLM-5-Turbo", "glm-5-turbo"}  # 双名收录
+        assert ark.base_url == "https://ark.cn-beijing.volces.com/api/coding/v3"
+        assert len(zs[0].auth_hints) == 1 and zs[0].auth_hints[0].startswith("k-12")  # 指纹形态
+        assert zs[0].api_key == ""  # 鉴权透传
+        assert set(added) == {r.name for r in zs}
+
+    def test_loopback_original_skipped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        _write_zcode_config(tmp_path, {"k": _provider(url="http://127.0.0.1:15721")})  # cc-switch 端口
+        cfg = ProxyConfig()
+        assert wiring.ensure_zcode_relays(cfg) == []
+        assert not [r for r in cfg.relays if r.provider_id]
+
+    def test_reorder_enabled_first_and_cleanup(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        _write_zcode_config(
+            tmp_path,
+            {
+                "a": _provider(url="https://a.example", enabled=False),
+                "b": _provider(url="https://b.example", enabled=True),
+            },
+        )
+        cfg = ProxyConfig()
+        wiring.ensure_zcode_relays(cfg)
+        _write_zcode_config(  # 用户切换激活供应商 a
+            tmp_path,
+            {
+                "a": _provider(url="https://a.example", enabled=True),
+                "b": _provider(url="https://b.example", enabled=False),
+            },
+        )
+        wiring.ensure_zcode_relays(cfg)
+        zs = [r for r in cfg.relays if r.provider_id]
+        assert [r.provider_id for r in zs] == ["a", "b"]  # 激活优先重排序
+        _write_zcode_config(tmp_path, {"a": _provider(url="https://a.example", enabled=True)})  # b 消失
+        wiring.ensure_zcode_relays(cfg)
+        assert [r.provider_id for r in cfg.relays if r.provider_id] == ["a"]  # 清理
+
+    def test_backup_and_rewrite_wires_zcode_and_snapshots(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        p = _write_zcode_config(tmp_path, {"k": _provider(models={"m": _text_model()})})
+        cfg = ProxyConfig()
+        cfg.routing.harnesses = ["zcode"]
+        msgs = wiring.wiring_backup_and_rewrite(cfg)
+        d = json.load(open(p, encoding="utf-8"))
+        assert d["provider"]["k"]["options"]["baseURL"] == "http://127.0.0.1:8787"
+        from vision_relay import snapshot
+
+        snap = snapshot.load()["zcode"]
+        assert snap.provider_urls == {"k::anthropic": "https://open.bigmodel.cn/api/anthropic"}
+        assert snap.second_hop is None
+        assert any("zcode: providers" in m for m in msgs)
+        assert any(r.provider_id == "k" for r in cfg.relays)  # 接管顺带建 relay
+
+    def test_reconcile_zcode_providers_absorbs(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        p = _write_zcode_config(tmp_path, {"k": _provider()})
+        cfg = ProxyConfig()
+        cfg.routing.harnesses = ["zcode"]
+        wiring.wiring_backup_and_rewrite(cfg)
+        # 模拟 zcode 运行期回写：改走新上游
+        d = json.load(open(p, encoding="utf-8"))
+        d["provider"]["k"]["options"]["baseURL"] = "https://new.example/api"
+        json.dump(d, open(p, "w", encoding="utf-8"))
+        res = wiring.reconcile_zcode_providers(cfg)
+        assert res and res["rewritten"] == 1
+        from vision_relay import snapshot
+
+        merged = snapshot.load()["zcode"].provider_urls
+        assert merged["k::anthropic"] == "https://new.example/api"  # 新原值吸收
