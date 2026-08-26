@@ -19,6 +19,7 @@ _KEY_FIELDS = {
     "claude": ((".claude", "settings.json"), ("env.ANTHROPIC_AUTH_TOKEN", "env.ANTHROPIC_API_KEY")),
     "codex": ((".codex", "auth.json"), ("OPENAI_API_KEY",)),
     "qwen-code": ((".qwen", "settings.json"), ("model.apiKey",)),
+    "zcode": ((".zcode", "v2", "config.json"), ("provider[].options.apiKey",)),
 }
 
 
@@ -96,6 +97,8 @@ def key_ref_for(harness: str) -> str:
         return "not-found"
     if harness == "codex":
         return os.path.basename(p)  # auth.json 存在即视为 key 位置
+    if harness == "zcode":  # key 位置是条目级通配描述，非可 dig 的点路径
+        return "provider[].options.apiKey"
     try:
         with open(p, encoding="utf-8") as f:
             d = json.load(f)

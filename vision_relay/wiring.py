@@ -29,7 +29,14 @@ HARNESS_CFG: dict[str, _Harness] = {
     "claude": _Harness("json", (".claude", "settings.json"), "env.ANTHROPIC_BASE_URL"),
     "codex": _Harness("toml", (".codex", "config.toml"), "base_url"),
     "qwen-code": _Harness("json", (".qwen", "settings.json"), "model.baseUrl"),
+    # zcode 供应商配置在 ~/.zcode/v2/config.json 的 provider.<id>.options.baseURL（纯条目级，
+    # 无全局 base_url；key 字段仅作路径占位，read_base_url 特判返回激活供应商地址）
+    "zcode": _Harness("zcode-v2", (".zcode", "v2", "config.json"), "provider"),
 }
+
+# zcode provider.kind → relay 协议（spec §4；未知 kind 不接管）
+_ZCODE_PROTO = {"anthropic": "anthropic", "openai": "chat", "openai-compatible": "chat"}
+_ZCODE_RELAY_PREFIX = "zcode-"
 
 # qwen-code ≥0.22.0：模型选中 modelProviders 条目时，请求端点取条目自身 baseUrl
 # （解析优先级第二层），model.baseUrl 只是 /model 选择器的消歧提示、不在解析链内。
@@ -350,6 +357,16 @@ def _find_bak(p: str) -> str | None:
 
 def read_base_url(path: str, h: _Harness) -> str | None:
     try:
+        if h.kind == "zcode-v2":
+            d = json.load(open(path, encoding="utf-8"))
+            provs = d.get("provider")
+            if isinstance(provs, dict):
+                for e in provs.values():
+                    if isinstance(e, dict) and e.get("enabled") is True:
+                        opts = e.get("options")
+                        if isinstance(opts, dict) and isinstance(opts.get("baseURL"), str) and opts["baseURL"]:
+                            return opts["baseURL"]
+            return None
         if h.kind == "json":
             d = json.load(open(path, encoding="utf-8"))
             node = d
@@ -645,6 +662,83 @@ def relays_restore(cfg) -> list[str]:
     cfg.routing.activated_relays = []
     save_config(cfg)
     return msgs
+
+
+def _zcode_key(pid: str, kind: str) -> str:
+    """快照身份键：供应商 ID + 接口格式（kind 变更=身份变更→还原不命中，交给对账吸收）。"""
+    return f"{pid}::{kind}"
+
+
+def _zcode_entries(d: dict) -> tuple[list[tuple[str, str, dict]], int, int]:
+    """收集可接管条目 (pid, kind, entry)：baseURL/apiKey 均非空 + kind 已知。
+    返回 (items, skipped_nokey, skipped_kind)——空 key 预设供应商不接管（spec §5.1）。"""
+    provs = d.get("provider")
+    if not isinstance(provs, dict):
+        return [], 0, 0
+    items: list[tuple[str, str, dict]] = []
+    nokey = badkind = 0
+    for pid, e in provs.items():
+        if not isinstance(e, dict) or not isinstance(e.get("options"), dict):
+            continue
+        opts = e["options"]
+        url, key = opts.get("baseURL"), opts.get("apiKey")
+        if not (isinstance(url, str) and url):
+            continue
+        if not (isinstance(key, str) and key):
+            nokey += 1
+            continue
+        kind = e.get("kind")
+        if kind not in _ZCODE_PROTO:
+            badkind += 1
+            continue
+        items.append((str(pid), kind, e))
+    return items, nokey, badkind
+
+
+def _zcode_provider_gated(entry: dict) -> bool:
+    """该供应商全部模型的图片门都已开（无模型视为 True；input 形态不认识不计）。"""
+    models = entry.get("models")
+    if not isinstance(models, dict) or not models:
+        return True
+    for m in models.values():
+        if isinstance(m, dict):
+            mods = m.get("modalities")
+            inp = mods.get("input") if isinstance(mods, dict) else None
+            if isinstance(inp, list) and "image" not in inp:
+                return False
+    return True
+
+
+def _zcode_provider_stats(path: str, proxy_url: str) -> dict:
+    """zcode 条目统计（wiring_report/observe 用）：wired 要求 URL 指本代理，gated 要求门全开。"""
+    empty = {"total": 0, "eligible": 0, "wired": 0, "gated": 0, "skipped_nokey": 0, "skipped_kind": 0}
+    try:
+        d = json.load(open(path, encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return empty
+    items, nokey, badkind = _zcode_entries(d)
+    wired = gated = total = 0
+    provs = d.get("provider")
+    if isinstance(provs, dict):
+        total = sum(
+            1
+            for e in provs.values()
+            if isinstance(e, dict) and isinstance(e.get("options"), dict) and e["options"].get("baseURL")
+        )
+    for _pid, _kind, e in items:
+        url = e["options"]["baseURL"]
+        if url == proxy_url or url.startswith(proxy_url + "/"):
+            wired += 1
+        if _zcode_provider_gated(e):
+            gated += 1
+    return {
+        "total": total,
+        "eligible": len(items),
+        "wired": wired,
+        "gated": gated,
+        "skipped_nokey": nokey,
+        "skipped_kind": badkind,
+    }
 
 
 def _qwen_provider_stats(path: str, proxy_url: str) -> dict[str, int]:
