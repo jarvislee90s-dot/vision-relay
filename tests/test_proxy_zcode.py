@@ -173,3 +173,95 @@ class TestZcodeRewrite:
         p = _write_zcode_config(tmp_path, {"k": _provider(models={"m": {"limit": {}}})})
         _urls, _mods, stats = wiring._rewrite_zcode_providers(p, "http://127.0.0.1:8787")
         assert stats["skipped_mod"] == 1  # 形态不认识不硬造（spec §5.1）
+
+
+class TestZcodeRestore:
+    def _taken_over(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        p = _write_zcode_config(tmp_path, {"k": _provider(models={"GLM-5.2": _text_model()})})
+        proxy = "http://127.0.0.1:8787"
+        urls, mods, _ = wiring._rewrite_zcode_providers(p, proxy)
+        return p, proxy, urls, mods
+
+    def test_restore_reverts_url_and_gate(self, tmp_path, monkeypatch):
+        p, proxy, urls, mods = self._taken_over(tmp_path, monkeypatch)
+        n = wiring._restore_zcode_providers(p, proxy, urls, mods)
+        d = json.load(open(p, encoding="utf-8"))
+        glm = d["provider"]["k"]["models"]["GLM-5.2"]
+        assert d["provider"]["k"]["options"]["baseURL"] == "https://open.bigmodel.cn/api/anthropic"
+        assert glm["modalities"]["input"] == ["text"]
+        assert "modalitiesConfigured" not in glm["zcode"]  # flag 原值缺失（哨兵）→ 还原删字段；本例 zcode 子对象存在
+        assert n == 1
+
+    def test_restore_skips_kind_changed_entry(self, tmp_path, monkeypatch):
+        p, proxy, urls, mods = self._taken_over(tmp_path, monkeypatch)
+        d = json.load(open(p, encoding="utf-8"))
+        d["provider"]["k"]["kind"] = "openai"  # zcode 更新换了协议族 → 身份键不命中
+        json.dump(d, open(p, "w", encoding="utf-8"))
+        n = wiring._restore_zcode_providers(p, proxy, urls, mods)
+        d2 = json.load(open(p, encoding="utf-8"))
+        assert d2["provider"]["k"]["options"]["baseURL"] == proxy  # 原样保留，交给对账吸收
+        assert n == 0
+
+    def test_restore_skips_user_repointed_entry(self, tmp_path, monkeypatch):
+        p, proxy, urls, mods = self._taken_over(tmp_path, monkeypatch)
+        d = json.load(open(p, encoding="utf-8"))
+        d["provider"]["k"]["options"]["baseURL"] = "https://user-changed.example"
+        json.dump(d, open(p, "w", encoding="utf-8"))
+        wiring._restore_zcode_providers(p, proxy, urls, mods)
+        d2 = json.load(open(p, encoding="utf-8"))
+        assert d2["provider"]["k"]["options"]["baseURL"] == "https://user-changed.example"
+
+    def test_flag_true_restored(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        m = _text_model()
+        m["zcode"]["modalitiesConfigured"] = True  # 原本就配置过
+        p = _write_zcode_config(tmp_path, {"k": _provider(models={"m": m})})
+        proxy = "http://127.0.0.1:8787"
+        _urls, mods, _ = wiring._rewrite_zcode_providers(p, proxy)
+        wiring._restore_zcode_providers(p, proxy, _urls, mods)
+        d = json.load(open(p, encoding="utf-8"))
+        assert d["provider"]["k"]["models"]["m"]["zcode"]["modalitiesConfigured"] is True
+
+    def test_wiring_restore_harness_single(self, tmp_path, monkeypatch):
+        """取消勾选单 harness 还原：与 stop 同一路径，只动指定 harness。"""
+        p, proxy, urls, mods = self._taken_over(tmp_path, monkeypatch)
+        from vision_relay import snapshot
+
+        snapshot.save(
+            "zcode",
+            snapshot.Snapshot(
+                base_url="https://open.bigmodel.cn/api/anthropic",
+                key_ref="provider[].options.apiKey",
+                model="",
+                provider_urls=urls,
+                provider_modalities=mods,
+            ),
+        )
+        cfg = ProxyConfig()
+        msgs = wiring.wiring_restore_harness(cfg, "zcode")
+        d = json.load(open(p, encoding="utf-8"))
+        assert d["provider"]["k"]["options"]["baseURL"] != proxy
+        assert any("providers restored" in m for m in msgs)
+
+    def test_stop_restores_zcode(self, tmp_path, monkeypatch):
+        p, proxy, urls, mods = self._taken_over(tmp_path, monkeypatch)
+        from vision_relay import snapshot
+
+        snapshot.save(
+            "zcode",
+            snapshot.Snapshot(
+                base_url="https://open.bigmodel.cn/api/anthropic",
+                key_ref="provider[].options.apiKey",
+                model="",
+                provider_urls=urls,
+                provider_modalities=mods,
+            ),
+        )
+        cfg = ProxyConfig()
+        cfg.routing.harnesses = ["zcode"]
+        msgs = wiring.wiring_restore_on_stop(cfg)
+        d = json.load(open(p, encoding="utf-8"))
+        assert d["provider"]["k"]["options"]["baseURL"] == "https://open.bigmodel.cn/api/anthropic"
+        assert any("providers restored" in m for m in msgs)

@@ -294,3 +294,13 @@ class TestCodexCatalogModalities:
         msgs = wiring.wiring_backup_and_rewrite(cfg)  # 不抛异常
         assert not any("catalog" in m for m in msgs)
         assert not os.path.exists(cat + wiring.BAK_SUFFIX)
+
+
+class TestRestoreOnStopAfterExtraction:
+    def test_generic_harness_still_guarded(self, tmp_path, monkeypatch):
+        """非本代理指向时不还原（抽取后守卫仍在）。"""
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        _write_harness(tmp_path, "claude", "https://elsewhere.example")
+        msgs = wiring.wiring_restore_on_stop(ProxyConfig())
+        assert any("非本代理" in m for m in msgs)

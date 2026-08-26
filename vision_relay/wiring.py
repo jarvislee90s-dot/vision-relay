@@ -258,6 +258,57 @@ def _rewrite_zcode_providers(path: str, proxy_url: str) -> tuple[dict[str, str],
     return url_originals, mod_originals, stats
 
 
+def _restore_zcode_providers(
+    path: str, proxy_url: str, provider_urls: dict[str, str], provider_modalities: dict[str, object] | None
+) -> int:
+    """按快照还原（spec §5.2）。守卫：当前 baseURL 仍指本代理才动（用户改走别处不动）；
+    身份键 pid::kind 现场重算，kind 变更不命中→跳过（对账吸收新值）。返回还原条数。"""
+    try:
+        d = json.load(open(path, encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    provs = d.get("provider")
+    if not isinstance(provs, dict):
+        return 0
+    provider_modalities = provider_modalities or {}
+    restored = 0
+    for pid, e in provs.items():
+        if not isinstance(e, dict) or not isinstance(e.get("options"), dict):
+            continue
+        opts = e["options"]
+        cur = opts.get("baseURL")
+        if not (isinstance(cur, str) and (cur == proxy_url or cur.startswith(proxy_url + "/"))):
+            continue
+        key = _zcode_key(str(pid), str(e.get("kind") or ""))
+        touched = False
+        if key in provider_urls:
+            opts["baseURL"] = provider_urls[key]
+            touched = True
+        models = e.get("models")
+        if isinstance(models, dict):
+            for mid, m in models.items():
+                rec = provider_modalities.get(f"{key}::{mid}")
+                if not (isinstance(m, dict) and isinstance(rec, dict)):
+                    continue
+                inp = _mod_input(m)
+                if inp is not None and isinstance(rec.get("input"), list):
+                    m["modalities"]["input"] = list(
+                        rec["input"]
+                    )  # 整列表写回原值（原值必不含 image——只记录过缺 image 的模型）
+                zc = m.get("zcode")
+                if isinstance(zc, dict) and "flag" in rec:
+                    if rec["flag"] == _MOD_ABSENT:
+                        zc.pop("modalitiesConfigured", None)
+                    else:
+                        zc["modalitiesConfigured"] = rec["flag"]
+                touched = True
+        if touched:
+            restored += 1
+    if restored and _json_save_atomic(path, d):
+        _mark_zcode_rewrite()
+    return restored
+
+
 def _rewrite_qwen_providers(path: str, proxy_url: str) -> tuple[dict[str, str], dict[str, object], int, int, int]:
     """把全部可改写条目 baseUrl 指到本代理并代开 modalities 准入门。
 
@@ -917,6 +968,17 @@ def wiring_restore_by_snapshot(cfg) -> list[str]:
         if snap is None:
             continue
         p = _path(HOME, name)
+        if name == "zcode":
+            if snap.provider_urls or snap.provider_modalities:
+                n = _restore_zcode_providers(p, proxy_url, snap.provider_urls or {}, snap.provider_modalities)
+                restored.append(f"{name}: providers restored ({n} entries)")
+            bak = _find_bak(p)
+            if bak is not None:  # 整文件备份已过期（快照才是真相），删除防误还原
+                try:
+                    os.unlink(bak)
+                except OSError:
+                    pass
+            continue
         cur = read_base_url(p, HARNESS_CFG[name]) if os.path.exists(p) else None
         if cur is None or (cur != proxy_url and not cur.startswith(proxy_url + "/")):
             restored.append(f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原")
@@ -975,56 +1037,99 @@ def _relay_name(tool_name: str, harness: str, tpl: dict) -> str:
     return "codex-plus"
 
 
-def wiring_restore_on_stop(cfg) -> list[str]:
-    """stop 的统一还原（spec §5 + 2026-08-23 决策）：按最新接管组合快照；快照缺失的
-    harness 退回第一次接管前的整文件 .bak 兜底。
-
-    每 harness 独立决策：有快照 → 只写回 base_url（运行期间用户对配置文件的其他
-    修改原样保留），并删除已过期的 .bak；无快照 → .bak 整文件还原（含 key 位置等
-    完整原始状态）。两者都要求当前 base_url 指向本代理才动文件（与 wiring_restore
-    同守卫）。崩溃修复路径不走这里（reconcile 仍用 wiring_restore_by_snapshot）。
-    """
+def _restore_harness_on_stop(cfg, snaps: dict, name: str) -> list[str]:
+    """stop 的单 harness 还原步骤（wiring_restore_on_stop 与「取消勾选即还原」共用，spec §8）。"""
     proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    snaps = snapshot.load()
-    msgs: list[str] = []
-    for name in cfg.routing.harnesses:
-        h = HARNESS_CFG[name]
-        p = _path(HOME, name)
-        if not os.path.exists(p):
-            continue
-        cur = read_base_url(p, h)
-        if cur is None or (cur != proxy_url and not cur.startswith(proxy_url + "/")):
-            msgs.append(f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原")
-            continue
-        if name == "codex":
-            cat_msg = _restore_codex_catalog(p)
-            if cat_msg:
-                msgs.append(f"{name}: {cat_msg}")
+    h = HARNESS_CFG[name]
+    p = _path(HOME, name)
+    if not os.path.exists(p):
+        return []
+    if name == "zcode":
         snap = snaps.get(name)
-        if snap is not None:
-            ok = write_base_url(p, h, snap.base_url)
-            if ok and name == "qwen-code" and snap.provider_urls:
-                n = _restore_qwen_providers(p, proxy_url, snap.provider_urls, snap.provider_modalities)
-                msgs.append(f"{name}: providers restored ({n} entries)")
-            if ok:
-                bak = _find_bak(p)
-                if bak is not None:
-                    try:
-                        os.unlink(bak)
-                    except OSError:
-                        pass
-            msgs.append(f"{name}: snapshot restored to {snap.base_url} ({'ok' if ok else 'FAIL'})")
-            continue
+        if snap is not None and (snap.provider_urls or snap.provider_modalities):
+            n = _restore_zcode_providers(p, proxy_url, snap.provider_urls or {}, snap.provider_modalities)
+            bak = _find_bak(p)
+            if bak is not None:
+                try:
+                    os.unlink(bak)
+                except OSError:
+                    pass
+            return [f"{name}: providers restored ({n} entries)"]
+        stats = _zcode_provider_stats(p, proxy_url)
+        if stats["wired"] == 0:
+            return []  # 无本代理痕迹：不动
         bak = _find_bak(p)
         if bak is None:
-            msgs.append(f"{name}: 无快照且无备份，跳过")
-            continue
+            return [f"{name}: 无快照且无备份，跳过"]
         try:
             import shutil
 
             shutil.copyfile(bak, p)
             os.unlink(bak)
-            msgs.append(f"{name}: bak restored")
+            _mark_zcode_rewrite()
+            return [f"{name}: bak restored"]
         except OSError as exc:
-            msgs.append(f"{name}: restore FAIL {exc}")
+            return [f"{name}: restore FAIL {exc}"]
+    # ---- 以下为既有 claude/codex/qwen-code 逻辑（逐字保留）----
+    cur = read_base_url(p, h)
+    if cur is None or (cur != proxy_url and not cur.startswith(proxy_url + "/")):
+        return [f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原"]
+    if name == "codex":  # 目录还原须在 config 整文件换回前（当前 config 仍引用被补丁目录）
+        cat_msg = _restore_codex_catalog(p)
+        if cat_msg:
+            return [f"{name}: {cat_msg}"] + _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url)
+    return _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url)
+
+
+def _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url):
+    """既有通用还原尾段（快照优先 → .bak 兜底），从原 wiring_restore_on_stop 循环体原样抽出。"""
+    msgs: list[str] = []
+    snap = snaps.get(name)
+    if snap is not None:
+        ok = write_base_url(p, h, snap.base_url)
+        if ok and name == "qwen-code" and snap.provider_urls:
+            n = _restore_qwen_providers(p, proxy_url, snap.provider_urls, snap.provider_modalities)
+            msgs.append(f"{name}: providers restored ({n} entries)")
+        if ok:
+            bak = _find_bak(p)
+            if bak is not None:
+                try:
+                    os.unlink(bak)
+                except OSError:
+                    pass
+        msgs.append(f"{name}: snapshot restored to {snap.base_url} ({'ok' if ok else 'FAIL'})")
+        return msgs
+    bak = _find_bak(p)
+    if bak is None:
+        return [f"{name}: 无快照且无备份，跳过"]
+    try:
+        import shutil
+
+        shutil.copyfile(bak, p)
+        os.unlink(bak)
+        return [f"{name}: bak restored"]
+    except OSError as exc:
+        return [f"{name}: restore FAIL {exc}"]
+
+
+def wiring_restore_harness(cfg, name: str) -> list[str]:
+    """单 harness 还原（「路由范围取消勾选」用；与 stop 同一还原步骤，spec §8）。"""
+    if name not in HARNESS_CFG:
+        return [f"{name}: unknown harness"]
+    return _restore_harness_on_stop(cfg, snapshot.load(), name)
+
+
+def wiring_restore_on_stop(cfg) -> list[str]:
+    """stop 的统一还原（既有语义不变）：按最新接管组合快照；快照缺失退回整文件 .bak 兜底。
+
+    每 harness 独立决策：有快照 → 只写回 base_url（运行期间用户对配置文件的其他
+    修改原样保留），并删除已过期的 .bak；无快照 → .bak 整文件还原（含 key 位置等
+    完整原始状态）。两者都要求当前 base_url 指向本代理才动文件（zcode 为条目级
+    守卫，见 _restore_zcode_providers）。崩溃修复路径不走这里（reconcile 仍用
+    wiring_restore_by_snapshot）。
+    """
+    snaps = snapshot.load()
+    msgs: list[str] = []
+    for name in cfg.routing.harnesses:
+        msgs.extend(_restore_harness_on_stop(cfg, snaps, name))
     return msgs
