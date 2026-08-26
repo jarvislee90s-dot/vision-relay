@@ -2,7 +2,8 @@
 
 铁律：只读。绝不写 CC Switch / Codex++ 的任何配置或数据库。
 探测=端口通断（不做内容指纹）；激活供应商读取按档案配置，全部 best-effort，
-失败返回 (None, None)——真实上游显示退到"由工具决定（未知）"。
+读取失败返回 (None, None)。档案命中但没填上游地址 → (name, "")：供应商不隐身
+（M3），GUI/CLI 以「未接线」占位呈现。
 """
 
 from __future__ import annotations
@@ -99,7 +100,10 @@ def _codexpp_active_provider() -> tuple[str | None, str | None]:
     active = data.get("activeRelayId")
     for p in data.get("relayProfiles", []):
         if isinstance(p, dict) and p.get("id") == active:
-            return p.get("name") or active, p.get("baseUrl")
+            # 与 model_sources.codexpp_matrix 同一白名单读法：upstreamBaseUrl 优先，缺省给 ""
+            # （M3：无地址的供应商不隐身，地址空串由展示层占位「未接线」）
+            raw = p.get("upstreamBaseUrl") or p.get("baseUrl") or ""
+            return p.get("name") or active, raw if isinstance(raw, str) else ""
     return None, None
 
 
@@ -142,7 +146,8 @@ def _ccswitch_sqlite_provider() -> tuple[str | None, str | None]:
         except (TypeError, ValueError):
             continue
         if isinstance(v, dict) and (v.get("name") or v.get("baseUrl")):
-            return v.get("name"), v.get("baseUrl")
+            base = v.get("baseUrl")
+            return v.get("name"), base if isinstance(base, str) else ""
         if isinstance(v, str):  # 值是 provider id，查 providers 表
             try:
                 conn = sqlite3.connect(f"file:{CCSWITCH_DB}?mode=ro", uri=True)
@@ -154,8 +159,8 @@ def _ccswitch_sqlite_provider() -> tuple[str | None, str | None]:
                     d = json.loads(row[0])
                     env = d.get("env", {}) if isinstance(d, dict) else {}
                     url = env.get("ANTHROPIC_BASE_URL") or env.get("OPENAI_BASE_URL")
-                    if url:
-                        return v, url
+                    # M3：命中档案即返回——url 空(没填上游地址)也带回供应商名，不再整家丢掉
+                    return v, url if isinstance(url, str) else ""
             except Exception:  # best-effort
                 continue
     return None, None

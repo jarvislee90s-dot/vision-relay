@@ -51,6 +51,17 @@ describe("chainHops", () => {
     expect(hops[2].label).toContain("直连真实上游");
     expect(hops[2].arrow).toContain("relay（一层直连）");
   });
+  it("M3 无 baseURL 的激活供应商不隐身：sub 照常显示供应商名，地址占位「未接线」", () => {
+    const naked = { name: "cc-switch", port: 15721, online: true, active_provider: "naked-prov", provider_base_url: "" } as ToolRow;
+    const hops = chainHops(row("cc-switch", "http://127.0.0.1:15721"), "claude", naked, false, 8787);
+    expect(hops[2].sub).toContain("naked-prov");
+    expect(hops[2].sub).toContain("未接线");
+  });
+  it("M3 档案读不到地址（null）同样给「未接线」占位，不再渲染空括号/「未知」", () => {
+    const t = { name: "codex-plus", port: 57321, online: true, active_provider: "p", provider_base_url: null } as ToolRow;
+    const hops = chainHops(row("codex-plus", "http://127.0.0.1:57321/v1"), "codex", t, false, 8787);
+    expect(hops[2].sub).toContain("供应商 p（未接线）");
+  });
   it("接管态 + 工具离线：4 跳（relay 回落一层直连，route_fallback 等效）", () => {
     const hops = chainHops(row("ours", "http://127.0.0.1:8787"), "claude", ccOff, true, 8787);
     expect(hops[1].bypass).toBe(false);

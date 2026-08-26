@@ -495,6 +495,20 @@ class TestToolsVerb:
         out = capsys.readouterr().out
         assert "cc-switch" in out and "在线" in out and "prov-x" in out
 
+    def test_tools_provider_without_base_url_shows_unwired(self, tmp_path, monkeypatch, capsys):
+        """M3：无 baseURL 的供应商不隐身——名字照常显示，地址占位「未接线」。"""
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        from vision_relay.config import ProxyConfig
+        from vision_relay.tools import ToolState
+
+        monkeypatch.setattr(
+            "vision_relay.tools.probe_tools",
+            lambda *a, **k: [ToolState("cc-switch", 15721, True, "naked", "")],
+        )
+        assert cli.cmd_tools(ProxyConfig()) == 0
+        out = capsys.readouterr().out
+        assert "naked" in out and "未接线" in out
+
 
 class TestProbeVerb:
     def test_probe_single_model(self, tmp_path, monkeypatch, capsys):

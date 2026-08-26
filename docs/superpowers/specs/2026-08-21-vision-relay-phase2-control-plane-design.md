@@ -151,7 +151,7 @@ qwen-code ≥0.22.0（2026-08-22 发布）的端点解析：模型选中 `modelP
 真实上游的解析优先级：
 
 1. 一层直连：relay 的 base_url 即答案（本代理配置，必然可得）；
-2. 两层经工具：读工具自身的配置获得当前激活供应商及其 base_url（Codex++ 读其 settings.json；CC Switch 读其配置库，读不到退而调其端口上的状态接口）；
+2. 两层经工具：读工具自身的配置获得当前激活供应商及其 base_url（Codex++ 读其 settings.json，`upstreamBaseUrl` 优先于 `baseUrl`；CC Switch 读其配置库，读不到退而调其端口上的状态接口）。**档案命中但没填上游地址 → 供应商名照常显示、地址空串**（M3，2026-08-26：不得因 base_url 为空把整家供应商丢掉），GUI/CLI 以「未接线」占位；
 3. 都失败：诚实显示「由某工具决定（未知）」——不猜。
 
 **工具离线时的转发回落**（2026-08-25，本表第 2 条不可用时转发不中断）：按工具档案（CC Switch providers 表 / Codex++ relayProfiles）解析当前供应商直连目标——TTL 端口缓存判定在线（~2s），转发遇 ConnectError 再强制重解析重试一次；密钥窄豁免见 §13。

@@ -2,6 +2,7 @@
 
 import json
 import socket
+import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -72,6 +73,31 @@ class TestCodexPlusProvider:
         monkeypatch.setattr(tools, "CODEXPP_SETTINGS", str(tmp_path / "nope.json"))
         assert tools._codexpp_active_provider() == (None, None)
 
+    def test_no_base_url_still_returns_name_empty_url(self, tmp_path, monkeypatch):
+        """M3：档案没填上游地址的激活供应商不隐身——名字照常返回，地址为空串（GUI 占位「未接线」）。"""
+        settings = tmp_path / "settings.json"
+        settings.write_text(
+            json.dumps({"activeRelayId": "r1", "relayProfiles": [{"id": "r1", "name": "naked"}]}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(tools, "CODEXPP_SETTINGS", str(settings))
+        assert tools._codexpp_active_provider() == ("naked", "")
+
+    def test_reads_upstream_base_url_before_base_url(self, tmp_path, monkeypatch):
+        """与 model_sources.codexpp_matrix 同一白名单读法：upstreamBaseUrl 优先，而非只看 baseUrl。"""
+        settings = tmp_path / "settings.json"
+        settings.write_text(
+            json.dumps(
+                {
+                    "activeRelayId": "r1",
+                    "relayProfiles": [{"id": "r1", "name": "up", "upstreamBaseUrl": "https://up.example"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(tools, "CODEXPP_SETTINGS", str(settings))
+        assert tools._codexpp_active_provider() == ("up", "https://up.example")
+
 
 class TestCcSwitchProvider:
     def test_status_endpoint_fallback(self, monkeypatch):
@@ -90,3 +116,30 @@ class TestCcSwitchProvider:
         monkeypatch.setattr(tools, "_ccswitch_sqlite_provider", lambda: ("from-db", "https://db.example"))
         name, url = tools._ccswitch_active_provider(port=15721)
         assert (name, url) == ("from-db", "https://db.example")
+
+    def test_sqlite_hit_with_empty_url_short_circuits(self, monkeypatch):
+        """M3 配套：sqlite 命中（名字在、地址空）不得再落到 HTTP 探测——供应商以「未接线」呈现。"""
+
+        def _no_http(*a, **k):
+            raise AssertionError("sqlite 已命中，不应再打 HTTP /status")
+
+        monkeypatch.setattr(tools, "_ccswitch_sqlite_provider", lambda: ("prov-x", ""))
+        monkeypatch.setattr(tools.httpx, "get", _no_http, raising=False)
+        assert tools._ccswitch_active_provider(port=15721) == ("prov-x", "")
+
+    def test_sqlite_provider_id_without_base_url_not_dropped(self, tmp_path, monkeypatch):
+        """M3：settings 值是 provider id 且该档案没填 base_url → 仍返回命中（M3 修复点：
+        旧代码 `if url:` 把整家供应商丢掉，status 工具统计/GUI 里完全隐身）。"""
+        db = tmp_path / "cc-switch.db"
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("CREATE TABLE providers (id TEXT PRIMARY KEY, settings_config TEXT)")
+        conn.execute("INSERT INTO settings VALUES ('current:claude', ?)", (json.dumps("prov-x"),))
+        conn.execute(
+            "INSERT INTO providers VALUES ('prov-x', ?)",
+            (json.dumps({"env": {"ANTHROPIC_BASE_URL": ""}}),),
+        )
+        conn.commit()
+        conn.close()
+        monkeypatch.setattr(tools, "CCSWITCH_DB", str(db))
+        assert tools._ccswitch_sqlite_provider() == ("prov-x", "")

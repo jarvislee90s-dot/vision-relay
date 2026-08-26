@@ -277,7 +277,8 @@ def cmd_tools(cfg) -> int:
     from .tools import probe_tools
 
     for s in probe_tools():
-        prov = f" · 供应商 {s.active_provider} ({s.provider_base_url})" if s.active_provider else ""
+        # M3：无 baseURL 的供应商不隐身——名字照常显示，空址占位「未接线」
+        prov = f" · 供应商 {s.active_provider} ({s.provider_base_url or '未接线'})" if s.active_provider else ""
         print(f"{s.name}: :{s.port} {'在线' if s.online else '离线'}{prov}")
     return 0
 

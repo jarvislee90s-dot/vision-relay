@@ -49,7 +49,8 @@ export function chainHops(row: HarnessRow, harness: string, tool: ToolRow | null
       { label: "☁️ 直连真实上游", arrow: relayInPath ? "↓ relay（一层直连）" : "↓ 直连真实上游", bypass: false },
     ];
   }
-  const sub = tool.active_provider ? `供应商 ${tool.active_provider}（${tool.provider_base_url ?? "未知"}）` : undefined;
+  // M3：无 baseURL（"" 或读不到 null）的供应商不隐身——名字照常显示，地址占位「未接线」
+  const sub = tool.active_provider ? `供应商 ${tool.active_provider}（${tool.provider_base_url || "未接线"}）` : undefined;
   if (tool.online) {
     return [
       first,
