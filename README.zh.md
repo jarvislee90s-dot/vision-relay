@@ -38,6 +38,18 @@
 
 ## 安装
 
+**桌面应用（推荐）** — 从 [Releases](https://github.com/jarvislee90s-dot/vision-relay/releases) 下载安装包：
+
+| 平台 | 产物 |
+|---|---|
+| Windows x64 | `vision-relay-<版本>-win-x64-setup.exe` |
+| macOS（Intel + Apple Silicon） | `vision-relay-<版本>-macos-universal.dmg` |
+| Linux x64 | `vision-relay-<版本>-linux-x64.AppImage` / `.deb` |
+
+零 Python 依赖——核心已冻结内嵌，装完即用。
+
+**pip（高级 / 无界面场景）**:
+
 ```bash
 pip install vision-relay
 ```
@@ -156,13 +168,15 @@ python -m pip install pytest httpx
 vision-relay status --json
 ```
 
-## GUI（预览）
+## 桌面控制台（GUI）
 
-vision-relay 的桌面控制台（Tauri 2 + React）随 **M2** 以预览形式提供——打包分发随 M3 提供。包含 5 个页面（总览、模型能力、识图记录、事件日志、设置）外加两步首次向导、系统托盘与关闭确认。
+Tauri 2 桌面控制台把一切可视化，统一管理 Claude Code / Codex / Qwen Code / zcode 四家 harness：路由开关与逐 harness 实时拓扑、实测背书的模型能力矩阵、识图记录（提示词 / VLM 原始返回 / 实际注入文本）、只读诊断报告 + 自动修复、按 harness 的 VLM 配置、仅本机留痕与留存策略。随上方桌面安装包一起分发——零 Python 依赖。
 
-> **要求**：M2 阶段 GUI 需要 `vision-relay` 命令在 PATH 上。用 `pip install -e .` 安装即可提供；打包分发计划随 M3。
+| 总览 | 模型能力 | 识图记录 | 设置 |
+|---|---|---|---|
+| ![总览](docs/screenshots/overview.png) | ![模型能力](docs/screenshots/models.png) | ![识图记录](docs/screenshots/records.png) | ![设置](docs/screenshots/settings.png) |
 
-安装 GUI 依赖：
+开发模式（源码 checkout；需要 PATH 上有核心，如 `pip install -e .`）：
 
 ```bash
 pnpm -C gui install

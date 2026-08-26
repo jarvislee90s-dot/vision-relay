@@ -42,6 +42,18 @@ Existing open-source projects you might find (`visual-proxy`, `codex-vision-prox
 
 ## Install
 
+**Desktop app (recommended)** — grab the installer from [Releases](https://github.com/jarvislee90s-dot/vision-relay/releases):
+
+| Platform | Artifact |
+|---|---|
+| Windows x64 | `vision-relay-<version>-win-x64-setup.exe` |
+| macOS (Intel + Apple Silicon) | `vision-relay-<version>-macos-universal.dmg` |
+| Linux x64 | `vision-relay-<version>-linux-x64.AppImage` / `.deb` |
+
+Zero Python required — the core ships frozen inside the app. Install, open, done.
+
+**pip (advanced / headless)**:
+
 ```bash
 pip install vision-relay
 ```
@@ -160,13 +172,15 @@ All management verbs accept `--json` for machine-readable output shaped like `{"
 vision-relay status --json
 ```
 
-## GUI (Preview)
+## Desktop console (GUI)
 
-A desktop console (Tauri 2 + React) for vision-relay ships as an **M2 preview** — packaged distribution follows with M3. It covers 5 pages (overview, model capabilities, vision log, event log, settings) plus a two-step onboarding wizard, system tray, and close confirmation.
+A Tauri 2 desktop console manages everything visually, for Claude Code, Codex, Qwen Code and zcode alike: routing toggle with live per-harness topology, model modality matrix backed by real probes, vision call records (prompt / raw VLM reply / injected text), read-only diagnostics with auto-repair, per-harness VLM settings, and local-only vision logs with retention. It ships inside the desktop installer above — zero Python needed.
 
-> **Requirement**: during M2 the GUI needs the `vision-relay` command on `PATH`. Installing the package with `pip install -e .` provides it; packaged distribution is planned for M3.
+| Overview | Model capabilities | Vision records | Settings |
+|---|---|---|---|
+| ![Overview](docs/screenshots/overview.png) | ![Models](docs/screenshots/models.png) | ![Records](docs/screenshots/records.png) | ![Settings](docs/screenshots/settings.png) |
 
-Install the GUI dependencies:
+Development mode (from a checkout; needs the core on `PATH`, e.g. `pip install -e .`):
 
 ```bash
 pnpm -C gui install
