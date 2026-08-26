@@ -579,4 +579,5 @@ def test_probe_reason_zcode_accurate(monkeypatch):
     monkeypatch.setattr(model_sources, "zcode_probe_target", lambda cfg, provider: ("", "", "chat"))
     _base, _key, _proto, reason = verbs.probe_target_info(ProxyConfig(), "zcode", "ghost-provider", {})
     assert reason is not None and reason.startswith("zcode:")
+    assert "原始上游" in reason  # 钉住新文案关键子串（质量审查建议）
     assert "路由工具" not in reason
