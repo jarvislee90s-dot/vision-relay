@@ -15,4 +15,10 @@ gui/node_modules/
 gui/dist/
 gui/src-tauri/target/
 gui/src-tauri/gen/
-gui/src-tauri/icons/
+# M8: 图标设计草稿与构建产物；icons/ 必须入库（CI 打包从 checkout 读取）
+tmp_icons/
+gui/app-icon.png.jpg
+gui/src-tauri/resources/core/
+freeze-dist/
+freeze-build/
+tmp_shots/
