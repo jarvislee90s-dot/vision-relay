@@ -22,3 +22,6 @@ gui/src-tauri/resources/core/
 freeze-dist/
 freeze-build/
 tmp_shots/
+# 移动端图标（本项目无移动目标）
+gui/src-tauri/icons/android/
+gui/src-tauri/icons/ios/
