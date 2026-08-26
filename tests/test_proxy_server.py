@@ -499,3 +499,37 @@ def test_retention_worker_disabled_never_starts(monkeypatch):
     monkeypatch.setattr(server, "_retention_once", lambda cfg: called.append(1))
     server._start_retention_worker(ProxyConfig(vision_log=VisionLogConfig(enabled=False)))
     assert not called, "disabled 时不该有任何清理动作"
+
+
+def test_retention_cleanup_scoped_to_snapshot_directory(tmp_path, monkeypatch):
+    """终审 I4：cleanup 可显式指定目录；worker 起线程时快照目录，隔离还原后不触碰真实家目录。"""
+    from vision_relay import server, visionlog
+    from vision_relay.config import ProxyConfig, VisionLogConfig
+
+    d = tmp_path / "snapshotted"
+    d.mkdir()
+    (d / "2020-01-01.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+    # cleanup 指定 directory：只动该目录
+    removed = visionlog.cleanup(7, directory=str(d))
+    assert removed == 1 and not (d / "2020-01-01.jsonl").exists()
+
+    # worker 快照：monkeypatch 环境 → 起线程前捕获目录 → 还原 env 后捕获值不变
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "live"))
+    seen = {}
+    real_dir = visionlog._dir
+    monkeypatch.setattr(visionlog, "_dir", lambda: seen.setdefault("dir", real_dir()))
+    monkeypatch.setattr(
+        server.visionlog if hasattr(server, "visionlog") else visionlog,
+        "cleanup",
+        lambda days, directory=None: seen.setdefault("cleanup_dir", directory) or 0,
+    )
+    cfg = ProxyConfig(vision_log=VisionLogConfig(enabled=True))
+    server._start_retention_worker(cfg)
+    import time as _t
+
+    for _ in range(50):  # 轮询等线程首次执行（防固定 sleep 的空过竞态）
+        if "dir" in seen:
+            break
+        _t.sleep(0.05)
+    monkeypatch.delenv("VISION_RELAY_CONFIG_DIR")
+    assert seen.get("cleanup_dir") == seen.get("dir"), "worker 必须用起线程时快照的目录"

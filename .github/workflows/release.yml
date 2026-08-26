@@ -66,7 +66,7 @@ jobs:
 
       - name: Version inject
         shell: bash
-        run: python scripts/set_version.py "${{ inputs.version }}"
+        run: python3 scripts/set_version.py "${{ inputs.version }}"
 
       # ---------- 冻结核心 ----------
       - name: Freeze core (uv, win/linux)
@@ -83,7 +83,7 @@ jobs:
           PYTHONUTF8: "1"
         run: |
           uv run --no-project --python 3.12 --with pyinstaller --with httpx \
-            pyinstaller --noconfirm --clean --name vision-relay \
+            pyinstaller --noconfirm --clean --name vision-relay --paths . \
             --distpath freeze-dist --workpath freeze-build scripts/freeze_entry.py
           test -f freeze-dist/vision-relay/vision-relay$([[ "$RUNNER_OS" == "Windows" ]] && echo .exe)
 
@@ -94,7 +94,7 @@ jobs:
           sudo installer -pkg /tmp/py.pkg -target /
           /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m venv .freeze
           .freeze/bin/pip install --quiet pyinstaller httpx
-          .freeze/bin/pyinstaller --noconfirm --clean --name vision-relay \
+          .freeze/bin/pyinstaller --noconfirm --clean --name vision-relay --paths . \
             --distpath freeze-dist --workpath freeze-build scripts/freeze_entry.py
           lipo -archs freeze-dist/vision-relay/vision-relay | grep -q x86_64
           lipo -archs freeze-dist/vision-relay/vision-relay | grep -q arm64
@@ -154,16 +154,16 @@ jobs:
           mkdir -p release-assets
           case "$RUNNER_OS" in
             Windows)
-              exe=$(find gui/src-tauri/target/release/bundle/nsis -name "*-setup.exe" | head -1)
+              exe=$(find gui/src-tauri/target/release/bundle/nsis -name "*-setup.exe" -print -quit)
               [ -n "$exe" ] || { echo "::error::NSIS setup.exe not found"; exit 1; }
               cp "$exe" "release-assets/vision-relay-$V-win-x64-setup.exe" ;;
             macOS)
-              dmg=$(find gui/src-tauri/target -name "*.dmg" | head -1)
+              dmg=$(find gui/src-tauri/target -name "*.dmg" -print -quit)
               [ -n "$dmg" ] || { echo "::error::DMG not found"; exit 1; }
               cp "$dmg" "release-assets/vision-relay-$V-macos-universal.dmg" ;;
             Linux)
-              appimage=$(find gui/src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -1)
-              deb=$(find gui/src-tauri/target/release/bundle/deb -name "*.deb" | head -1)
+              appimage=$(find gui/src-tauri/target/release/bundle/appimage -name "*.AppImage" -print -quit)
+              deb=$(find gui/src-tauri/target/release/bundle/deb -name "*.deb" -print -quit)
               [ -n "$appimage" ] && [ -n "$deb" ] || { echo "::error::AppImage/deb not found"; exit 1; }
               cp "$appimage" "release-assets/vision-relay-$V-linux-x64.AppImage"
               cp "$deb" "release-assets/vision-relay-$V-linux-x64.deb" ;;
@@ -202,7 +202,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           import os, re
           v = os.environ["VERSION"]
           text = open("CHANGELOG.md", encoding="utf-8").read()
@@ -216,6 +216,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
           name: vision-relay v${{ inputs.version }}
           body_path: body.md
           draft: true

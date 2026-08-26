@@ -40,11 +40,13 @@ def record(row: dict | None, enabled: bool, retention_days: int) -> None:
         pass
 
 
-def cleanup(retention_days: int) -> int:
-    """删除超过留存天数的日文件；返回删除数。按文件名日期整日判断（不做行级判断）。"""
+def cleanup(retention_days: int, directory: str | None = None) -> int:
+    """删除超过留存天数的日文件；返回删除数。按文件名日期整日判断（不做行级判断）。
+
+    directory 显式指定目标目录（worker 起线程时快照传入，防测试隔离还原后误碰真实家目录）。"""
     removed = 0
     cutoff = datetime.now() - timedelta(days=retention_days)
-    for path in glob(os.path.join(_dir(), "*.jsonl")):
+    for path in glob(os.path.join(_dir() if directory is None else directory, "*.jsonl")):
         name = os.path.basename(path)
         if not _DATE_RE.match(name):
             continue

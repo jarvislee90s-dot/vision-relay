@@ -18,7 +18,8 @@ gui/src-tauri/gen/
 # M8: 图标设计草稿与构建产物；icons/ 必须入库（CI 打包从 checkout 读取）
 tmp_icons/
 gui/app-icon.png.jpg
-gui/src-tauri/resources/core/
+gui/src-tauri/resources/core/*
+!gui/src-tauri/resources/core/.gitkeep
 freeze-dist/
 freeze-build/
 tmp_shots/

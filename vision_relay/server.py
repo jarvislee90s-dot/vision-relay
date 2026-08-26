@@ -354,14 +354,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-def _retention_once(cfg: ProxyConfig) -> None:
+def _retention_once(cfg: ProxyConfig, directory: str | None = None) -> None:
     """识图留痕留存清理（M3-B，spec §7）：删过期日文件，清理量入事件日志。fail-open。"""
     if not cfg.vision_log.enabled:
         return
     from . import reconcile, visionlog  # 函数内导入，避免与 reconcile 的导入环
 
     try:
-        removed = visionlog.cleanup(cfg.vision_log.retention_days)
+        removed = visionlog.cleanup(cfg.vision_log.retention_days, directory)
         if removed:
             reconcile.append_event(
                 "visionlog_cleanup",
@@ -373,15 +373,20 @@ def _retention_once(cfg: ProxyConfig) -> None:
 
 
 def _start_retention_worker(cfg: ProxyConfig) -> None:
-    """启动即清一次，此后每 24h 重复；vision_log.enabled=false 时完全不起线程。"""
+    """启动即清一次，此后每 24h 重复；vision_log.enabled=false 时完全不起线程。
+
+    目录在线程启动时快照（终审 I4）：清理目标不随运行期环境变化漂移。"""
     if not cfg.vision_log.enabled:
         return
+    from . import visionlog
+
+    directory = visionlog._dir()
 
     def loop() -> None:
-        _retention_once(cfg)
+        _retention_once(cfg, directory)
         while True:
             time.sleep(24 * 3600)
-            _retention_once(cfg)
+            _retention_once(cfg, directory)
 
     threading.Thread(target=loop, name="visionlog-retention", daemon=True).start()
 
