@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 事件日志页「导出」：`events --json --limit 0` 拉全量并下载 JSONL。
 - `probe --json` 无结论（含糊不下结论）改返回 `ok:true, result:null`（合法三态而非错误）。
 - zcode harness 接入：接管/还原/模态门、密钥指纹选路（同名跨协议认家）、zcode-restart 动词与三选弹窗、路由范围勾选（harnesses 白名单）。
-- 三平台安装包与发布流水线（Windows NSIS exe / macOS DMG / Linux AppImage+deb，GUI + PyInstaller 冻结核心单包分发，零 Python 依赖；GitHub Actions 手动触发构建，Draft Release 人工验收后发布）。
+- 三平台安装包与发布流水线（Windows NSIS exe / macOS DMG (Apple Silicon) / Linux AppImage+deb，GUI + PyInstaller 冻结核心单包分发，零 Python 依赖；GitHub Actions 手动触发构建，Draft Release 人工验收后发布；Intel Mac 可经 Rosetta 2 运行 arm64 包，原生 universal 支持随后版本）。
 - 识图留痕留存策略生效：默认 7 天自动清理、可关闭（启动即清 + 每 24h 周期，fail-open，清理量入事件日志）。
 - 版本对齐脚本 `scripts/set_version.py`（一次写核心 / tauri.conf / gui package.json 三处）；CI 新增 GUI 门禁 job（vitest + tsc/vite build + cargo check）。
 

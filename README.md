@@ -47,7 +47,7 @@ Existing open-source projects you might find (`visual-proxy`, `codex-vision-prox
 | Platform | Artifact |
 |---|---|
 | Windows x64 | `vision-relay-<version>-win-x64-setup.exe` |
-| macOS (Intel + Apple Silicon) | `vision-relay-<version>-macos-universal.dmg` |
+| macOS (Apple Silicon) | `vision-relay-<version>-macos-arm64.dmg` |
 | Linux x64 | `vision-relay-<version>-linux-x64.AppImage` / `.deb` |
 
 Zero Python required — the core ships frozen inside the app. Install, open, done.

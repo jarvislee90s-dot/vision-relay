@@ -43,7 +43,7 @@
 | 平台 | 产物 |
 |---|---|
 | Windows x64 | `vision-relay-<版本>-win-x64-setup.exe` |
-| macOS（Intel + Apple Silicon） | `vision-relay-<版本>-macos-universal.dmg` |
+| macOS（Apple Silicon） | `vision-relay-<版本>-macos-arm64.dmg` |
 | Linux x64 | `vision-relay-<版本>-linux-x64.AppImage` / `.deb` |
 
 零 Python 依赖——核心已冻结内嵌，装完即用。
