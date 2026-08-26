@@ -365,3 +365,55 @@ class TestVisionLogConfig:
         """M-3：不可解析值显式 ConfigError（而非裸 TypeError/ValueError 逃逸）。"""
         with pytest.raises(ConfigError, match="retention_days"):
             ProxyConfig.from_dict({"vision_log": {"retention_days": "abc"}})
+
+
+class TestZcodeHarnessRegistration:
+    def test_harnesses_include_zcode(self):
+        from vision_relay.config import HARNESSES, RoutingConfig
+
+        assert "zcode" in HARNESSES
+        assert RoutingConfig().harnesses == list(HARNESSES)  # 默认=全量（含 zcode）
+
+    def test_legacy_default_harnesses_upgraded(self):
+        """旧默认全集（三工具）自动升级为含 zcode 的全集。"""
+        from vision_relay.config import ProxyConfig
+
+        cfg = ProxyConfig.from_dict({"routing": {"harnesses": ["claude", "codex", "qwen-code"]}})
+        assert "zcode" in cfg.routing.harnesses
+
+    def test_explicit_exclusion_not_upgraded(self):
+        """曾显式排除过某工具（≠旧默认全集）→ 不自动加 zcode。"""
+        from vision_relay.config import ProxyConfig
+
+        cfg = ProxyConfig.from_dict({"routing": {"harnesses": ["claude", "codex"]}})
+        assert cfg.routing.harnesses == ["claude", "codex"]
+
+    def test_relay_new_fields_roundtrip(self):
+        from vision_relay.config import ProxyConfig
+
+        cfg = ProxyConfig.from_dict(
+            {
+                "relays": [
+                    {
+                        "name": "zcode-builtin-bigmodel",
+                        "protocol": "anthropic",
+                        "base_url": "https://open.bigmodel.cn/api/anthropic",
+                        "models": ["GLM-5.3"],
+                        "provider_id": "builtin:bigmodel",
+                        "auth_hints": ["963b…9NVz@36"],
+                    }
+                ]
+            }
+        )
+        r = cfg.relays[0]
+        assert r.provider_id == "builtin:bigmodel"
+        assert r.auth_hints == ["963b…9NVz@36"]
+        out = cfg.to_dict()
+        assert out["relays"][0]["provider_id"] == "builtin:bigmodel"
+
+    def test_relay_new_fields_default_empty(self):
+        from vision_relay.config import RelayConfig
+
+        r = RelayConfig(name="x", protocol="chat", base_url="https://a")
+        assert r.auth_hints == []
+        assert r.provider_id is None

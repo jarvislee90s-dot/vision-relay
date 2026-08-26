@@ -23,7 +23,10 @@ PROTOCOLS = ("anthropic", "responses", "chat")
 VIA_TOOLS = {"cc-switch": 15721, "codex-plus": 57321}
 
 # start/stop 自动接线覆盖的 harness（第一跳 base_url→本代理）。
-HARNESSES = ("claude", "codex", "qwen-code")
+HARNESSES = ("claude", "codex", "qwen-code", "zcode")
+# 2026-08-26 前的默认全集：恰等于它的存量配置升级为含 zcode 的全集；
+# 不等于（用户曾显式排除）则视为有意选择、不自动加（spec §8 迁移规则）。
+_LEGACY_DEFAULT_HARNESSES = ["claude", "codex", "qwen-code"]
 
 
 @dataclass
@@ -75,6 +78,8 @@ class RelayConfig:
     models: list[str] = field(default_factory=list)
     capability: str | None = None  # 显式覆盖能力判定
     via: str | None = None  # 可选：本 relay 是否经本地路由工具转发(两层拓扑)。纯描述性，不参与 URL 拼接。
+    auth_hints: list[str] = field(default_factory=list)  # 客户端密钥指纹（前4+后4+长度，非密钥值）；选路消歧（spec §6）
+    provider_id: str | None = None  # 一层 relay 的供应商身份（zcode 供应商 ID；能力/探针键与矩阵同键，spec §6.4）
 
     def __post_init__(self) -> None:
         if self.protocol not in PROTOCOLS:
@@ -131,6 +136,8 @@ class ProxyConfig:
         server = data.get("server", {})
         vlm = data.get("vlm", {})
         routing = dict(data.get("routing", {}))
+        if routing.get("harnesses") == _LEGACY_DEFAULT_HARNESSES:
+            routing["harnesses"] = list(HARNESSES)
         if routing.get("unknown_default") == "vision":
             routing["unknown_default"] = "image"
         caps, legacy_flat = _parse_capabilities(data.get("model_capabilities", {}))
