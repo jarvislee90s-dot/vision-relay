@@ -24,11 +24,8 @@ def main() -> int:
         return 2
 
     root = Path(args.root)
-    targets = {
-        "vision_relay/__init__.py": "regex",
-        "gui/src-tauri/tauri.conf.json": "json",
-        "gui/package.json": "json",
-    }
+    json_targets = ("gui/src-tauri/tauri.conf.json", "gui/package.json")
+    targets = ("vision_relay/__init__.py", *json_targets)
     for rel in targets:
         if not (root / rel).is_file():
             print(f"missing target: {rel}", file=sys.stderr)
@@ -42,7 +39,7 @@ def main() -> int:
         return 1
     init.write_text(new, encoding="utf-8")
 
-    for rel in ("gui/src-tauri/tauri.conf.json", "gui/package.json"):
+    for rel in json_targets:
         path = root / rel
         data = json.loads(path.read_text(encoding="utf-8"))
         data["version"] = args.version

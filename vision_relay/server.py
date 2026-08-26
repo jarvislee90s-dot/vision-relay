@@ -383,10 +383,9 @@ def _start_retention_worker(cfg: ProxyConfig) -> None:
     directory = visionlog._dir()
 
     def loop() -> None:
-        _retention_once(cfg, directory)
         while True:
-            time.sleep(24 * 3600)
             _retention_once(cfg, directory)
+            time.sleep(24 * 3600)
 
     threading.Thread(target=loop, name="visionlog-retention", daemon=True).start()
 

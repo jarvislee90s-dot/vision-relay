@@ -21,12 +21,14 @@ export function toolFor(
   snap: SnapshotRow | undefined,
   tools: ToolRow[],
 ): ToolRow | null {
-  const name =
-    row.ownership !== "ours" && row.ownership !== "other" && row.ownership !== "none"
-      ? row.ownership
-      : row.ownership === "ours"
-        ? snap?.second_hop ?? null
-        : null;
+  let name: string | null;
+  if (row.ownership === "ours") {
+    name = snap?.second_hop ?? null; // ② 接管态：接管快照记录的归属
+  } else if (row.ownership === "other" || row.ownership === "none") {
+    name = null; // ③ 直连/未配置：无工具跳
+  } else {
+    name = row.ownership; // ① 配置文件直指工具端口
+  }
   if (!name || !(TOOL_HARNESSES[name] ?? []).includes(harness)) return null;
   return tools.find((t) => t.name === name) ?? null;
 }
