@@ -38,10 +38,16 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
             <span className="dim">127.0.0.1:{s.bind_port} · 自动对账中</span>
           </div>
         </div>
-        <RoutingToggle on={s.routing_on && s.service_alive} onChangeDone={p.refresh} lang={p.lang} />
+        <RoutingToggle on={s.routing_on && s.service_alive} onChangeDone={p.refresh} lang={p.lang} status={s} />
         <button className="btn lg" onClick={p.refresh}>🔄 {t(p.lang, "refresh")}</button>
         <button className="btn lg" onClick={() => p.setShowDiag(true)}>📋 {t(p.lang, "diag")}</button>
       </div>
+      {s.zcode_runtime?.needs_restart && (
+        <div className="alert-err row between" data-testid="zcode-restart-hint">
+          <span>⚡ {t(p.lang, "zcodePendingRestart")}</span>
+          <button className="btn" onClick={async () => { await core("zcode-restart"); p.refresh(); }}>{t(p.lang, "restartZcodeNow")}</button>
+        </div>
+      )}
       <div className="cols3">
         {Object.keys(s.harnesses).map((h) => {
           const tool = toolFor(h, s.tools);

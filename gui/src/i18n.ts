@@ -2,10 +2,14 @@ export type Lang = "zh" | "en";
 const dict = {
   zh: { overview: "总览", models: "模型能力", visionlog: "识图记录", events: "事件日志", settings: "设置",
         routingOn: "路由开启", routingOff: "路由已关", routingOffLabel: "路由关闭", refresh: "刷新", diag: "诊断报告",
-        coreUnavailable: "核心不可用" },
+        coreUnavailable: "核心不可用",
+        zcodePendingRestart: "zcode 待重启（配置改写尚未生效）",
+        restartZcodeNow: "立即重启 zcode" },
   en: { overview: "Overview", models: "Models", visionlog: "Vision Log", events: "Events", settings: "Settings",
         routingOn: "Routing ON", routingOff: "Routing OFF", routingOffLabel: "Routing", refresh: "Refresh", diag: "Diagnostics",
-        coreUnavailable: "Core unavailable" },
+        coreUnavailable: "Core unavailable",
+        zcodePendingRestart: "zcode needs restart (changes pending)",
+        restartZcodeNow: "Restart zcode now" },
 } as const;
 export function initialLang(): Lang {
   const saved = localStorage.getItem("vr.lang");

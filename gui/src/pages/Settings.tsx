@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { core, setCorePath } from "../core";
 import type { StatusData } from "../shell/useStatus";
+import { ZcodeDialog } from "../shell/ZcodeDialog";
 import { Lang } from "../i18n";
 
 interface VlmForm { model: string; base_url: string; api_key: string; format: string }
 const EMPTY: VlmForm = { model: "", base_url: "", api_key: "", format: "chat" };
-const HARNESSES = ["claude", "codex", "qwen-code"];
+const ALL_HARNESSES = ["claude", "codex", "qwen-code", "zcode"];
 
 // 大写真组件（非 field() 闭包 helper）：useState 逐实例、跨重渲染存活；卸载即重置。
 // 显隐翻转只走 onSet（不 touch），用户输入才 onEdit（touch）——reveal 不产生脏状态。
@@ -92,13 +93,15 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
   const [testImg, setTestImg] = useState<{ file: File; base64: string; url: string } | null>(null);
   const [testImgReading, setTestImgReading] = useState(false); // FileReader 读取中禁用测试按钮，防止此刻点击发出默认/旧图请求
   const [testImgErr, setTestImgErr] = useState<string | null>(null);
+  const [managed, setManaged] = useState<string[]>(ALL_HARNESSES);
+  const [zcodeDlg, setZcodeDlg] = useState(false);
 
   useEffect(() => {
     core<Record<string, unknown>>("config").then((c) => {
       const v = c.vlm as Record<string, string>;
       setVlm({ model: v.model ?? "", base_url: v.base_url ?? "", api_key: "", format: v.format ?? "chat" });
       const g: Record<string, VlmForm | null> = {};
-      for (const h of HARNESSES) g[h] = null;
+      for (const h of ALL_HARNESSES) g[h] = null;
       for (const [h, over] of Object.entries((c.vlm_by_harness ?? {}) as Record<string, Record<string, string>>)) {
         g[h] = { model: over.model ?? "", base_url: over.base_url ?? "", api_key: "", format: over.format ?? "" };
       }
@@ -106,6 +109,7 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
       setPrompts({ t1: v.custom_tier1 ?? "", t2: v.custom_tier2 ?? "" });
       const r = c.routing as Record<string, unknown>;
       setUnknownDefault((r.unknown_default as string) ?? "text_only");
+      setManaged(((r.harnesses as string[]) ?? ALL_HARNESSES).filter((h) => ALL_HARNESSES.includes(h)));
       const vl = c.vision_log as Record<string, unknown>;
       setLogCfg({ enabled: vl.enabled !== false, retention_days: (vl.retention_days as number) ?? 7 });
     }).catch(() => {});
@@ -113,26 +117,33 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
 
   const touch = () => setDirtyCount((n) => n + 1);
 
-  const save = async () => {
+  const doSave = async (harnesses: string[], restartZcode: boolean) => {
     try {
       const payload: Record<string, unknown> = {
         vlm: { model: vlm.model, base_url: vlm.base_url, format: vlm.format, ...(vlm.api_key ? { api_key: vlm.api_key } : {}) },
         vlm_by_harness: Object.fromEntries(
-          HARNESSES.filter((h) => groups[h]).map((h) => {
+          harnesses.filter((h) => groups[h]).map((h) => {
             const g = groups[h]!;
-            return [h, g ? { model: g.model, base_url: g.base_url, ...(g.api_key ? { api_key: g.api_key } : {}) } : null];
+            return [h, { model: g.model, base_url: g.base_url, ...(g.api_key ? { api_key: g.api_key } : {}) }];
           }),
         ),
       };
       if (prompts.t1) payload.custom_tier1 = prompts.t1; else payload.custom_tier1 = null;
       if (prompts.t2) payload.custom_tier2 = prompts.t2; else payload.custom_tier2 = null;
       await core("vlm-set", { stdin: payload });
-      await core("settings-set", { stdin: { routing: { unknown_default: unknownDefault }, vision_log: logCfg } });
+      await core("settings-set", { stdin: { routing: { unknown_default: unknownDefault, harnesses }, vision_log: logCfg } });
+      if (restartZcode) await core("zcode-restart");
       if (corePath) setCorePath(corePath);
       setDirtyCount(0); p.refresh();
     } catch (e) {
       window.alert("保存失败：" + (e instanceof Error ? e.message : String(e)));
     }
+  };
+  const save = async () => {
+    // zcode 在跑且本次取消勾选 → 先弹三选（spec §7.2）；否则直接保存
+    const removingZcode = p.status?.zcode_runtime?.running && !managed.includes("zcode") && (p.status?.harnesses ? "zcode" in p.status.harnesses : false);
+    if (removingZcode) { setZcodeDlg(true); return; }
+    await doSave(managed, false);
   };
 
   const readAsDataURL = (f: File) =>
@@ -203,9 +214,21 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
       </div>
 
       <div className="card">
+        <h3>路由范围</h3>
+        <div className="dim small" style={{ marginBottom: 6 }}>路由开启时对这些工具做 VLM 路由；取消勾选立即还原该工具的接线，且界面上隐藏其相关内容。</div>
+        {ALL_HARNESSES.map((h) => (
+          <label key={h} style={{ marginRight: 16 }}>
+            <input type="checkbox" aria-label={h} checked={managed.includes(h)}
+              onChange={(e) => { setManaged(e.target.checked ? [...managed, h] : managed.filter((x) => x !== h)); touch(); }} />
+            {" "}{h}
+          </label>
+        ))}
+      </div>
+
+      <div className="card">
         <h3>按 harness 分组</h3>
         <table><tbody>
-          {HARNESSES.map((h) => (
+          {managed.map((h) => (
             <tr key={h}>
               <td>{h}</td>
               <td>{groups[h] ? <span className="tag gray">自定义</span> : <span className="tag ok">跟随全局 ✓</span>}</td>
@@ -217,7 +240,7 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
             </tr>
           ))}
         </tbody></table>
-        {HARNESSES.filter((h) => groups[h]).map((h) => (
+        {managed.filter((h) => groups[h]).map((h) => (
           <div className="card" key={h} style={{ margin: "8px 0 0" }}>
             {field(`${h} · 模型`, groups[h]!.model, (v) => setGroups({ ...groups, [h]: { ...groups[h]!, model: v } }))}
             {field(`${h} · base URL`, groups[h]!.base_url, (v) => setGroups({ ...groups, [h]: { ...groups[h]!, base_url: v } }))}
@@ -318,6 +341,23 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
           <button className="btn primary" disabled={!dirtyCount} onClick={save}>💾 保存设置</button>
         </div>
       </div>
+
+      {zcodeDlg && (
+        <ZcodeDialog
+          title="⚡ 取消勾选 zcode"
+          desc="zcode 正在运行，取消勾选会立即还原其接线，重启 zcode 后生效。"
+          choices={[
+            { label: "取消勾选并重启 zcode", kind: "restart" },
+            { label: "保留勾选", kind: "abort" },
+            { label: "取消勾选，稍后自行重启", kind: "later" },
+          ]}
+          onChoose={(kind) => {
+            setZcodeDlg(false);
+            if (kind === "abort") return;  // 保留勾选：仅关弹窗（用户可再勾回或自行再保存）
+            void doSave(kind === "restart" ? managed.filter((h) => h !== "zcode") : managed, kind === "restart");
+          }}
+        />
+      )}
     </>
   );
 }

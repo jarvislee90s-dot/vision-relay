@@ -86,7 +86,7 @@ describe("SettingsPage save semantics (G11)", () => {
 
     const setCall = coreMock.mock.calls.find((c) => c[0] === "settings-set")!;
     expect((setCall![1] as { stdin: unknown }).stdin).toEqual({
-      routing: { unknown_default: "text_only" },
+      routing: { unknown_default: "text_only", harnesses: ["claude", "codex", "qwen-code", "zcode"] },
       vision_log: { enabled: true, retention_days: 7 },
     });
 
@@ -214,5 +214,46 @@ describe("SettingsPage remount & discard (G11 已知分歧)", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (window as any).location = originalLocation;
     }
+  });
+});
+
+describe("SettingsPage routing scope (zcode 2026-08-26)", () => {
+  beforeEach(() => {
+    coreMock.mockReset();
+    coreMock.mockImplementation(async (verb: string, opts?: { stdin?: unknown }) => {
+      if (verb === "config")
+        return {
+          vlm: { model: "m", base_url: "b", format: "chat", custom_tier1: null, custom_tier2: null },
+          vlm_by_harness: {},
+          routing: { unknown_default: "text_only", harnesses: ["claude", "codex", "qwen-code", "zcode"] },
+          vision_log: { enabled: true, retention_days: 7 },
+        };
+      return { saved: true };
+    });
+  });
+
+  it("路由范围勾选随 managed 列表渲染并随保存提交 harnesses", async () => {
+    const calls: unknown[][] = [];
+    coreMock.mockImplementation(async (verb: string, opts?: { stdin?: unknown }) => {
+      calls.push([verb, opts?.stdin]);
+      if (verb === "config")
+        return {
+          vlm: { model: "m", base_url: "b", format: "chat", custom_tier1: null, custom_tier2: null },
+          vlm_by_harness: {},
+          routing: { unknown_default: "text_only", harnesses: ["claude", "codex", "qwen-code", "zcode"] },
+          vision_log: { enabled: true, retention_days: 7 },
+        };
+      return { saved: true };
+    });
+    render(<SettingsPage lang="zh" status={null} refresh={() => {}} setLang={() => {}} />);
+    await waitFor(() => expect(screen.getByText("路由范围")).toBeTruthy());
+    const boxes = screen.getAllByRole("checkbox");
+    expect(boxes.length).toBeGreaterThanOrEqual(4); // 四工具勾选框
+    fireEvent.click(screen.getByLabelText("zcode")); // 取消勾选 zcode（不弹窗：status=null 无 zcode 运行信号）
+    fireEvent.click(screen.getByText("💾 保存设置"));
+    await waitFor(() => {
+      const settings = calls.find(([v]) => v === "settings-set") as [string, { routing?: { harnesses?: string[] } }];
+      expect(settings[1].routing?.harnesses).toEqual(["claude", "codex", "qwen-code"]);
+    });
   });
 });

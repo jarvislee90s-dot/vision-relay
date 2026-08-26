@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chainHops } from "./chain";
+import { chainHops, harnessLabel, toolFor } from "./chain";
 
 const tool = { name: "cc-switch", port: 15721, online: true, active_provider: "bigmodel", provider_base_url: "https://open.example" };
 
@@ -26,5 +26,12 @@ describe("chainHops", () => {
   it("no tool harness is single-hop direct", () => {
     const hops = chainHops({ base_url: "http://127.0.0.1:8787", ownership: "ours", has_snapshot: true }, "qwen-code", null, true, 8787);
     expect(hops).toHaveLength(3);
+  });
+});
+
+describe("zcode label", () => {
+  it("labels zcode and has no routing tool", () => {
+    expect(harnessLabel("zcode")).toBe("⚡ Zcode");
+    expect(toolFor("zcode", [{ name: "cc-switch", port: 15721, online: true, active_provider: null, provider_base_url: null }])).toBeNull();
   });
 });

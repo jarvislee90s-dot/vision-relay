@@ -36,7 +36,7 @@ export function chainHops(_row: HarnessRow, harness: string, tool: ToolRow | nul
 }
 
 export function harnessLabel(h: string): string {
-  return { claude: "🤖 Claude Code", codex: "💻 Codex", "qwen-code": "❓ Qwen Code" }[h] ?? h;
+  return { claude: "🤖 Claude Code", codex: "💻 Codex", "qwen-code": "❓ Qwen Code", zcode: "⚡ Zcode" }[h] ?? h;
 }
 
 export function toolFor(harness: string, tools: ToolRow[]): ToolRow | null {
