@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 
 from . import snapshot
@@ -164,6 +165,97 @@ def _open_modalities(entry: dict) -> object:
     original = mod
     gc["modalities"] = {"image": True}
     return original
+
+
+def _mod_input(model: dict) -> list | None:
+    """zcode 模型 → modalities.input 列表；形态不认识返回 None（不硬造，spec §5.1）。"""
+    mods = model.get("modalities")
+    inp = mods.get("input") if isinstance(mods, dict) else None
+    return inp if isinstance(inp, list) else None
+
+
+def _ensure_image(mods_list: list) -> bool:
+    """输入模态列表没有 "image" 则追加（模态门共用原语：zcode 与 codex 目录补丁共用）。"""
+    if "image" in mods_list:
+        return False
+    mods_list.append("image")
+    return True
+
+
+def _zcode_marker_path() -> str:
+    from .env_util import config_dir
+
+    return os.path.join(config_dir(), "zcode.rewrite.json")
+
+
+def _mark_zcode_rewrite() -> None:
+    """记录本代理最后一次改写 zcode config.json 的时间（§7.2 待重启判定：进程启动须晚于它）。"""
+    try:
+        os.makedirs(os.path.dirname(_zcode_marker_path()), exist_ok=True)
+        tmp = _zcode_marker_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"ts": time.time()}, f)
+        os.replace(tmp, _zcode_marker_path())
+    except OSError:
+        pass
+
+
+def zcode_rewrite_ts() -> float:
+    """本代理最后一次改写 zcode config.json 的时刻（无记录=0）。"""
+    try:
+        with open(_zcode_marker_path(), encoding="utf-8") as f:
+            return float(json.load(f).get("ts") or 0.0)
+    except (OSError, ValueError):
+        return 0.0
+
+
+def _rewrite_zcode_providers(path: str, proxy_url: str) -> tuple[dict[str, str], dict[str, dict], dict]:
+    """接管改写（spec §5.1）：可接管条目 baseURL→本代理 + 纯文本模型补 image 门与
+    modalitiesConfigured。返回 (url 原值映射, 模态门原值映射, 统计)；键 pid::kind /
+    pid::kind::model。已就位者不产生记录（幂等）；空 key 供应商完全不碰。"""
+    empty_stats = {"rewritten": 0, "gated": 0, "skipped_nokey": 0, "skipped_kind": 0, "skipped_mod": 0}
+    try:
+        d = json.load(open(path, encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}, {}, empty_stats
+    items, nokey, badkind = _zcode_entries(d)
+    url_originals: dict[str, str] = {}
+    mod_originals: dict[str, dict] = {}
+    stats = {"rewritten": 0, "gated": 0, "skipped_nokey": nokey, "skipped_kind": badkind, "skipped_mod": 0}
+    for pid, kind, e in items:
+        key = _zcode_key(pid, kind)
+        opts = e["options"]
+        if not (opts["baseURL"] == proxy_url or opts["baseURL"].startswith(proxy_url + "/")):
+            url_originals[key] = opts["baseURL"]
+            opts["baseURL"] = proxy_url
+            stats["rewritten"] += 1
+        models = e.get("models")
+        if not isinstance(models, dict):
+            continue
+        for mid, m in models.items():
+            if not isinstance(m, dict):
+                continue
+            inp = _mod_input(m)
+            if inp is None:
+                stats["skipped_mod"] += 1
+                continue
+            if "image" in inp:
+                continue  # 已开门（用户自配）：不动、不记录（幂等）
+            zc = m.get("zcode")
+            zc = zc if isinstance(zc, dict) else None
+            flag_orig = zc.get("modalitiesConfigured", _MOD_ABSENT) if zc else _MOD_ABSENT
+            mod_originals[f"{key}::{mid}"] = {"input": list(inp), "flag": flag_orig}
+            _ensure_image(inp)
+            if zc is None:
+                zc = m.setdefault("zcode", {})
+            zc["modalitiesConfigured"] = True
+            stats["gated"] += 1
+    if not (url_originals or mod_originals):
+        return {}, {}, stats
+    if not _json_save_atomic(path, d):
+        return {}, {}, {**stats, "rewritten": 0, "gated": 0}
+    _mark_zcode_rewrite()
+    return url_originals, mod_originals, stats
 
 
 def _rewrite_qwen_providers(path: str, proxy_url: str) -> tuple[dict[str, str], dict[str, object], int, int, int]:
@@ -465,12 +557,11 @@ def _patch_codex_catalog_modalities(config_path: str) -> str | None:
             continue
         mods = m.get("input_modalities")
         if isinstance(mods, list):
-            if "image" in mods:
-                continue
-            mods.append("image")
+            if _ensure_image(mods):
+                patched += 1
         else:
             m["input_modalities"] = ["text", "image"]
-        patched += 1
+            patched += 1
     if not patched:
         return None
     if not os.path.exists(cat + BAK_SUFFIX):

@@ -110,3 +110,66 @@ class TestZcodeRegistration:
         assert snapshot.key_ref_for("zcode") == "not-found"
         _write_zcode_config(tmp_path, {"k": _provider()})
         assert snapshot.key_ref_for("zcode") == "provider[].options.apiKey"
+
+
+def _text_model():
+    return {
+        "limit": {"context": 1000000},
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "zcode": {"modified": False},
+    }
+
+
+def _vision_model():
+    return {"modalities": {"input": ["text", "image"], "output": ["text"]}}
+
+
+class TestZcodeRewrite:
+    def test_rewrite_takes_over_and_gates(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        p = _write_zcode_config(
+            tmp_path,
+            {
+                "k": _provider(
+                    models={"GLM-5.2": _text_model(), "kimi": _vision_model()},
+                ),
+                "nokey": _provider(key="", models={"m": _text_model()}),
+            },
+        )
+        proxy = "http://127.0.0.1:8787"
+        urls, mods, stats = wiring._rewrite_zcode_providers(p, proxy)
+        d = json.load(open(p, encoding="utf-8"))
+        assert d["provider"]["k"]["options"]["baseURL"] == proxy
+        assert d["provider"]["nokey"]["options"]["baseURL"] == "https://open.bigmodel.cn/api/anthropic"  # 空 key 不动
+        glm = d["provider"]["k"]["models"]["GLM-5.2"]
+        assert "image" in glm["modalities"]["input"]  # 纯文本模型开门
+        assert glm["zcode"]["modalitiesConfigured"] is True  # 置位簿记标志
+        kimi = d["provider"]["k"]["models"]["kimi"]
+        assert "video" not in kimi["modalities"]["input"]  # 已开门的模型不动
+        assert urls == {"k::anthropic": "https://open.bigmodel.cn/api/anthropic"}
+        # flag 记哨兵：GLM 原无 modalitiesConfigured 字段，spec §5.1 要求「原本没有」与显式 False 可区分
+        assert mods["k::anthropic::GLM-5.2"] == {"input": ["text"], "flag": wiring._MOD_ABSENT}
+        assert "k::anthropic::kimi" not in mods  # 幂等：已开门不产生记录
+        assert stats["skipped_nokey"] == 1 and stats["gated"] == 1
+
+    def test_rewrite_idempotent_no_new_records(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        p = _write_zcode_config(tmp_path, {"k": _provider(models={"m": _text_model()})})
+        proxy = "http://127.0.0.1:8787"
+        wiring._rewrite_zcode_providers(p, proxy)
+        urls2, mods2, _ = wiring._rewrite_zcode_providers(p, proxy)
+        assert urls2 == {} and mods2 == {}  # 二次接管不产生新记录
+
+    def test_rewrite_marks_timestamp(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        p = _write_zcode_config(tmp_path, {"k": _provider()})
+        wiring._rewrite_zcode_providers(p, "http://127.0.0.1:8787")
+        assert wiring.zcode_rewrite_ts() > 0.0
+
+    def test_missing_modality_input_skips(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        p = _write_zcode_config(tmp_path, {"k": _provider(models={"m": {"limit": {}}})})
+        _urls, _mods, stats = wiring._rewrite_zcode_providers(p, "http://127.0.0.1:8787")
+        assert stats["skipped_mod"] == 1  # 形态不认识不硬造（spec §5.1）
