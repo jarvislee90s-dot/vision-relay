@@ -86,3 +86,46 @@ def test_stop_after_absorb_restores_latest_snapshot(tmp_path):
     assert wait_port(port, up=False, timeout=20)
     assert read_harness_base_url(home, "claude") == "https://B.example/api"  # 最新快照，不是 ORIGIN
     assert read_harness_base_url(home, "codex") == ORIGIN  # 无吸收的 harness 仍按 .bak 还原原值
+
+
+class TestZcodeE2E:
+    def test_takeover_route_restore_cycle(self, tmp_path, monkeypatch):
+        """接管→指纹选路→还原 全链路（伪造 zcode config + 内存 relay 选择）。"""
+        from vision_relay import wiring
+        from vision_relay.config import ProxyConfig
+        from vision_relay.fingerprint import key_fingerprint
+        from vision_relay.server import _select_relay
+
+        monkeypatch.setattr(wiring, "HOME", str(tmp_path))
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path / "cfg"))
+        providers = {
+            "a": {
+                "kind": "anthropic",
+                "options": {"apiKey": "k-aaaaaaaaaa1", "baseURL": "https://a.example"},
+                "enabled": True,
+                "models": {"GLM": {"modalities": {"input": ["text"]}}},
+            },
+            "b": {
+                "kind": "openai",
+                "options": {"apiKey": "k-bbbbbbbbbb2", "baseURL": "https://b.example/v1"},
+                "enabled": False,
+                "models": {"GLM": {"modalities": {"input": ["text"]}}},
+            },
+        }
+        p = tmp_path / ".zcode" / "v2" / "config.json"
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps({"provider": providers}), encoding="utf-8")
+        cfg = ProxyConfig()
+        cfg.routing.harnesses = ["zcode"]
+        wiring.wiring_backup_and_rewrite(cfg)
+        # 同名模型 GLM 双协议：按各自协议+指纹精确命中
+        ra = _select_relay(cfg, "anthropic", "GLM", key_fingerprint("k-aaaaaaaaaa1"))
+        rb = _select_relay(cfg, "chat", "GLM", key_fingerprint("k-bbbbbbbbbb2"))
+        assert ra.provider_id == "a" and rb.provider_id == "b"
+        # 停止路由：全部还原
+        msgs = wiring.wiring_restore_on_stop(cfg)
+        d = json.loads(p.read_text(encoding="utf-8"))
+        assert d["provider"]["a"]["options"]["baseURL"] == "https://a.example"
+        assert d["provider"]["b"]["options"]["baseURL"] == "https://b.example/v1"
+        assert d["provider"]["a"]["models"]["GLM"]["modalities"]["input"] == ["text"]
+        assert any("providers restored" in m for m in msgs)
