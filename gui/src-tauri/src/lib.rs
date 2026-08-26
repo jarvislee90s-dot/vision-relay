@@ -11,9 +11,16 @@ use tauri::Manager;
 const CORE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[tauri::command]
-fn which_core() -> Option<String> {
-    // 顺序：用户显式路径（前端传入并缓存） -> PATH 上的 vision-relay(.exe)
+fn which_core(app: tauri::AppHandle) -> Option<String> {
+    // 顺序：用户显式路径（前端在其上优先，现状语义）→ 包内冻结核心（M3 spec §5）→ PATH
+    // （tauri dev 开发模式无 resources，自然落 PATH，开发体验不变）。
     let name = if cfg!(windows) { "vision-relay.exe" } else { "vision-relay" };
+    if let Ok(res) = app.path().resource_dir() {
+        let cand = res.join("core").join(name);
+        if cand.is_file() {
+            return cand.to_str().map(|s| s.to_string());
+        }
+    }
     if let Some(dir) = std::env::var_os("PATH") {
         for d in std::env::split_paths(&dir) {
             let cand = d.join(name);
@@ -147,7 +154,7 @@ pub fn run() {
                     match event.id().as_ref() {
                         "open" => { if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); } }
                         "toggle" | "diag" => { if let Some(w) = app.get_webview_window("main") { let _ = w.emit("tray", event.id().as_ref()); let _ = w.show(); } }
-                        "quit" => { if let Some(core) = which_core() { let _ = spawn_core(&core, &["stop".into()], None); } app.exit(0); }
+                        "quit" => { if let Some(core) = which_core(app.clone()) { let _ = spawn_core(&core, &["stop".into()], None); } app.exit(0); }
                         _ => {}
                     }
                 })
