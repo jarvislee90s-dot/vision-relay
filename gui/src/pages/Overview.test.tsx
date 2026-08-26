@@ -83,6 +83,48 @@ describe("Overview (G2/G3/G4 UI)", () => {
     expect(screen.getAllByText(/已旁路/).length).toBeGreaterThanOrEqual(1); // relay 与离线工具都可能旁路
   });
 
+  it("工具归属逐 harness 判定 (2026-08-26 用户裁决)：CC Switch 只路由了 codex 时，claude 卡不出现 cc-switch", () => {
+    // 用户实测场景：路由关，CC Switch 在线且仅对 codex 开路由——claude 直连自己的上游
+    const st = {
+      ...STATUS,
+      service_alive: false,
+      routing_on: false,
+      harnesses: {
+        ...STATUS.harnesses,
+        claude: { base_url: "https://claude-up.example", ownership: "other", has_snapshot: true, config_path: "C:/Users/t/.claude/settings.json" },
+        codex: { base_url: "http://127.0.0.1:15721", ownership: "cc-switch", has_snapshot: false, config_path: "C:/Users/t/.codex/config.toml" },
+      },
+      tools: [{ name: "cc-switch", port: 15721, online: true, active_provider: "bigmodel", provider_base_url: "https://open.example" }],
+    } as unknown as StatusData;
+    renderOverview(st);
+    // codex 卡：直连 cc-switch :15721（真实归属，链路跳 + ownership 标签各一处）
+    expect(screen.getByText(/直连 :15721/)).toBeTruthy();
+    // claude 卡：无 cc-switch 跳——旧版会把 claude 也画成经 cc-switch；
+    // 全页 cc-switch 文本只允许出现在 codex 卡（=2：ownership 标签 + 链路跳）
+    expect(screen.getAllByText(/cc-switch/).length).toBe(2);
+  });
+
+  it("接管态 codex 用快照 second_hop 归属 codex-plus，不再截胡成 cc-switch", () => {
+    const st = {
+      ...STATUS,
+      harnesses: {
+        ...STATUS.harnesses,
+        codex: { base_url: "http://127.0.0.1:8787", ownership: "ours", has_snapshot: true, config_path: "C:/Users/t/.codex/config.toml" },
+      },
+      tools: [
+        { name: "cc-switch", port: 15721, online: true, active_provider: "bigmodel", provider_base_url: "https://open.example" },
+        { name: "codex-plus", port: 57321, online: true, active_provider: "volces", provider_base_url: "https://ark.example" },
+      ],
+      snapshots: {
+        ...STATUS.snapshots,
+        codex: { base_url: "http://127.0.0.1:57321/v1", key_ref: "auth.openai_api_key", model: "glm-4.7", second_hop: "codex-plus", ts: 1 },
+      },
+    } as unknown as StatusData;
+    renderOverview(st);
+    expect(screen.getByText(/codex-plus :57321/)).toBeTruthy();
+    expect(screen.getByText(/relay（两层）/)).toBeTruthy();
+  });
+
   it("drawer shows snapshot, relays, config path with 打开 entry (决策③)", async () => {
     const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
     renderOverview();
@@ -106,6 +148,25 @@ describe("Overview (G2/G3/G4 UI)", () => {
   it("需要你区 lists direct relays missing keys when no diag report", () => {
     renderOverview();
     expect(screen.getByText(/直连上游缺 API key/)).toBeTruthy();
+  });
+
+  it("需要你区 ignores suppressed direct relays (2026-08-26 复盘：停用=已处置)", () => {
+    const st = {
+      ...STATUS,
+      relays: STATUS.relays.map((r) => (r.name === "direct-codex" ? { ...r, suppressed: true } : r)),
+    } as unknown as StatusData;
+    renderOverview(st);
+    expect(screen.queryByText(/直连上游缺 API key/)).toBeNull();
+  });
+
+  it("direct relay 地址明显无效时报「地址无效」而非「缺 key」(复盘 https://x)", () => {
+    const st = {
+      ...STATUS,
+      relays: STATUS.relays.map((r) => (r.name === "direct-codex" ? { ...r, base_url: "https://x" } : r)),
+    } as unknown as StatusData;
+    renderOverview(st);
+    expect(screen.getByText(/直连地址无效（https:\/\/x）/)).toBeTruthy();
+    expect(screen.queryByText(/直连上游缺 API key/)).toBeNull();
   });
 
   it("diag modal shows loading then auto-fixed actions (G4 等效)", async () => {

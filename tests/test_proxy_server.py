@@ -333,3 +333,132 @@ class TestHarnessAttribution:
         from vision_relay.server import build_vlm_clients
 
         assert "zcode" in build_vlm_clients(ProxyConfig())
+
+
+class TestSelectRelaySuppressed:
+    """停用转发=选路跳过（spec §7.5 语义收严，2026-08-26 故障复盘）。
+
+    复盘背景：direct-claude 的 base_url 是残留坏值 https://x，三层选路全部落到它，
+    Claude Code 全线 502；用户已点「停用转发」但选路无视压制名单，无法自救。
+    """
+
+    def _cfg(self):
+        cfg = ProxyConfig()
+        cfg.relays = [
+            RelayConfig(
+                name="zcode-hinted",
+                protocol="anthropic",
+                base_url="https://h.example",
+                models=["GLM-*"],
+                auth_hints=["fp@10"],
+            ),
+            RelayConfig(name="direct-claude", protocol="anthropic", base_url="https://x", models=["*"]),
+        ]
+        cfg.routing.suppressed_relays = ["direct-claude"]
+        return cfg
+
+    def test_suppressed_wildcard_skipped_falls_to_last_resort(self):
+        # ②层 * 通配本会命中 direct-claude：压制后跳过，④层兜底到 hinted 条目
+        assert _select_relay(self._cfg(), "anthropic", "deepseek-v4-flash", None).name == "zcode-hinted"
+        # 指纹门挡掉 hinted（GLM 模型+外来指纹）后同样不得落回被压制条目
+        assert _select_relay(self._cfg(), "anthropic", "GLM-5.3", "other…fp@9").name == "zcode-hinted"
+
+    def test_fingerprint_hit_cannot_rescue_suppressed(self):
+        """①层指纹精确命中也跳过被停用条目——停用是显式用户意图，优先级最高。"""
+        cfg = ProxyConfig()
+        cfg.relays = [
+            RelayConfig(
+                name="zcode-a", protocol="chat", base_url="https://a.example", models=["m"], auth_hints=["fp@10"]
+            )
+        ]
+        cfg.routing.suppressed_relays = ["zcode-a"]
+        assert _select_relay(cfg, "chat", "m", "fp@10").name == "default"
+
+    def test_all_of_protocol_suppressed_falls_to_default(self):
+        cfg = ProxyConfig()
+        cfg.relays = [RelayConfig(name="direct-claude", protocol="anthropic", base_url="https://x")]
+        cfg.routing.suppressed_relays = ["direct-claude"]
+        r = _select_relay(cfg, "anthropic", "m", None)
+        assert r.name == "default" and r.base_url == ""
+
+
+def test_502_fail_open_names_relay_and_upstream(monkeypatch):
+    """fail-open 502 必须自曝选路目标（relay 名+地址）。
+
+    复盘背景：错误体/日志只有 "proxy internal error" + 异常字符串，定位
+    direct-claude→https://x 全靠翻配置。base_url 不含 key，可安全外露给本机客户端。
+    """
+    logged: list[dict] = []
+    monkeypatch.setattr("vision_relay.server.log_json", lambda d: logged.append(d))
+    sock = __import__("socket").socket()
+    sock.bind(("127.0.0.1", 0))
+    dead_port = sock.getsockname()[1]
+    sock.close()  # 立刻释放：此端口几乎必然连接拒绝
+
+    cfg = ProxyConfig(
+        bind_port=0,
+        relays=[RelayConfig(name="direct-claude", protocol="anthropic", base_url=f"http://127.0.0.1:{dead_port}")],
+        vlm=__import__("vision_relay.config", fromlist=["VLMConfig"]).VLMConfig(model="qwen-vl-max"),
+    )
+    pipe = Pipeline(NoopVLM(), __import__("vision_relay.cache", fromlist=["DescriptionCache"]).DescriptionCache())
+    server = run_server(cfg)
+    server.pipeline = pipe
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        resp = httpx.Client(trust_env=False).post(
+            f"http://127.0.0.1:{server.server_address[1]}/v1/messages",
+            json={"model": "m", "max_tokens": 8, "messages": [{"role": "user", "content": "hi"}]},
+            timeout=30,
+        )
+        assert resp.status_code == 502
+        assert "direct-claude" in resp.text  # 错误体带 relay 名
+        assert f"127.0.0.1:{dead_port}" in resp.text  # 带上游地址
+        err = next(e for e in logged if e.get("event") == "proxy_error")
+        assert err["relay"] == "direct-claude"
+        assert err["upstream"] == f"http://127.0.0.1:{dead_port}"
+    finally:
+        server.shutdown()
+
+
+def test_data_plane_hot_reloads_config_on_change(tmp_path, monkeypatch, upstream):
+    """数据面按 mtime 热加载 proxy.json（2026-08-26 复盘补位）。
+
+    复盘背景：relay-set（停用转发/补 key）等控制面动词在独立进程写盘，运行中的
+    服务此前永远用启动时的内存旧配置——即使选路尊重压制名单也看不见新名单。
+    """
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+    from conftest import RecordingUpstream
+
+    from vision_relay.config import load_config, save_config
+
+    up2 = RecordingUpstream().start()
+    server = None
+    try:
+        cfg = ProxyConfig(
+            bind_port=0,
+            relays=[RelayConfig(name="r", protocol="chat", base_url=f"http://127.0.0.1:{upstream.port}")],
+            vlm=__import__("vision_relay.config", fromlist=["VLMConfig"]).VLMConfig(model="qwen-vl-max"),
+        )
+        save_config(cfg)
+        server = run_server(load_config())
+        server.pipeline = Pipeline(
+            NoopVLM(), __import__("vision_relay.cache", fromlist=["DescriptionCache"]).DescriptionCache()
+        )
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        client = httpx.Client(trust_env=False)
+        body = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
+        r1 = client.post(f"http://127.0.0.1:{port}/v1/chat/completions", json=body, timeout=30)
+        assert r1.status_code == 200
+        assert len(upstream.received) == 1 and not up2.received  # 初始走 relay 指向的 up1
+        # 控制面写盘换 relay 目标 → 下一请求必须走新目标（无需重启服务）
+        cfg2 = load_config()
+        cfg2.relays = [RelayConfig(name="r", protocol="chat", base_url=f"http://127.0.0.1:{up2.port}")]
+        save_config(cfg2)
+        r2 = client.post(f"http://127.0.0.1:{port}/v1/chat/completions", json=body, timeout=30)
+        assert r2.status_code == 200
+        assert len(up2.received) == 1  # 热加载生效：同一 relay 名改指向后请求变道
+    finally:
+        if server is not None:
+            server.shutdown()
+        up2.stop()

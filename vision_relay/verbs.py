@@ -108,22 +108,6 @@ def _scan_triples(cfg: ProxyConfig) -> list[dict]:
     return rows
 
 
-def _provider_hint(harness: str, states: list | None = None) -> str:
-    """harness -> 当前 provider 名：在线路由工具的激活供应商，其次快照第二跳，未知 '?'。
-
-    states 由调用方注入（_scan_triples 一次探测全组复用）；None 时自行探测。"""
-    from . import snapshot
-
-    for s in states if states is not None else _probe_tools():
-        d = TOOL_DOSSIERS.get(s.name)
-        if d and harness in d.harnesses and s.online and s.active_provider:
-            return s.active_provider
-    snap = snapshot.load().get(harness)
-    if snap is not None and snap.second_hop:
-        return snap.second_hop
-    return "?"
-
-
 def status(cfg: ProxyConfig) -> dict:
     """总览一次拿全：观测 + relay 视图（打码）+ 快照 + vlm 概要 + setup_state（向导触发）。"""
     import os

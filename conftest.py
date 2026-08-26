@@ -6,6 +6,13 @@ import threading
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolated_config_dir(tmp_path, monkeypatch):
+    """全部测试强制隔离配置目录：数据面热加载/日志/事件按 mtime 现读 proxy.json，
+    不隔离会读到家目录真实配置（2026-08-26 复盘：测试请求被顶到真实上游）。"""
+    monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+
+
 class RecordingUpstream:
     """Minimal local HTTP upstream stub shared by proxy server/integration tests."""
 

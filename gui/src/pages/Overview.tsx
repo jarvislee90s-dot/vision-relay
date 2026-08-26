@@ -50,7 +50,8 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
       )}
       <div className="cols3">
         {Object.keys(s.harnesses).map((h) => {
-          const tool = toolFor(h, s.tools);
+          // 工具归属逐 harness 判定（2026-08-26）：配置文件 ownership 优先，接管态用快照 second_hop
+          const tool = toolFor(h, s.harnesses[h], s.snapshots[h], s.tools);
           const hops = chainHops(s.harnesses[h], h, tool, s.routing_on && s.service_alive, s.bind_port);
           const snap = s.snapshots[h];
           const cfgPath = s.harnesses[h].config_path;
@@ -135,10 +136,26 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
   );
 }
 
+function looksReachable(baseUrl: string): boolean {
+  // 明显不可达的直连地址（如复盘中的 https://x）：单标签主机名既非 localhost 也非回环。
+  try {
+    const u = new URL(baseUrl);
+    const h = u.hostname.toLowerCase();
+    return (u.protocol === "http:" || u.protocol === "https:") && (h.includes(".") || h === "localhost" || h.startsWith("127."));
+  } catch {
+    return false;
+  }
+}
 function autoNeedsYou(s: StatusData | null) {
   if (!s) return [];
-  return s.relays.filter((r) => r.name.startsWith("direct-") && !r.has_key)
-    .map((r) => ({ type: "missing_key", harness: r.name, hint: "直连上游缺 API key" }));
+  // 已停用的不再提醒（停用=用户已处置）；地址明显无效的报「地址无效」而不是误导性的「缺 key」
+  return s.relays
+    .filter((r) => r.name.startsWith("direct-") && !r.has_key && !r.suppressed)
+    .map((r) =>
+      looksReachable(r.base_url)
+        ? { type: "missing_key", harness: r.name, hint: "直连上游缺 API key" }
+        : { type: "bad_base_url", harness: r.name, hint: `直连地址无效（${r.base_url}），请修正或停用` }
+    );
 }
 function eventText(e: EventRow): string {
   const m: Record<string, string> = { reclaim: "漂移已自动抢回", absorb: "新上游已吸收接管", auto_fix: "已自动修复", auto_annotate: "新模型已自动标注", relay_added: "已生成工具转发" };

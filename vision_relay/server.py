@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import threading
 import time
 
@@ -11,7 +12,7 @@ import httpx
 
 from . import route_fallback, tools
 from .cache import DescriptionCache
-from .config import ProxyConfig, RelayConfig, load_config
+from .config import ProxyConfig, RelayConfig, default_config_path, load_config
 from .fingerprint import fingerprint_from_headers
 from .ir import (
     detect_protocol,
@@ -68,11 +69,15 @@ def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "", auth_fp
     指纹层为 zcode 同名模型消歧主路径（spec 2026-08-26 §6）；无指纹退回顺序命中。
     带 auth_hints 的条目=供应商身份钉死：②层仅在请求未带指纹或指纹匹配时参与（防外来
     key 被错家截胡透传）；③层先通用条目、指纹条目殿后——错家命中是可见的 401 自愈
-    （spec P1-3/P2-2），不可用才是最坏形态。"""
+    （spec P1-3/P2-2），不可用才是最坏形态。
+    压制名单（routing.suppressed_relays，spec §7.5「停用转发」）命中的条目所有层不可见：
+    停用是显式用户意图，优先级最高（2026-08-26 复盘：坏 relay 已被停用仍被选中，全线 502
+    且用户无法自救）。"""
     import fnmatch
 
+    relays = [r for r in cfg.relays if r.name not in cfg.routing.suppressed_relays]
     if auth_fp:
-        for relay in cfg.relays:
+        for relay in relays:
             if (
                 relay.protocol == inbound_proto
                 and getattr(relay, "auth_hints", None)
@@ -80,7 +85,7 @@ def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "", auth_fp
                 and any(fnmatch.fnmatch(model, p) for p in relay.models)
             ):
                 return relay
-    for relay in cfg.relays:
+    for relay in relays:
         hints = getattr(relay, "auth_hints", None)
         if (
             relay.protocol == inbound_proto
@@ -88,10 +93,10 @@ def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "", auth_fp
             and not (hints and auth_fp and auth_fp not in hints)
         ):
             return relay
-    for relay in cfg.relays:
+    for relay in relays:
         if relay.protocol == inbound_proto and not getattr(relay, "auth_hints", None):
             return relay
-    for relay in cfg.relays:
+    for relay in relays:
         if relay.protocol == inbound_proto:
             return relay
     return RelayConfig(name="default", protocol=inbound_proto, base_url="", api_key="")
@@ -213,6 +218,27 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self._cfg: ProxyConfig = self.server.cfg  # type: ignore[attr-defined]
         self._pipeline: Pipeline = self.server.pipeline  # type: ignore[attr-defined]
 
+    def _current_cfg(self) -> ProxyConfig:
+        """请求期取配置：proxy.json mtime 变了就热加载（2026-08-26 复盘补位）。
+
+        控制面动词（relay-set 停用/补 key、settings-set 等）在独立进程写盘，服务
+        此前永远用启动时的内存旧配置——「停用转发」对运行中的数据面不生效。mtime
+        探测每请求一次 stat，变更才 load_config 原子替换（save_config 为 tmp+rename，
+        不会读到半截文件）；加载失败保留旧配置继续服务（fail-open，不因配置坏而 4xx）。
+        """
+        server = self.server
+        try:
+            mtime = os.path.getmtime(default_config_path())
+        except OSError:
+            return server.cfg  # type: ignore[no-any-return]  # 配置文件不在（测试注入内存配置）：维持现状
+        if mtime != getattr(server, "cfg_mtime", None):
+            try:
+                server.cfg = load_config()  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - 手编配置坏的瞬间：旧配置续命，下次落盘再试
+                pass
+            server.cfg_mtime = mtime  # type: ignore[attr-defined]  # 失败也记录：避免每请求重试解析
+        return server.cfg  # type: ignore[no-any-return]
+
     def do_POST(self):
         length = int(self.headers.get("content-length", 0))
         raw = self.rfile.read(length)
@@ -230,14 +256,17 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
         started = time.time()
         client_auth = _client_auth_headers(self.headers)
+        target: RelayConfig | None = None  # 已选路目标（异常自曝用，见 except）
         try:
+            cfg = self._current_cfg()
             ir = _PARSERS[proto](body)
-            relay = _select_relay(self._cfg, proto, ir.model, fingerprint_from_headers(client_auth))
+            relay = _select_relay(cfg, proto, ir.model, fingerprint_from_headers(client_auth))
             harness = "zcode" if getattr(relay, "provider_id", None) else _HARNESS_BY_PROTO.get(proto)
             # 请求期两层/直连解析（spec §5 工具离线→relay 回落直连）：端口在线经工具；
             # 离线回落工具档案当前供应商（协议跟随档案，codex++ chat 上游做协议转换）。
             route_cache = getattr(self.server, "route_cache", None) or _shared_route_cache()
             eff_relay, fallback = route_fallback.resolve_effective_relay(relay, route_cache)
+            target = eff_relay
             # 按 harness 请求级选用 VLM（spec §7.1，I-1）：clients 挂在 pipeline 上
             # （run_server 配套注入），经 process(vlm=...) 请求级注入，不变异共享
             # pipeline.vlm；pipeline 被测试整体替换时无此属性，vlm_arg=None 回落
@@ -274,6 +303,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     "event": "proxy_request",
                     "proto": proto,
                     "model": ir.model,
+                    "relay": eff_relay.name,
                     "stripped": result.stripped,
                     "injected": result.injected,
                     "fail_open": result.fail_open,
@@ -289,14 +319,23 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body_bytes)
         except Exception as exc:  # noqa: BLE001 - fail-open: never worse than no proxy
-            log_json({"event": "proxy_error", "proto": proto, "error": repr(exc)})
-            self._json_error(502, "proxy internal error (fail-open)")
+            # 自曝选路目标（2026-08-26 复盘）：只报 "proxy internal error" 时定位
+            # 坏 relay 全靠翻配置。base_url 不含 key，可安全进日志与错误体。
+            log_json(
+                {
+                    "event": "proxy_error",
+                    "proto": proto,
+                    "error": repr(exc),
+                    **({"relay": target.name, "upstream": target.base_url} if target is not None else {}),
+                }
+            )
+            where = f", relay={target.name} → {target.base_url}" if target is not None else ""
+            self._json_error(502, f"proxy internal error (fail-open{where})")
 
     def do_GET(self):
+        cfg = self._current_cfg()
         if self.path.startswith("/status"):
-            payload = json.dumps(
-                {"ok": True, "relays": len(self._cfg.relays), "vlm_model": self._cfg.vlm.model}
-            ).encode()
+            payload = json.dumps({"ok": True, "relays": len(cfg.relays), "vlm_model": cfg.vlm.model}).encode()
             self.send_response(200)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(payload)))

@@ -220,7 +220,7 @@ describe("SettingsPage remount & discard (G11 已知分歧)", () => {
 describe("SettingsPage routing scope (zcode 2026-08-26)", () => {
   beforeEach(() => {
     coreMock.mockReset();
-    coreMock.mockImplementation(async (verb: string, opts?: { stdin?: unknown }) => {
+    coreMock.mockImplementation(async (verb: string, _opts?: { stdin?: unknown }) => {
       if (verb === "config")
         return {
           vlm: { model: "m", base_url: "b", format: "chat", custom_tier1: null, custom_tier2: null },
