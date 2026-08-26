@@ -581,3 +581,27 @@ def test_probe_reason_zcode_accurate(monkeypatch):
     assert reason is not None and reason.startswith("zcode:")
     assert "原始上游" in reason  # 钉住新文案关键子串（质量审查建议）
     assert "路由工具" not in reason
+
+
+def test_restore_removes_empty_zcode_shell(tmp_path):
+    """M5: 还原后模型级 zcode:{} 空壳（开窗时 setdefault 创建）必须一并移除。"""
+    import json
+
+    from vision_relay import wiring
+
+    cfg_path = tmp_path / "zcode.settings.json"
+    cfg_path.write_text(
+        '{"provider":{"demo-pid":{"kind":"anthropic","options":{"baseURL":"http://127.0.0.1:8787",'
+        '"apiKey":"sk-fake"},"models":{"m1":{"modalities":{"input":["text"]}}}}}}',
+        encoding="utf-8",
+    )
+    url_map, mod_map, _stats = wiring._rewrite_zcode_providers(str(cfg_path), "http://127.0.0.1:8787")
+    assert mod_map, "前置：开窗应产生模态门记录"
+    d = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert d["provider"]["demo-pid"]["models"]["m1"].get("zcode") == {"modalitiesConfigured": True}
+
+    wiring._restore_zcode_providers(str(cfg_path), "http://127.0.0.1:8787", url_map, mod_map)
+    d = json.loads(cfg_path.read_text(encoding="utf-8"))
+    m1 = d["provider"]["demo-pid"]["models"]["m1"]
+    assert "zcode" not in m1, "M5: 还原后空壳 zcode:{} 必须移除"
+    assert "image" not in m1["modalities"]["input"]

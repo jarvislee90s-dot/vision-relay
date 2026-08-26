@@ -299,6 +299,8 @@ def _restore_zcode_providers(
                 if isinstance(zc, dict) and "flag" in rec:
                     if rec["flag"] == _MOD_ABSENT:
                         zc.pop("modalitiesConfigured", None)
+                        if not zc:  # M5: 空壳（开窗时 setdefault 创建）一并移除；非空=用户数据不动
+                            m.pop("zcode", None)
                     else:
                         zc["modalitiesConfigured"] = rec["flag"]
                 touched = True
