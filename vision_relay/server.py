@@ -65,7 +65,7 @@ def _resolve_provider(cfg: ProxyConfig, relay: RelayConfig, tool_states_cache: d
 
 
 def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "", auth_fp: str | None = None) -> RelayConfig:
-    """按 spec §6.3 选 relay：①(模型,协议,密钥指纹)精确 → ②(模型,协议)顺序 → ③仅协议 → 默认。
+    """按 spec §6（第1/2/6条）选 relay：①(模型,协议,密钥指纹)精确 → ②(模型,协议)顺序 → ③仅协议 → 默认。
     指纹层为 zcode 同名模型消歧主路径（spec 2026-08-26 §6）；无指纹退回顺序命中。
     带 auth_hints 的条目=供应商身份钉死：②层仅在请求未带指纹或指纹匹配时参与（防外来
     key 被错家截胡透传）；③层先通用条目、指纹条目殿后——错家命中是可见的 401 自愈
