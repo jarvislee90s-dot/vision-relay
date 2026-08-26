@@ -230,3 +230,83 @@ def test_proxy_two_layer_responses_preserves_model_and_strips_image(upstream):
         assert "QQ==" not in blob and "data:image" not in blob  # 图不再外泄
     finally:
         server.shutdown()
+
+
+class TestSelectRelayAuthHints:
+    def test_fingerprint_hit_wins_over_order(self):
+        from vision_relay.config import ProxyConfig, RelayConfig
+        from vision_relay.server import _select_relay
+
+        cfg = ProxyConfig()
+        cfg.relays = [
+            RelayConfig(
+                name="zcode-a",
+                protocol="anthropic",
+                base_url="https://a.example",
+                models=["GLM-5.3"],
+                provider_id="a",
+                auth_hints=["aaaa…zzzz@20"],
+            ),
+            RelayConfig(
+                name="zcode-b",
+                protocol="anthropic",
+                base_url="https://b.example",
+                models=["GLM-5.3"],
+                provider_id="b",
+                auth_hints=["bbbb…yyyy@20"],
+            ),
+        ]
+        r = _select_relay(cfg, "anthropic", "GLM-5.3", "bbbb…yyyy@20")
+        assert r.name == "zcode-b"  # 顺序命中会选 a，指纹命中必须赢
+
+    def test_no_fingerprint_falls_back_to_order(self):
+        from vision_relay.config import ProxyConfig, RelayConfig
+        from vision_relay.server import _select_relay
+
+        cfg = ProxyConfig()
+        cfg.relays = [RelayConfig(name="zcode-a", protocol="anthropic", base_url="https://a.example", models=["*"])]
+        assert _select_relay(cfg, "anthropic", "m", None).name == "zcode-a"
+        assert _select_relay(cfg, "anthropic", "m", "unknown…fp@10").name == "zcode-a"
+
+    def test_fingerprint_requires_model_match(self):
+        from vision_relay.config import ProxyConfig, RelayConfig
+        from vision_relay.server import _select_relay
+
+        cfg = ProxyConfig()
+        cfg.relays = [
+            RelayConfig(
+                name="zcode-a",
+                protocol="anthropic",
+                base_url="https://a.example",
+                models=["other-*"],
+                auth_hints=["fp@10"],
+            )
+        ]
+        assert _select_relay(cfg, "anthropic", "GLM-5.3", "fp@10").name == "default"  # 模型不匹配不得命中
+
+
+class TestHarnessAttribution:
+    def test_zcode_relay_attributes_zcode(self):
+        from vision_relay.config import RelayConfig
+        from vision_relay.server import _HARNESS_BY_PROTO
+
+        relay = RelayConfig(name="zcode-k", protocol="anthropic", base_url="https://x", provider_id="k")
+        harness = "zcode" if getattr(relay, "provider_id", None) else _HARNESS_BY_PROTO.get("anthropic")
+        assert harness == "zcode"
+
+    def test_resolve_provider_prefers_provider_id(self):
+        from vision_relay.config import ProxyConfig, RelayConfig
+        from vision_relay.server import _resolve_provider
+
+        r = RelayConfig(
+            name="zcode-open.bigmodel.cn", protocol="anthropic", base_url="https://x", provider_id="builtin:bigmodel"
+        )
+        assert _resolve_provider(ProxyConfig(), r, {}) == "builtin:bigmodel"  # 能力/探针键=供应商 ID（spec §6.4）
+        plain = RelayConfig(name="qwen-open.bigmodel.cn", protocol="chat", base_url="https://x")
+        assert _resolve_provider(ProxyConfig(), plain, {}) == "qwen-open.bigmodel.cn"  # 非 zcode relay 语义不变
+
+    def test_build_vlm_clients_includes_zcode(self):
+        from vision_relay.config import ProxyConfig
+        from vision_relay.server import build_vlm_clients
+
+        assert "zcode" in build_vlm_clients(ProxyConfig())

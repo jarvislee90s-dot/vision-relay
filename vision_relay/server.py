@@ -12,6 +12,7 @@ import httpx
 from . import route_fallback, tools
 from .cache import DescriptionCache
 from .config import ProxyConfig, RelayConfig, load_config
+from .fingerprint import fingerprint_from_headers
 from .ir import (
     detect_protocol,
     parse_anthropic,
@@ -34,9 +35,9 @@ _HARNESS_BY_PROTO = {"anthropic": "claude", "responses": "codex", "chat": "qwen-
 
 
 def build_vlm_clients(cfg: ProxyConfig) -> dict:
-    """按 harness 预建 VLM 客户端（vlm_for 合并覆盖；三 harness 一律建 + _default 兜底）。"""
+    """按 harness 预建 VLM 客户端（vlm_for 合并覆盖；四 harness 一律建 + _default 兜底）。"""
     clients = {"_default": VLMClient(cfg.vlm)}
-    for harness in ("claude", "codex", "qwen-code"):
+    for harness in ("claude", "codex", "qwen-code", "zcode"):
         clients[harness] = VLMClient(cfg.vlm_for(harness))
     return clients
 
@@ -53,21 +54,36 @@ def extract_session_id(proto: str, body: dict) -> str | None:
 
 
 def _resolve_provider(cfg: ProxyConfig, relay: RelayConfig, tool_states_cache: dict) -> str | None:
-    """请求期 provider 解析（尽力而为）：两层=工具激活供应商；一层=relay 名。"""
+    """请求期 provider 解析（尽力而为）：两层=工具激活供应商；一层=relay 名。
+    zcode 一层 relay 带 provider_id（供应商 ID）——能力/探针键与矩阵标注同键（spec §6.4）。"""
     if getattr(relay, "via", None):
         return tool_states_cache.get(relay.via) or relay.via  # 激活供应商名未取到时退工具名
+    if getattr(relay, "provider_id", None):
+        return relay.provider_id
     return relay.name if relay.name != "default" else None
 
 
-def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "") -> RelayConfig:
-    """按 spec §6.3 选 relay：先 (model, protocol) 匹配，再仅 protocol，最后默认 relay。"""
+def _select_relay(cfg: ProxyConfig, inbound_proto: str, model: str = "", auth_fp: str | None = None) -> RelayConfig:
+    """按 spec §6.3 选 relay：①(模型,协议,密钥指纹)精确 → ②(模型,协议)顺序 → ③仅协议 → 默认。
+    指纹层为 zcode 同名模型消歧主路径（spec 2026-08-26 §6）；无指纹/未命中退回顺序命中。"""
     import fnmatch
 
+    if auth_fp:
+        for relay in cfg.relays:
+            if (
+                relay.protocol == inbound_proto
+                and getattr(relay, "auth_hints", None)
+                and auth_fp in relay.auth_hints
+                and any(fnmatch.fnmatch(model, p) for p in relay.models)
+            ):
+                return relay
     for relay in cfg.relays:
         if relay.protocol == inbound_proto and any(fnmatch.fnmatch(model, p) for p in relay.models):
             return relay
+    # 仅协议兜底不含指纹专属条目（带 auth_hints=供应商身份钉死）：未列名模型不得被
+    # 错家捕获（计划测试与 spec §6.4 语义），无指纹的通用条目保持既有兜底行为。
     for relay in cfg.relays:
-        if relay.protocol == inbound_proto:
+        if relay.protocol == inbound_proto and not getattr(relay, "auth_hints", None):
             return relay
     return RelayConfig(name="default", protocol=inbound_proto, base_url="", api_key="")
 
@@ -207,8 +223,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         client_auth = _client_auth_headers(self.headers)
         try:
             ir = _PARSERS[proto](body)
-            harness = _HARNESS_BY_PROTO.get(proto)
-            relay = _select_relay(self._cfg, proto, ir.model)
+            relay = _select_relay(self._cfg, proto, ir.model, fingerprint_from_headers(client_auth))
+            harness = "zcode" if getattr(relay, "provider_id", None) else _HARNESS_BY_PROTO.get(proto)
             # 请求期两层/直连解析（spec §5 工具离线→relay 回落直连）：端口在线经工具；
             # 离线回落工具档案当前供应商（协议跟随档案，codex++ chat 上游做协议转换）。
             route_cache = getattr(self.server, "route_cache", None) or _shared_route_cache()
