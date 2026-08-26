@@ -85,12 +85,14 @@ jobs:
           uv run --no-project --python 3.12 --with pyinstaller --with httpx \
             pyinstaller --noconfirm --clean --name vision-relay --paths . \
             --distpath freeze-dist --workpath freeze-build scripts/freeze_entry.py
-          test -f freeze-dist/vision-relay/vision-relay$([[ "$RUNNER_OS" == "Windows" ]] && echo .exe)
+          BIN=freeze-dist/vision-relay/vision-relay
+          if [ "$RUNNER_OS" = "Windows" ]; then BIN="$BIN.exe"; fi
+          test -f "$BIN"
 
       - name: Freeze core (python.org universal2, macOS)
         if: runner.os == 'macOS'
         run: |
-          curl -fsSL -o /tmp/py.pkg https://www.python.org/ft/python/3.12.8/python-3.12.8-macos11.pkg
+          curl -fsSL -o /tmp/py.pkg https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
           sudo installer -pkg /tmp/py.pkg -target /
           /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m venv .freeze
           .freeze/bin/pip install --quiet pyinstaller httpx
@@ -102,7 +104,8 @@ jobs:
       - name: Smoke frozen core (version + import chain)
         shell: bash
         run: |
-          BIN=freeze-dist/vision-relay/vision-relay$([[ "$RUNNER_OS" == "Windows" ]] && echo .exe)
+          BIN=freeze-dist/vision-relay/vision-relay
+          if [ "$RUNNER_OS" = "Windows" ]; then BIN="$BIN.exe"; fi  # 命令替换式后缀在非 Windows 会以码1终结（set -e 杀脚本）
           OUT=$("$BIN" --version)
           echo "frozen --version: $OUT"
           [[ "$OUT" == *"${{ inputs.version }}"* ]] || { echo "::error::冻结核心版本号不符"; exit 1; }
