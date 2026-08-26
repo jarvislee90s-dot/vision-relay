@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsPage } from "./Settings";
+import type { StatusData } from "../shell/useStatus";
 
 vi.mock("../core", () => ({ core: vi.fn(), setCorePath: vi.fn() }));
 
@@ -255,5 +256,56 @@ describe("SettingsPage routing scope (zcode 2026-08-26)", () => {
       const settings = calls.find(([v]) => v === "settings-set") as [string, { routing?: { harnesses?: string[] } }];
       expect(settings[1].routing?.harnesses).toEqual(["claude", "codex", "qwen-code"]);
     });
+  });
+});
+
+describe("SettingsPage zcode 三选弹窗 (M4)", () => {
+  // 前置：zcode 正在运行且 harnesses 含 zcode（否则 save() 不触发三选弹窗）
+  const STATUS_ZCODE_RUNNING = {
+    service_alive: true,
+    routing_on: true,
+    bind_port: 8787,
+    harnesses: { zcode: { base_url: "http://127.0.0.1:8787", ownership: "ours", has_snapshot: true } },
+    tools: [],
+    relays: [],
+    snapshots: {},
+    vlm: { model: "m", base_url: "b", format: "chat", configured: true, custom_prompts: false, groups: [] },
+    setup_state: { has_config: true, capability_confirmed: true, vlm_configured: true },
+    first_run: false,
+    zcode_runtime: { running: true, needs_restart: false },
+  } as unknown as StatusData;
+
+  beforeEach(() => {
+    coreMock.mockReset();
+    coreMock.mockImplementation(async (verb: string) => {
+      if (verb === "config")
+        return {
+          vlm: { model: "m", base_url: "b", format: "chat", custom_tier1: null, custom_tier2: null },
+          vlm_by_harness: {},
+          routing: { unknown_default: "text_only", harnesses: ["claude", "codex", "qwen-code", "zcode"] },
+          vision_log: { enabled: true, retention_days: 7 },
+        };
+      return { saved: true };
+    });
+  });
+
+  it("M4: 三选弹窗选「保留勾选」后 zcode 复选框回滚为勾选", async () => {
+    render(<SettingsPage lang="zh" status={STATUS_ZCODE_RUNNING} refresh={vi.fn()} setLang={vi.fn()} />);
+    await screen.findByDisplayValue("m"); // config 落表单（managed 初值=已保存的四个勾选）
+
+    const cb = screen.getByLabelText("zcode") as HTMLInputElement;
+    expect(cb.checked).toBe(true); // 已保存值含 zcode
+    fireEvent.click(cb); // 取消勾选 → dirty
+    expect(cb.checked).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /保存设置/ })); // zcode 在跑 → 弹三选
+    fireEvent.click(await screen.findByRole("button", { name: "保留勾选" })); // kind=abort
+
+    // M4 核心：abort=放弃本次取消——复选框回滚为勾选（与已保存值一致，dirty 不残留语义）
+    expect((screen.getByLabelText("zcode") as HTMLInputElement).checked).toBe(true);
+
+    // 再点保存不再弹三选（回滚后无「取消勾选 zcode」触发条件），直接走保存
+    fireEvent.click(screen.getByRole("button", { name: /保存设置/ }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "保留勾选" })).toBeNull());
+    await waitFor(() => expect(coreMock.mock.calls.some((c) => c[0] === "vlm-set")).toBe(true)); // 本次保存真正发出
   });
 });

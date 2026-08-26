@@ -353,7 +353,12 @@ export function SettingsPage(p: { lang: string; status: StatusData | null; refre
           ]}
           onChoose={(kind) => {
             setZcodeDlg(false);
-            if (kind === "abort") return;  // 保留勾选：仅关弹窗（用户可再勾回或自行再保存）
+            if (kind === "abort") {
+              // M4: 保留勾选=放弃本次取消——复选框回滚到已保存值（弹窗只在取消勾选时出现，
+              // 已保存值必含 zcode），否则 dirty 态残留、再保存会再弹窗
+              setManaged((m) => (m.includes("zcode") ? m : [...m, "zcode"]));
+              return;
+            }
             void doSave(kind === "restart" ? managed.filter((h) => h !== "zcode") : managed, kind === "restart");
           }}
         />
