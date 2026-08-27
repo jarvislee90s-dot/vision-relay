@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import ntpath
 import os
 import subprocess
 import time
@@ -56,7 +57,8 @@ def find_zcode_processes(force: bool = False) -> list[dict]:
             except (TypeError, ValueError):
                 continue
             exe = str(e.get("exe") or "")
-            if os.path.basename(exe.replace("/", "\\")).lower() == "zcode-relay.exe":
+            # 显式 ntpath：本分支仅 Windows 语义，basename 不随宿主平台的 os.path 漂移
+            if ntpath.basename(exe).lower() == "zcode-relay.exe":
                 continue
             try:
                 start_ts = float(e.get("ts"))
