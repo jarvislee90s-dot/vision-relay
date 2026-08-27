@@ -184,10 +184,13 @@ jobs:
       - name: Checksums
         run: cd release-assets && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
 
-      - name: Build release body from CHANGELOG
+      - name: Build release body (curated notes first, CHANGELOG fallback)
         env:
           VERSION: ${{ inputs.version }}
         run: |
+          # 先按 CHANGELOG 拼兜底正文；若存在人工文案 docs/release-notes/v<版本>.md
+          # （自带标题与排版）则整体覆盖——工作流重跑因此不会把已发布的图文公告
+          # 覆盖回技术 changelog（2026-08-27 事故：重跑盖掉了 v1.0.0 定制正文）。
           python3 - <<'PY'
           import os, re
           v = os.environ["VERSION"]
@@ -196,6 +199,9 @@ jobs:
           body = m.group(1).strip() if m else f"vision-relay v{v}"
           open("body.md", "w", encoding="utf-8").write(f"vision-relay v{v}\n\n{body}\n")
           PY
+          if [ -s "docs/release-notes/v${VERSION}.md" ]; then
+            cp "docs/release-notes/v${VERSION}.md" body.md
+          fi
           cat body.md
 
       - name: Create draft release
