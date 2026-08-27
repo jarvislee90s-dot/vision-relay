@@ -5,10 +5,8 @@
 A **transparent HTTP proxy at the agent-harness boundary** that gives **text-only models vision**.
 It sits in front of your harness base_url, intercepts images in Anthropic / Responses / Chat requests,
 transcribes them via a vision-language model (VLM), and **relays the text** to the real upstream text model.
-The upstream only ever sees text — so a text-only model can "read" images, without any skill, plugin, or tool. 
-
-This is the standalone project extracted from [Qwen-MM-Plugins](https://github.com/QwenLM/Qwen-MM-Plugins)
-(its `proxy` capability), running as a **resident HTTP service**, not a Skill + MCP server.
+The upstream only ever sees text — so a text-only model can "read" images, without any skill, plugin, or tool.
+It runs as a **resident HTTP service**, not a Skill + MCP server.
 
 ## Why a proxy, not a Skill?
 
@@ -176,29 +174,74 @@ vision-relay status --json
 
 A Tauri 2 desktop console manages everything visually, for Claude Code, Codex, Qwen Code and zcode alike: routing toggle with live per-harness topology, model modality matrix backed by real probes, vision call records (prompt / raw VLM reply / injected text), read-only diagnostics with auto-repair, per-harness VLM settings, and local-only vision logs with retention. It ships inside the desktop installer above — zero Python needed.
 
-| Overview | Model capabilities | Vision records | Settings |
-|---|---|---|---|
-| ![Overview](docs/screenshots/overview.png) | ![Models](docs/screenshots/models.png) | ![Records](docs/screenshots/records.png) | ![Settings](docs/screenshots/settings.png) |
+### Launching
 
-Development mode (from a checkout; needs the core on `PATH`, e.g. `pip install -e .`):
+- **Installed app (recommended)**: launch it like any regular app — **Launchpad / Applications** on macOS, the **Start menu** on Windows, the app list on Linux. First launch walks you through a two-step wizard: ① fill in the VLM (the only required setting), ② review model capabilities — then routing is on.
+- **Development mode (from a checkout)**: needs the core on `PATH` (e.g. `pip install -e .` first), then:
 
 ```bash
 pnpm -C gui install
-```
-
-Run the GUI in development mode:
-
-```bash
 pnpm -C gui tauri dev
 ```
+
+> Closing the window ≠ stopping the service: on close it asks whether to "close the UI only (service keeps running in the tray)" or "stop the service too"; your choice can be remembered. While resident, the tray icon reopens the window or runs diagnostics.
+
+### A quick look
+
+| ![Overview](docs/screenshots/overview.png) | ![Models](docs/screenshots/models.png) |
+|:---:|:---:|
+| **Overview** | **Model capabilities** |
+| ![Records](docs/screenshots/records.png) | ![Settings](docs/screenshots/settings.png) |
+| **Vision records** | **Settings** |
+
+### Sheet-by-sheet guide
+
+**1) Overview — see at a glance whether the service is alive and who is wired through**
+
+- Shows: service status banner (running / stopped · `127.0.0.1:<port>` · auto-reconciling); one card per harness with takeover status (✓ taken over) and the live wiring chain (base_url → vision-relay → relay → real upstream, bypassed hops clearly marked); below, two lists — "handled automatically" (reclaimed drift, absorbed upstream changes, auto-fixes, auto-annotations) and "⚠ needs you" (e.g. a direct upstream missing an API key).
+- Interact: the **routing toggle**; 🔄 **refresh** (manual reconcile: reclaim hijacked wiring, absorb vendor changes); 📋 **diagnostics** (read-only report: service / port / routing-tool status + what was auto-fixed + what still needs you); expand a card's **details** to open the harness config file, **disable / re-enable a relay**, or **fill in a missing API key**; when a zcode rewrite is pending a restart banner appears with a one-click restart.
+
+**2) Model capabilities — "reads images" only counts once probed**
+
+- Shows: the capability matrix keyed by (harness · provider · model): current annotation (image / text-only / unannotated), source (default / manual / cached probe), and the measured column (✓ accepts images / ✗ rejects / untested); inactive providers are folded at the bottom (excluded from probing); a status line shows progress and conclusions.
+- Interact: 🔍 **probe all untested** — sends a real request per row for models of the currently active provider without a cached verdict, with in-row spinner and live N/M progress, then a summary popup (image / text-only / inconclusive / unreachable counts plus the first unreachable reason); per-row **retest** (active provider only); click "toggle" to cycle an annotation (unannotated → text-only → image); edited rows highlight until "save changes" applies them together; "fetch model list from upstream" optionally assists annotation (for two-hop routing the list lives in the routing tool's own UI).
+
+**3) Vision records — what exactly got written on every "look"**
+
+- Shows: a harness → session tree on the left; a table on the right (time, tier Tier1/Tier2, cache hit, duration, VLM used). Clicking any row expands the "three-part detail": ① the prompt sent to the VLM, ② the VLM's raw reply, ③ the text actually injected into the conversation — the whole transcription is auditable.
+- Interact: click a session or row to inspect. Records stay on this machine only; retention is configurable in Settings.
+
+**4) Event log — every automatic action, on the record**
+
+- Shows: a rolling ledger of automatic actions (time / harness / type / details): auto-reclaim, auto-absorb, auto-fix, auto-annotate, relay added; refreshes every 8 seconds.
+- Interact: filter by type; "⬇ export" downloads the full event stream as JSONL.
+
+**5) Settings — the only required setting plus every switch**
+
+- **VLM (the only required setting)**: model name, base URL, API key (masked input; 👁 reveals the saved key temporarily; leave blank to keep the current key).
+- **Routing scope**: pick which harnesses get routed; unchecking one immediately restores its original wiring (unchecking a running zcode pops three choices: restart now / keep it checked / restart later yourself).
+- **Per-harness groups**: everything follows the global VLM by default; "configure separately" gives one tool its own endpoint / model / key.
+- **Appearance**: UI language (system / 中文 / English); core path (auto-detected from `PATH`, settable by hand).
+- **Service & advanced**: default handling for unannotated models (treat as text-only and transcribe = safe default / pass through = saves tokens); vision-record logging on/off and retention days (default 7, local only).
+- 🧪 **VLM test**: four modes (Tier1 / Tier2 × default / custom prompt), optional custom test image (PNG / JPEG / WebP / GIF, ≤10 MiB), one click sends a real request and shows duration and transcription.
+- All input edits take effect via the sticky "💾 save" bar; "discard" reverts.
+
+**6) Advanced features**
+
+The advanced capabilities scattered across the five sheets, collected:
+
+- **Custom vision prompts** (Settings → vision prompts): both the Tier1 "describe fully" and Tier2 "answer the question" prompts are replaceable, with one-click restore to defaults.
+- **Default for unannotated models** (Settings → service & advanced): safe side by default (transcribe as text-only); switch to pass-through to save tokens once you know every upstream model is vision-capable.
+- **Per-harness VLM** (Settings): give each tool its own transcription endpoint — e.g. a cheap model just for codex.
+- **Relay disable / re-enable / fill key** (Overview → details): temporarily disable a misbehaving forwarding leg, re-enable with one click; fill a direct upstream's missing key right in the UI.
+- **Fetch model list from upstream** (Model capabilities): ask the upstream for its model IDs to assist annotation; under two-hop routing (CC Switch / Codex++) you're pointed to the tool's own UI.
+- **Event stream export** (Event log): full JSONL for archiving and review.
+- **Tray residency & remembered close behavior**: close the window while the service stays resident; the tray menu reopens Overview or pops the diagnostics report.
+- **CLI parity**: every GUI action is backed by a `vision-relay` management verb (`status` / `diagnose` / `refresh` / `probe` / …, all with `--json`), so scripted use never needs the GUI.
 
 ## Configuration
 
 Shared config lives in `~/.vision-relay/config` (fallback for env vars); proxy settings in `~/.vision-relay/proxy.json`. Env overrides: `VISION_RELAY_BIND_PORT`, `VISION_RELAY_VLM_MODEL`, `VISION_RELAY_VLM_BASE_URL`, `VISION_RELAY_VLM_API_KEY`, `VISION_RELAY_VLM_FORMAT` (config dir: `VISION_RELAY_CONFIG_DIR`).
-
-### Upgrading from qwen-mm-plugins-proxy
-
-vision-relay is the standalone successor of the `qwen-mm-plugins-proxy` capability. On first start it reads an existing `~/.qwen-mm-plugins/proxy.json` automatically and migrates it to `~/.vision-relay/` on next save; legacy `QWEN_MM_PROXY_*` env vars and `.qwen-mm-proxy.bak` wiring backups are still recognized (with a deprecation warning). If you still export the legacy `QWEN_MM_CONFIG_DIR`, it is honored as the active state directory for both reads and writes (no split-brain); the automatic migration applies to the default paths.
 
 ## Development
 
