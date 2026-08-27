@@ -26,3 +26,6 @@ tmp_shots/
 # 移动端图标（本项目无移动目标）
 gui/src-tauri/icons/android/
 gui/src-tauri/icons/ios/
+
+# PyInstaller 在 CWD 生成的 spec 残留
+/*.spec

@@ -176,7 +176,7 @@ A Tauri 2 desktop console manages everything visually, for Claude Code, Codex, Q
 
 ### Launching
 
-- **Installed app (recommended)**: launch it like any regular app — **Launchpad / Applications** on macOS, the **Start menu** on Windows, the app list on Linux. First launch walks you through a two-step wizard: ① fill in the VLM (the only required setting), ② review model capabilities — then routing is on.
+- **Installed app (recommended)**: launch it like any regular app — **Launchpad / Applications** on macOS, the **Start menu** on Windows, the app list on Linux. First launch walks you through a two-step wizard: ① fill in the VLM (the only required setting), ② review model capabilities — then flip the routing switch on the Overview page.
 - **Development mode (from a checkout)**: needs the core on `PATH` (e.g. `pip install -e .` first), then:
 
 ```bash
