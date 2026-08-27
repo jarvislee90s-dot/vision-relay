@@ -6,11 +6,13 @@ A **transparent HTTP proxy at the agent-harness boundary** that gives **text-onl
 It sits in front of your harness base_url, intercepts images in Anthropic / Responses / Chat requests,
 transcribes them via a vision-language model (VLM), and **relays the text** to the real upstream text model.
 The upstream only ever sees text — so a text-only model can "read" images, without any skill, plugin, or tool.
-It runs as a **resident HTTP service**, not a Skill + MCP server.
+It runs as a **resident HTTP service**, not a Skill + MCP server. **One codebase covers four harnesses —
+Claude Code, Codex, Qwen Code and zcode: install once, take over all of them.**
 
-## Why a proxy, not a Skill?
+## Why vision-relay?
 
-There are two common ways to give a text-only model vision, and they look alike but are architecturally different:
+There are two common ways to give a text-only model vision, and they look alike but are architecturally different.
+This project is a third:
 
 | | Skill / Tool (model-invoked) | Pure transparent proxy | **vision-relay** (this project) |
 |---|---|---|---|
@@ -19,14 +21,31 @@ There are two common ways to give a text-only model vision, and they look alike 
 | Image handling | Model passes image to the tool | Only observes, does nothing | **Images are transcribed to text and injected** before forwarding |
 | Transparency | Opaque to the model, requires prompts | Transparent, but no value added | **Fully transparent + value added** (model is unaware, images become text) |
 | Upstream | Text model sees whatever the tool returns | Text model sees raw (possibly image-bearing) stream | **Text model only ever sees text** |
+| Cross-harness reuse | One implementation per harness | Generic but adds no value | **One codebase, four harnesses**: protocol normalization and the image safety net are written once; a new tool is just another shell |
+| Failure mode | None | Does nothing | **fail-open**: on VLM failure a readable notice is injected — never a 400 / deadlock |
+| Cost | Re-transcribes on every call | — | **Tier1 / Tier2 two-level cache + TTL + context budget**: the same image never pays twice, large images can't blow the budget |
 
 Existing open-source projects you might find (`visual-proxy`, `codex-vision-proxy`, `vision-bridge-mcp`, `cc-inspector`, `anthroproxy`) mostly fall into the **left** (Skill/tool) or **middle** (pure proxy) columns.
 **vision-relay combines both: transparent interception AND image transcription** — the combination is rare in open source.
 
+## What it looks like
+
+A desktop console that works out of the box — routing toggle with live per-harness topology, a probe-backed
+capability matrix, three-part vision records, read-only diagnostics with auto-repair, five sheets, shipped
+inside the desktop installer.
+
+| ![Overview](docs/screenshots/overview.png) | ![Models](docs/screenshots/models.png) |
+|:---:|:---:|
+| **Overview** | **Model capabilities** |
+| ![Records](docs/screenshots/records.png) | ![Settings](docs/screenshots/settings.png) |
+| **Vision records** | **Settings** |
+
+What each sheet does and shows — the [sheet-by-sheet manual](#desktop-console-gui) is below.
+
 ## How it works
 
 ```
-   [ Agent harness ]      Claude Code / Codex / Qwen Code
+   [ Agent harness ]      Claude Code / Codex / Qwen Code / zcode
         |  base_url -> 127.0.0.1:8787
         v
    [ vision-relay ]
@@ -37,6 +56,10 @@ Existing open-source projects you might find (`visual-proxy`, `codex-vision-prox
   [ VLM ]    [ upstream text model ]     relay: chat / responses / anthropic
   (transcribe)
 ```
+
+Already using a local routing tool like CC Switch or Codex++? Keep your habits — vision-relay takes the
+first hop and the tool becomes the downstream relay (two-hop routing; templates in
+[Configuration & advanced](#configuration--advanced)).
 
 ## Install
 
@@ -76,103 +99,21 @@ python -m pip install pytest httpx
 
 ## Quick start
 
-### What vision-relay supports
+Three things happen automatically — no config needed:
 
-- **Inbound node types**: `responses`, `chat`, and Anthropic (`/v1/messages`). Detection is fully automatic — no config. The proxy matches the **path** first (`/v1/messages` -> Anthropic, `/v1/responses` -> Responses, `/v1/chat/completions` -> Chat) and falls back to the **body structure** (`input` -> Responses, `messages` -> Anthropic, otherwise Chat). Requests matching neither are rejected with a 400.
-- **Model types**: both vision-capable VLM models (images pass through untouched) and text-only models (images are transcribed) are supported, decided by the `model_capabilities` map in config.
-- **Model identification**: on every `start` the proxy scans the harness config files (Claude Code / Codex / Qwen Code), groups discovered models by harness, and interactively asks you to confirm only unseen models (default: text-only, the safe choice). Reuse silently afterwards; run `vision-relay models` to review/edit.
+- **Inbound protocol auto-detection** — Anthropic / Responses / Chat, matched by path first, then by body structure;
+- **Capability defaults to the safe side** — vision models pass through, text-only models get transcribed, per the capability table; unannotated models are treated as text-only (worst case one extra VLM call, never leaks an image to a text-only model);
+- **start wires, stop restores** — harness base_urls are backed up and rewritten automatically; while running it never touches any config file; coexists with CC Switch / Codex++ (first hop, tools downstream).
 
-### What you need to prepare
+**Three steps**:
 
-1. an API key for a vision-capable VLM (mimo / qwen-vl / Doubao / ...) — `vlm.api_key`;
-2. upstream endpoints for **both** the text model (`relays[].base_url`) and the VLM (`vlm.base_url`): either side can be OpenAI-compatible (chat) or Anthropic-format, and the text side additionally supports Responses. Set via `relays[].protocol` / `vlm.format`; Volcengine / DeepSeek etc. all work.
+1. Install and open the desktop app (see above);
+2. First-launch wizard: fill in one "vision" model key (the only required setting) → review model capabilities → flip the routing switch on Overview;
+3. Paste an image into Claude Code / Codex / Qwen Code / zcode and ask "what is this" — a fluent text description means success 🎉
 
-### Three steps
-
-1. Edit `~/.vision-relay/proxy.json` (create if missing) with the template below (put in your own keys):
-
-```json
-{
-  "server": { "bind_port": 8787 },
-  "relays": [
-    { "name": "my-text", "protocol": "chat",
-      "base_url": "https://<your-upstream>", "api_key": "<YOUR_UPSTREAM_KEY>", "models": ["*"] }
-  ],
-  "vlm": {
-    "model": "mimo-v2.5",
-    "base_url": "https://<your-vlm-endpoint>", "api_key": "<YOUR_VLM_KEY>", "format": "chat"
-  },
-  "model_capabilities": { "global": { "minimax-m3": "vision", "doubao-seed-2.1-turbo": "vision" } }
-}
-```
-
-> The `relays` above is a **single-hop (direct-to-upstream)** example. If you run a local routing tool like **CC Switch / Codex++** and want a two-hop chain (`harness → vision-relay(8787) → tool(15721/57321) → real upstream`), point `relays[].base_url` at the tool's local port and add a `via` field (descriptive only — it does not affect URL joining), as in the two-hop templates below.
-
-**Two-hop · via Codex++ (Codex models, responses protocol)**:
-
-```json
-{ "name": "codex", "protocol": "responses",
-  "base_url": "http://127.0.0.1:57321/v1", "via": "codex-plus", "models": ["*"] }
-```
-
-**Two-hop · via CC Switch (Codex models, chat protocol)**:
-
-```json
-{ "name": "cc-codex", "protocol": "chat",
-  "base_url": "http://127.0.0.1:15721", "via": "cc-switch", "models": ["*"] }
-```
-
-**Two-hop · via CC Switch (Claude models, anthropic protocol)**:
-
-```json
-{ "name": "cc-claude", "protocol": "anthropic",
-  "base_url": "http://127.0.0.1:15721", "via": "cc-switch", "models": ["*"] }
-```
-
-> Note: if `relays` is left empty (`[]`), the proxy has nowhere to forward after transcribing images, and requests fail with `UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")` — make sure you add a relay for every harness you actually use.
-
-2. Start: `vision-relay start` (first run interactively asks which models support images; afterwards start/stop auto-wire and restore without prompting).
-
-   **Windows one-click scripts** from the source dir: run `.\start.ps1` to start and `.\stop.ps1` to stop — the script creates the venv, installs deps, then invokes `vision-relay start`/`stop` (run `start.ps1` in an interactive terminal on first use, since it asks you to confirm model vision capability):
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\start.ps1   # one-click start (foreground, Ctrl+C to stop)
-   powershell -ExecutionPolicy Bypass -File .\stop.ps1    # one-click stop (restores wiring)
-   ```
-
-3. Verify: paste an image in Claude Code / Codex / Qwen Code and ask "what is this", then `vision-relay logs` shows `injected:1` on success.
-
-Config rewrites happen only on `start` / `stop` (backup + rewrite the three harness base_urls, restore on stop). While running it never watches or rewrites any config file; edits take effect on the next `start`.
-
-**Commands**:
-
-| Command | Purpose |
-|---|---|
-| `start` | Start the service and wire the three harnesses (backup + rewrite base_urls). |
-| `start --detach` | Start as a detached background process (for GUI / auto-restart). |
-| `stop` | Stop the service and restore the original harness base_urls. |
-| `status` | Show service / wiring / intent status. |
-| `logs` | Tail the proxy log. |
-| `check` | Self-check config and upstreams. |
-| `models` | Interactively review / edit model capabilities. |
-| `models-scan` | Non-interactively print the model capability draft. |
-| `test-image` | Test the VLM transcription path with one image. |
-| `refresh` | Manual reconcile: reclaim hijacked wiring, absorb vendor changes, auto-repair zombie wiring (backend of the refresh button). |
-| `diagnose` | Read-only diagnostic report: observations + auto-fixes applied + what still needs you. |
-| `tools` | Probe routing-tool ports and show the active provider (read-only). |
-| `probe` | Modality probe for one model: `--harness` / `--provider` / `--model`, or `--all-untested`. |
-| `events` | Tail the event log. |
-| `visionlog` | Query the vision call records. |
-
-All management verbs accept `--json` for machine-readable output shaped like `{"contract_version": 1, "ok": ..., "data": ...}` (the GUI contract):
-
-```bash
-vision-relay status --json
-```
+> **Headless / scripted**: `pip install vision-relay` then `vision-relay start` (first run interactively confirms model capabilities, then stays silent; success check: `vision-relay logs` shows `injected:1`). Hand-written `proxy.json`, two-hop templates and all commands live in [Configuration & advanced](#configuration--advanced); on Windows from a checkout use `.\start.ps1` / `.\stop.ps1`.
 
 ## Desktop console (GUI)
-
-A Tauri 2 desktop console manages everything visually, for Claude Code, Codex, Qwen Code and zcode alike: routing toggle with live per-harness topology, model modality matrix backed by real probes, vision call records (prompt / raw VLM reply / injected text), read-only diagnostics with auto-repair, per-harness VLM settings, and local-only vision logs with retention. It ships inside the desktop installer above — zero Python needed.
 
 ### Launching
 
@@ -185,14 +126,6 @@ pnpm -C gui tauri dev
 ```
 
 > Closing the window ≠ stopping the service: on close it asks whether to "close the UI only (service keeps running in the tray)" or "stop the service too"; your choice can be remembered. While resident, the tray icon reopens the window or runs diagnostics.
-
-### A quick look
-
-| ![Overview](docs/screenshots/overview.png) | ![Models](docs/screenshots/models.png) |
-|:---:|:---:|
-| **Overview** | **Model capabilities** |
-| ![Records](docs/screenshots/records.png) | ![Settings](docs/screenshots/settings.png) |
-| **Vision records** | **Settings** |
 
 ### Sheet-by-sheet guide
 
@@ -239,7 +172,83 @@ The advanced capabilities scattered across the five sheets, collected:
 - **Tray residency & remembered close behavior**: close the window while the service stays resident; the tray menu reopens Overview or pops the diagnostics report.
 - **CLI parity**: every GUI action is backed by a `vision-relay` management verb (`status` / `diagnose` / `refresh` / `probe` / …, all with `--json`), so scripted use never needs the GUI.
 
-## Configuration
+## Configuration & advanced
+
+### Hand-written proxy.json (headless / CLI)
+
+Edit `~/.vision-relay/proxy.json` (create if missing) with the template below (put in your own keys):
+
+```json
+{
+  "server": { "bind_port": 8787 },
+  "relays": [
+    { "name": "my-text", "protocol": "chat",
+      "base_url": "https://<your-upstream>", "api_key": "<YOUR_UPSTREAM_KEY>", "models": ["*"] }
+  ],
+  "vlm": {
+    "model": "mimo-v2.5",
+    "base_url": "https://<your-vlm-endpoint>", "api_key": "<YOUR_VLM_KEY>", "format": "chat"
+  },
+  "model_capabilities": { "global": { "minimax-m3": "vision", "doubao-seed-2.1-turbo": "vision" } }
+}
+```
+
+Both `relays` / `vlm` sides accept OpenAI-compatible (chat) or Anthropic format, and the text side additionally supports Responses; mainstream upstreams such as Volcengine / DeepSeek work as long as the endpoint speaks one of them.
+
+> Note: if `relays` is left empty (`[]`), the proxy has nowhere to forward after transcribing images, and requests fail with `UnsupportedProtocol("Request URL is missing an 'http://' or 'https://' protocol.")` — make sure you add a relay for every harness you actually use.
+
+### Two-hop routing (CC Switch / Codex++)
+
+The `relays` above is a **single-hop (direct-to-upstream)** example. If you run a local routing tool and want a two-hop chain (`harness → vision-relay(8787) → tool(15721/57321) → real upstream`), point `relays[].base_url` at the tool's local port and add a `via` field (descriptive only — it does not affect URL joining).
+
+**Two-hop · via Codex++ (Codex models, responses protocol)**:
+
+```json
+{ "name": "codex", "protocol": "responses",
+  "base_url": "http://127.0.0.1:57321/v1", "via": "codex-plus", "models": ["*"] }
+```
+
+**Two-hop · via CC Switch (Codex models, chat protocol)**:
+
+```json
+{ "name": "cc-codex", "protocol": "chat",
+  "base_url": "http://127.0.0.1:15721", "via": "cc-switch", "models": ["*"] }
+```
+
+**Two-hop · via CC Switch (Claude models, anthropic protocol)**:
+
+```json
+{ "name": "cc-claude", "protocol": "anthropic",
+  "base_url": "http://127.0.0.1:15721", "via": "cc-switch", "models": ["*"] }
+```
+
+### Commands
+
+| Command | Purpose |
+|---|---|
+| `start` | Start the service and wire the four harnesses (backup + rewrite base_urls). |
+| `start --detach` | Start as a detached background process (for GUI / auto-restart). |
+| `stop` | Stop the service and restore the original harness base_urls. |
+| `status` | Show service / wiring / intent status. |
+| `logs` | Tail the proxy log. |
+| `check` | Self-check config and upstreams. |
+| `models` | Interactively review / edit model capabilities. |
+| `models-scan` | Non-interactively print the model capability draft. |
+| `test-image` | Test the VLM transcription path with one image. |
+| `refresh` | Manual reconcile: reclaim hijacked wiring, absorb vendor changes, auto-repair zombie wiring (backend of the refresh button). |
+| `diagnose` | Read-only diagnostic report: observations + auto-fixes applied + what still needs you. |
+| `tools` | Probe routing-tool ports and show the active provider (read-only). |
+| `probe` | Modality probe for one model: `--harness` / `--provider` / `--model`, or `--all-untested`. |
+| `events` | Tail the event log. |
+| `visionlog` | Query the vision call records. |
+
+All management verbs accept `--json` for machine-readable output shaped like `{"contract_version": 1, "ok": ..., "data": ...}` (the GUI contract):
+
+```bash
+vision-relay status --json
+```
+
+### Environment variables
 
 Shared config lives in `~/.vision-relay/config` (fallback for env vars); proxy settings in `~/.vision-relay/proxy.json`. Env overrides: `VISION_RELAY_BIND_PORT`, `VISION_RELAY_VLM_MODEL`, `VISION_RELAY_VLM_BASE_URL`, `VISION_RELAY_VLM_API_KEY`, `VISION_RELAY_VLM_FORMAT` (config dir: `VISION_RELAY_CONFIG_DIR`).
 
