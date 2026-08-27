@@ -35,7 +35,7 @@ export function VisionLogPage(p: { lang: string }) {
               {rows.slice(0, 50).map((r, i) => (
                 <tr key={i} style={{ background: sel === r ? "#f0f9ff" : undefined, cursor: "pointer" }} onClick={() => setSel(r)}>
                   <td>{new Date((r.ts as number) * 1000).toLocaleTimeString()}</td>
-                  <td>Tier{r.tier as number}</td>
+                  <td>{"Tier" + String(r.tier).replace(/^Tier/, "")}</td>
                   <td className="dim">{r.prompt ? "默认" : "—"}</td>
                   <td>{r.cache_hit ? "命中" : "未命中"}</td>
                   <td>{r.duration_ms as number}ms</td>

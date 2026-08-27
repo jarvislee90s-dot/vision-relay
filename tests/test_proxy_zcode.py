@@ -373,8 +373,11 @@ class TestZcodeRelays:
 class TestZcodeProc:
     def test_find_parses_batched_details(self, monkeypatch):
         """评审⑦：Windows 枚举收敢单次 PowerShell（JSON 三元组），不再逐 pid 双查询。"""
+        import os
+
         from vision_relay import zcode_proc
 
+        monkeypatch.setattr(os, "name", "nt")  # 批量解析是 Windows 分支，跨平台锁定
         calls: list[list[str]] = []
 
         def fake_run(cmd, timeout=3.0):
@@ -388,8 +391,11 @@ class TestZcodeProc:
         assert len(powershell_calls) == 1  # 单次批量，而非每进程 2 次
 
     def test_find_skips_relay_self(self, monkeypatch):
+        import os
+
         from vision_relay import zcode_proc
 
+        monkeypatch.setattr(os, "name", "nt")  # relay 自身过滤在 Windows 分支，跨平台锁定
         monkeypatch.setattr(
             zcode_proc,
             "_run",
