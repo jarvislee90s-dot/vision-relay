@@ -416,3 +416,219 @@ facade 提交前旧单体仍在、测试可独立回退。
 - **测试**：本身即测试，17 守护测试全绿。
 
 > 自审后 wiring 相关覆盖率 87.4%→**88.5%**，整包 85.5%→**85.7%**；模块数 7→**8**（仍在 4~8 区间）。
+
+---
+
+# 第二部分：CLI 子系统结构化重构（cli.py + verbs.py）
+
+> 基线分支：`main` ｜ 工作分支：`refactor/task1-finch` ｜ 日期：2026-08-31
+> 目标：契约层与领域实现分离、变更热点降温；新增一个 GUI 动词时改动面局部化。
+
+## CLI-0. 结果速览
+
+| 维度 | 指标 | 结果 |
+|---|---|---|
+| 结构 | cli.py / verbs.py ≤ 300 行 | **158 / 93 行**（原 595 / 642） |
+| 结构 | 新模块数 6~10 | **9 个**（6 verbs 域 + 3 cli 域），各一句话 docstring |
+| 结构 | 涉及文件 ≤ 500 行 | 最大 `cli_lifecycle.py` 237 行 |
+| 结构 | 包内顶层导入无环 | DAG（见 CLI-5）；领域/命令模块仅在**函数内**延迟 import facade |
+| 契约 | envelope/contract_version 零变更 | `verbs_contract.py` 单点持有，审查契约只看此文件 |
+| 测试 | 4 条点名守护 | 解析矩阵 / envelope / stdin 非法输入 / 交互确认流 |
+| 测试 | 自选 ≥3 未覆盖路径 | 3 条（config_get 打码 / vlm_secret 豁免 / relay_set） |
+| 测试 | 覆盖率不低于基线 | CLI+verbs 合计 79.0%→**82.7%**；整包 85.7%→**86.4%** |
+| 过程 | 既有测试断言零改动 | `git diff main -- tests/` 仅新增 |
+| 过程 | ruff 零告警 / 零新增运行时依赖 | `pyproject` dependencies 未改 |
+| 过程 | 每新模块独立语义化提交 | 11 个提交（见下） |
+
+```
+d33f97c refactor(cli): cli.py 收敛为薄 facade
+14c8acc refactor(cli): 抽出 cli_commands 模块
+6aa3da2 refactor(cli): 抽出 cli_lifecycle 模块
+6b1b0f4 refactor(cli): 抽出 cli_args 模块
+b06fea8 refactor(verbs): verbs.py 收敛为薄 facade
+ba69402 refactor(verbs): 抽出 verbs_status 模块
+ab60a26 refactor(verbs): 抽出 verbs_settings 模块
+dda1004 refactor(verbs): 抽出 verbs_probe 模块
+d670c6c refactor(verbs): 抽出 verbs_vlm 模块
+b5a6e26 refactor(verbs): 抽出 verbs_models 模块
+43dd80d refactor(verbs): 抽出 verbs_contract 模块
+```
+
+## CLI-1. 模块布局（9 新模块 + 2 facade）
+
+**verbs 侧（契约 + 领域）：**
+
+| 模块 | 行数 | 一句话职责 |
+|---|---:|---|
+| `verbs_contract.py` | 70 | 通信契约层：envelope/CONTRACT_VERSION/_stdin_json/_locked_save + 5 个 DI 注入点 |
+| `verbs_models.py` | 127 | 模型能力：models-scan/set/fetch + 矩阵扫描原语 |
+| `verbs_vlm.py` | 130 | VLM：vlm-set/secret/test + _VLMClient |
+| `verbs_probe.py` | 125 | 探针：probe（单/批）+ 探测目标解析 |
+| `verbs_settings.py` | 113 | 设置/relay/zcode 写动词：settings-set/relay-set/zcode-restart |
+| `verbs_status.py` | 160 | 只读观测：status/refresh/diagnose/config/tools/events/visionlog |
+| `verbs.py`（facade） | 93 | 重导出公共面 + 暴露 httpx；DI 点经本模块在调用时解析 |
+
+**cli 侧（参数 + 命令）：**
+
+| 模块 | 行数 | 一句话职责 |
+|---|---:|---|
+| `cli_args.py` | 75 | argparse 解析 + _JSON_MAP（16 --json 动词分发表） |
+| `cli_lifecycle.py` | 237 | start/stop/status/logs + pid 管理 + 分离 spawn + 意图 |
+| `cli_commands.py` | 244 | refresh/diagnose/tools/probe/events/visionlog/test-image/models/check |
+| `cli.py`（facade） | 158 | main() 分发 + _safe_stdio + reconcile_reconcile DI 别名 + 重导出 |
+
+## CLI-2. 旧 → 新 100% 映射（verbs 34 + cli 31 = 65 符号，全部可达）
+
+> 校验脚本对比 `git show main:vision_relay/{verbs,cli}.py` 全部顶层符号与
+> `hasattr(verbs|cli, …)`：verbs 34/34、cli 31/31，`missing: NONE`。
+
+**verbs.py：**
+
+| 旧符号 | 新位置 | 说明 |
+|---|---|---|
+| `CONTRACT_VERSION` | `verbs_contract` | 契约版本，facade 重导出 |
+| `envelope` | `verbs_contract` | 统一信封 |
+| `_stdin_json` / `_locked_save` | `verbs_contract` | 共用 IO 段 |
+| `_observe_for_status`/`_reconcile`/`_probe_tools`/`_tail_events`/`_vl_query` | `verbs_contract` | DI 注入点（测试 monkeypatch 目标） |
+| `_lookup_cap`/`_lookup_probe`/`_scan_triples` | `verbs_models` | 矩阵扫描原语 |
+| `models_scan`/`models_set`/`models_fetch` | `verbs_models` | models_scan 经 facade 调 `verbs._scan_triples` |
+| `_VLMClient`/`vlm_set`/`vlm_secret`/`vlm_test` | `verbs_vlm` | vlm_test 经 facade 调 `verbs._VLMClient` |
+| `probe_target_for`/`probe_target_info`/`_run_probe`/`probe_one`/`probe_all_untested` | `verbs_probe` | probe_one/all 经 facade 调 `verbs.probe_target_info`/`verbs._run_probe` |
+| `settings_set`/`relay_set`/`zcode_restart` | `verbs_settings` | 无 facade 依赖 |
+| `status`/`refresh`/`diagnose`/`config_get`/`tools`/`events`/`visionlog` | `verbs_status` | 观测依赖经 facade 调 `verbs._observe_for_status` 等 |
+| `httpx`（import） | `verbs` facade | `import httpx as httpx` 暴露 `verbs.httpx`（测试 patch `verbs.httpx.get`） |
+
+**cli.py：**
+
+| 旧符号 | 新位置 | 说明 |
+|---|---|---|
+| `PID_FILE`/`LOG_FILE` | `cli_lifecycle` | facade 重导出 |
+| `_JSON_MAP` | `cli_args` | --json 动词分发表 |
+| `parse_args` | `cli_args` | facade 重导出 |
+| `_pid_path`/`_log_path`/`_write_pid` | `cli_lifecycle` | 被测试 patch，经 `cli.*` 调用 |
+| `_terminate`/`_pid_running`/`_pid_matches_ours`/`_spawn_detached` | `cli_lifecycle` | 被测试 patch，经 `cli.*` 调用 |
+| `cmd_start`/`cmd_stop`/`cmd_status`/`cmd_logs`/`cmd_start_intent`/`cmd_start_detach` | `cli_lifecycle` | facade 重导出 |
+| `cmd_refresh`/`cmd_diagnose`/`cmd_tools`/`cmd_probe`/`_provider_for_group`/`cmd_events`/`cmd_visionlog`/`cmd_test_image`/`cmd_models`/`cmd_models_scan`/`cmd_check` | `cli_commands` | facade 重导出 |
+| `_safe_stdio`/`main` | `cli` facade | 保留 |
+| `reconcile_reconcile`（import 别名） | `cli` facade | DI 点（测试 patch `cli.reconcile_reconcile`），命令经 `cli.*` 调用 |
+
+## CLI-3. 关键设计：DI 注入点经 facade 在调用时解析
+
+测试 monkeypatch / mock.patch 的目标是 `verbs._reconcile`、`verbs._run_probe`、
+`verbs._VLMClient`、`verbs.httpx`、`verbs.probe_target_info`、`verbs._scan_triples`、
+`cli._pid_path`、`cli._log_path`、`cli._pid_running`、`cli._terminate`、
+`cli._spawn_detached`、`cli.reconcile_reconcile`。这些符号被**领域/命令模块**使用，
+若直接 import 会绕过 facade 上的替换。故：
+
+- 被 patch 的符号定义在原子模块（`verbs_contract`/`verbs_models`/`verbs_vlm`/
+  `verbs_probe`/`cli_lifecycle`），由 facade 重导出；
+- 领域/命令模块在**函数体内** `from . import verbs` / `from . import cli`（延迟导入，
+  与本仓库 cli.py 既有风格一致），在调用时解析 `verbs._reconcile(...)` /
+  `cli._pid_path()` 等——替换 facade 绑定即对全部调用生效；
+- 未被 patch 的符号（`envelope`/`_stdin_json`/`probe_target_for`/`reconcile_reconcile`
+  的实现等）由各模块直接 import，零额外开销。
+
+这与第一部分 wiring 的 HOME 注入同构：facade 是"测试可替换面"的唯一汇点。
+顶层导入无环（领域模块顶层不 import facade；仅函数内延迟引用）。
+
+## CLI-4. 测试守护索引
+
+新文件：`tests/test_cli_contract_guard.py`（47 例，纯新增）。沿用 `VISION_RELAY_CONFIG_DIR`
+沙箱隔离，不触碰真实家目录。
+
+| 点名路径 | 测试 |
+|---|---|
+| ① 解析矩阵 | `test_parse_subcommand_name[22 例]`、`test_parse_flags_matrix`、`test_json_map_covers_all_json_verbs` |
+| ② envelope 契约 | `test_envelope_shape_ok/error`、`test_contract_version_pinned`、`test_verbs_return_envelope_wrapped` |
+| ③ stdin 非法输入 | `test_stdin_invalid_input_returns_error_envelope[12 例]`（models_set/vlm_set/vlm_test/settings_set） |
+| ④ 交互确认流 + models-scan | `test_cmd_start_onboarding_failure_aborts`、`test_cmd_start_restart_skips_onboarding`、`test_models_scan_output_stable_keys`、`test_cmd_models_scan_delegates_to_report` |
+
+自选 3 条（理由）：
+- `test_config_get_masks_secrets_and_strips_auth_hints`：config_get 打码 + 剥离 auth_hints
+  是"输出不带 key"工程宪法的被动面，原 verbs.py 中该分支无直接断言。
+- `test_vlm_secret_is_the_only_plaintext_exemption`：vlm-secret 是宪法唯一刻意豁免，
+  锁定其回明文范围（仅 vlm + vlm_by_harness）。
+- `test_relay_set_suppressed_and_api_key`：relay-set 的压制/补 key/打码拒绝/未知 relay
+  四条分支，原无集中覆盖。
+
+既有测试（未改动，回归保证）：`test_proxy_verbs.py`、`test_proxy_cli.py`、
+`test_proxy_route_fallback.py`、`test_proxy_vlm_test_image.py` 等覆盖动词语义与
+cmd_start/stop/probe 全链路。
+
+## CLI-5. 新旧调用链示意
+
+```
+__main__.py
+  └─ cli.main(argv)                     [cli.py facade]
+       ├─ cli_args.parse_args           [cli_args.py]
+       ├─ 非 JSON: cli.cmd_*             [cli_lifecycle / cli_commands]
+       │     ├─ cmd_start ──cli.*──▶ _pid_path/_terminate/reconcile_reconcile (DI)
+       │     │            └─ onboarding/wiring/server/reconcile (既有低层模块)
+       │     └─ cmd_probe ──verbs.*──▶ probe_target_for
+       └─ --JSON: cli_args._JSON_MAP[cmd](cfg)  ──▶ verbs.<verb>
+                                                    ├─ verbs_contract.envelope (契约)
+                                                    ├─ verbs.* DI (_reconcile/_run_probe/...)
+                                                    └─ 低层模块 (config/locking/reconcile/annotate/...)
+```
+
+顶层导入边（无环）：
+```
+cli_args        -> verbs
+cli_lifecycle   -> pid_util, env_util            (函数内延迟: cli)
+cli_commands    -> verbs                          (函数内延迟: cli)
+verbs_contract  -> config, locking, reconcile, tools, visionlog
+verbs_models    -> config, locking, verbs_contract (函数内延迟: verbs)
+verbs_vlm       -> config, verbs_contract          (函数内延迟: verbs)
+verbs_probe     -> config, reconcile, tools, verbs_contract, verbs_models (延迟: verbs)
+verbs_settings  -> config, verbs_contract
+verbs_status    -> config, route_fallback          (延迟: verbs)
+cli (facade)    -> cli_args, cli_commands, cli_lifecycle, reconcile, verbs
+verbs (facade)  -> verbs_contract, verbs_models, verbs_vlm, verbs_probe, verbs_settings, verbs_status
+```
+（"函数内延迟"= 仅在函数体里 `from . import cli|verbs`，非顶层导入边，故无环。）
+
+## CLI-6. 覆盖率前后对比
+
+留档：`refactor/coverage-cli.txt`。
+
+| | Stmts | Miss | Cover |
+|---|---:|---:|---:|
+| 基线 cli.py + verbs.py 合计 | 806 | 169 | **79.0%** |
+| 重构后 11 文件合计 | 862 | 149 | **82.7%** |
+| 整包 vision_relay（基线） | 4648 | 664 | 85.7% |
+| 整包 vision_relay（重构后） | 4704 | 642 | **86.4%** |
+
+> 覆盖率**上升**（CLI+verbs +3.7pt，整包 +0.7pt）。facade `verbs.py` 100%、
+> `cli_args.py` 100%、`verbs_status.py` 100%；`verbs_models` 98.8%、`verbs_contract` 94.3%、
+> `verbs_settings` 93.1%。未覆盖行主要为 `cmd_test_image`/`cmd_check` 的 VLM/网络分支与
+> 各 OSError 兜底（与基线同性质）。
+
+## CLI-7. 未来新增动词的改动面说明（拆分价值证明）
+
+假设要新增一个 GUI 动词 **`theme-set`**（stdin JSON 写主题设置，返回 envelope）。
+按重构后的结构，改动面**局部且明确**：
+
+1. **`vision_relay/verbs_settings.py`**：加一个 `theme_set(cfg) -> dict` 函数
+   （stdin 经 `verbs_contract._stdin_json`、落盘经 `_locked_save`、返回 `envelope(...)`）。
+   —— **唯一需要写业务逻辑的文件**。
+2. **`vision_relay/verbs.py`** facade：在 `from .verbs_settings import ...` 与 `__all__`
+   各加一行 `theme_set`。（重导出登记）
+3. **`vision_relay/cli_args.py`**：`_JSON_MAP` 加一行 `"theme-set": verbs.theme_set`；
+   `parse_args` 加一行 `sub.add_parser("theme-set", parents=[common])`。（CLI 接线）
+
+**不需要碰**：`cli.py`（main 分发是数据驱动的 `_JSON_MAP` 查表，新动词自动走 `--json` 通道）、
+`verbs_contract.py`（除非改 envelope 结构=改契约，才动这里并升 contract_version）、
+任何其它动词模块、gui/。
+
+对比重构前：要在 642 行的 `verbs.py` 里**找位置插入**函数（与 20 个无关动词混杂，
+diff 噪音大、易碰契约），并在 595 行 `cli.py` 的 `parse_args`/`main` 两处手工接线。
+重构后改动从"跨两个热点文件的大海捞针"变为"一个领域文件加函数 + 两个登记点各一行"，
+且**契约审查仍只需看 `verbs_contract.py` 一个文件**。
+
+## CLI-8. 漂移清零（F1）
+
+- 清除 `cli_args.py` 分发表/subparser 里残留的 `# Task 1`/`# Task 2`/`# Task 3`/`# M1`
+  里程碑堆积注释（保留语义注释），消除"按行号定位改动点"的失效引用。
+- `verbs.py`/`cli.py` 模块 docstring 更新为 facade 职责说明，指向子模块。
+- 行为零变更：CLI 接口、输出文本、退出码、stdin JSON 协议、envelope 结构、
+  交互确认流全部不变（578 既有测试 + 47 新测试 = 625 passed 回归证明）。

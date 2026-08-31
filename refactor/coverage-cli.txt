@@ -1,0 +1,23 @@
+CLI 子系统覆盖率前后对比（cli.py + verbs.py 拆分）
+======================================================================
+
+BASELINE（重构前）：pytest 578 passed, 1 skipped
+Name                       Stmts  Miss  Cover
+cli                        421   122  71.0%
+verbs                      385    47  87.8%
+TOTAL (vision_relay pkg)    4648   664  85.7%
+
+AFTER（重构后，9 新模块 + 2 facade）：pytest 625 passed, 1 skipped
+Name                       Stmts  Miss  Cover
+cli                         68    22  67.6%
+cli_args                    43     0 100.0%
+cli_lifecycle              159    37  76.7%
+cli_commands               173    56  67.6%
+verbs                        9     0 100.0%
+verbs_contract              35     2  94.3%
+verbs_models                82     1  98.8%
+verbs_vlm                   74    11  85.1%
+verbs_probe                 71    14  80.3%
+verbs_settings              87     6  93.1%
+verbs_status                61     0 100.0%
+TOTAL (vision_relay pkg)    4704   642  86.4%
