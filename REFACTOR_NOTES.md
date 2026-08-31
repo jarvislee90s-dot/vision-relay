@@ -11,16 +11,16 @@
 
 | 维度 | 指标 | 结果 |
 |---|---|---|
-| A1 | `pytest` 全绿 | **575 passed, 1 skipped**（基线 561 passed, 1 skipped；+14 新守护测试） |
-| A2 | `git diff main --stat -- tests/` 仅新增 | 2 个新文件 / 517 insertions / **0 deletions**，既有断言零改动 |
+| A1 | `pytest` 全绿 | **578 passed, 1 skipped**（基线 561 passed, 1 skipped；+17 新测试） |
+| A2 | `git diff main --stat -- tests/` 仅新增 | 2 个新文件 / 仅 insertions / **0 deletions**，既有断言零改动 |
 | A3 | 沙箱 HOME 端到端冒烟 | `tests/smoke/smoke_wiring.py` 三场景全过、免交互、可重复 |
 | B1 | `wiring.py` ≤ 300 行 | **186 行**（原 1297 行，-86%） |
-| B2 | 新模块数 4~8 | **7 个**，各一句话职责 docstring |
+| B2 | 新模块数 4~8 | **8 个**，各一句话职责 docstring |
 | B3 | 拆分模块单文件 ≤ 500 行 | 最大 `zcode_providers.py` 364 行 |
 | B4 | 包内顶层导入无环 | 见 §6 导入图（DAG，无环） |
 | C1 | 三条点名路径守护测试 | legacy 迁移 / zcode 条目级 / 部分失败回滚时序，全部覆盖 |
-| C2 | 自选 ≥3 未覆盖路径 | 4 条，理由见 §5.2 |
-| C3 | 覆盖率不低于基线 | wiring 相关 84.9%→**87.4%**；整包 85.0%→**85.5%** |
+| C2 | 自选 ≥3 未覆盖路径 | 4 条，理由见 §4.2 |
+| C3 | 覆盖率不低于基线 | wiring 相关 84.9%→**88.5%**；整包 85.0%→**85.7%** |
 | D1 | 旧→新映射 100% | 60 个符号 + HOME 全部映射，见 §3 |
 | E1 | 每新模块独立提交 | 10 个语义化提交，见 §8 |
 | E2 | ruff + 测试全绿 | `ruff check .` All checks passed；575 passed |
@@ -48,7 +48,8 @@ python tests/smoke/smoke_wiring.py             # A3
 | `qwen_providers.py` | 300 | qwen modelProviders 条目级改写/还原/relay 维护/统计/对账 |
 | `zcode_providers.py` | 364 | zcode v2 `provider.<id>.options.baseURL` 条目级接线 + 改写时间戳 |
 | `relays.py` | 92 | routing 模板激活/还原与在线工具档案自动 relay 增删（不碰 harness 配置） |
-| `wiring_orchestrate.py` | 328 | start/stop 编排与回滚：备份→改写→快照，按快照或 .bak 还原 |
+| `wiring_status.py` | 45 | 四处 harness base_url 归属与条目级统计的只读报告（无副作用） |
+| `wiring_orchestrate.py` | 297 | start/stop 编排与回滚：备份→改写→快照，按快照或 .bak 还原 |
 | `wiring.py`（facade） | 186 | 持有测试可 monkeypatch 的 HOME、重导出公共 API、为 home 依赖入口注入 HOME |
 
 > 每个模块顶部均有一句话职责 docstring（D2）。`wiring.py` 保留为**薄组装层**（B1 明确允许），
@@ -156,7 +157,7 @@ monkeypatch，未改动。
 | `_relay_name` | `relays` | relay 命名 |
 | `wiring_backup_and_rewrite` | `wiring_orchestrate.backup_and_rewrite`（+`home`） | facade 包装保留原名 |
 | `wiring_restore` | `wiring_orchestrate.restore`（+`home`） | facade 包装保留原名 |
-| `wiring_report` | `wiring_orchestrate.report`（+`home`） | facade 包装保留原名 |
+| `wiring_report` | `wiring_status.report`（+`home`） | facade 包装保留原名；自审把只读查询移出编排模块（§11） |
 | `wiring_restore_by_snapshot` | `wiring_orchestrate.restore_by_snapshot`（+`home`） | facade 包装保留原名 |
 | `wiring_restore_harness` | `wiring_orchestrate.restore_harness`（+`home`） | facade 包装保留原名 |
 | `wiring_restore_on_stop` | `wiring_orchestrate.restore_on_stop`（+`home`） | facade 包装保留原名 |
@@ -206,24 +207,24 @@ monkeypatch，未改动。
 
 报告留档：`refactor/coverage-baseline.txt`、`refactor/coverage-after.txt`。
 
-**wiring 相关代码（原单体 → 8 个拆分模块合计）：**
+**wiring 相关代码（原单体 → 8 个拆分模块 + facade 合计）：**
 
 | | Stmts | Miss | Cover |
 |---|---:|---:|---:|
 | 基线 `wiring.py` | 940 | 142 | **84.9%** |
-| 重构后 8 模块合计 | 1004 | 127 | **87.4%** |
+| 重构后 9 文件合计 | 999 | 115 | **88.5%** |
 
 **整包 `vision_relay/`：**
 
 | | Stmts | Miss | Cover |
 |---|---:|---:|---:|
 | 基线 | 4589 | 690 | **85.0%** |
-| 重构后 | 4653 | 675 | **85.5%** |
+| 重构后 | 4648 | 664 | **85.7%** |
 
-> 覆盖率**上升**（wiring 相关 +2.5pt，整包 +0.5pt），未低于基线。新模块中 facade `wiring.py`
-> 达 100%；`harness_spec` 97.6%、`zcode_providers` 92.3%、`modalities` 92%、`relays` 90.3%、
-> `qwen_providers` 87.6%、`harness_io` 81.3%、`wiring_orchestrate` 80.4%。未覆盖行主要为
-> 各 `OSError`/`JSONDecodeError` 静默兜底与极端畸形输入分支（与基线同性质）。
+> 覆盖率**上升**（wiring 相关 +3.6pt，整包 +0.7pt），未低于基线。新模块中 facade `wiring.py`
+> 与 `wiring_status.py` 达 100%；`harness_spec` 97.6%、`zcode_providers` 91.9%、`modalities` 92%、
+> `relays` 90.3%、`qwen_providers` 87.6%、`wiring_orchestrate` 84.2%、`harness_io` 81.3%。
+> 未覆盖行主要为各 `OSError`/`JSONDecodeError` 静默兜底与极端畸形输入分支（与基线同性质）。
 
 ---
 
@@ -239,8 +240,10 @@ harness_io        -> harness_spec, modalities
 qwen_providers    -> config, harness_io, harness_spec, modalities, snapshot, tools
 zcode_providers   -> config, env_util, fingerprint, harness_io, harness_spec, modalities, snapshot, tools
 relays            -> config, harness_spec, tools
+wiring_status     -> harness_io, harness_spec, qwen_providers, zcode_providers
 wiring_orchestrate-> harness_io, harness_spec, qwen_providers, snapshot, tools, zcode_providers
-wiring (facade)   -> harness_io, harness_spec, modalities, qwen_providers, relays, wiring_orchestrate, zcode_providers
+wiring (facade)   -> harness_io, harness_spec, modalities, qwen_providers, relays,
+                     wiring_orchestrate, wiring_status, zcode_providers
 ```
 
 这是一个 DAG：`tools/config/snapshot/fingerprint/env_util` 为叶子（不回链 wiring 子树），
@@ -307,6 +310,8 @@ wiring 端到端冒烟（沙箱 HOME，四种 harness）
 ## 8. 提交脉络（E1）
 
 ```
+10fb73e test(wiring): 门面公共面契约测试（自审修正：__all__ 漂移无守护）
+6f9641e refactor(wiring): 自审修正——抽出 wiring_status、消除 restore 重复块
 4d5f83e docs(wiring): 清零"三处 harness"漂移注释→四处（F1）
 4994e1f test(wiring): 补强守护测试 + 沙箱 HOME 端到端冒烟脚本
 3215551 refactor(wiring): wiring.py 收敛为薄 facade——持有 HOME 隔离点并重导出公共 API
@@ -353,3 +358,61 @@ facade 提交前旧单体仍在、测试可独立回退。
    记录/spec（`ruff.toml` 明确 docs 保持原样），未改动；README 经核对接线描述已为四家、无过时。
 6. **`.coverage` 等本地产物入 `.gitignore`**：新增 `.coverage`/`coverage.json`/`htmlcov/` 忽略项，
    避免覆盖率产物污染工作区（与重构无行为耦合）。
+
+---
+
+## 11. 自审与修正（第二轮 review）
+
+对首版拆分做严格自审，定位 3 处薄弱并已修复（提交 `6f9641e` / `10fb73e`）：
+
+### 薄弱 1：`wiring_orchestrate` 混入只读查询 `report()`（cohesion 错位）
+
+- **问题**：orchestrate 的 docstring 是"start/stop 编排与回滚"，但 `report()` 是**只读状态查询**
+  （既非 start 也非 stop 也非回滚），且使该模块成为最大文件（328 行）。按"生命周期"切分，
+  查询与编排是两类职责，混在一起会让"改 start 流程"与"改 report 展示"互相干扰 diff/评审。
+- **修前→修后**：抽出 `wiring_status.py`（45 行，纯查询无副作用），`report()` 整体迁入；
+  facade 的 `wiring_report` 改委托 `wiring_status.report`。orchestrate 328→297 行。
+  ```diff
+  - def report(cfg, home):  # 在 wiring_orchestrate.py
+  + # wiring_status.py（新模块）
+  + def report(cfg, home): ...
+  - def wiring_report(cfg): return wiring_orchestrate.report(cfg, HOME)
+  + def wiring_report(cfg): return wiring_status.report(cfg, HOME)
+  ```
+- **测试**：`wiring_report` 经 facade 被既有测试覆盖（`tests/test_proxy_qwen_providers.py`
+  多处断言 `wiring_report` 行的 wired/stat），移动后全绿；`wiring_status.py` 覆盖率 100%。
+
+### 薄弱 2：restore 路径 4 处重复"删过期 .bak"、3 处重复"codex 目录还原"（DRY）
+
+- **问题**：`restore` / `restore_by_snapshot` / `_restore_harness_on_stop` /
+  `_generic_snapshot_or_bak_restore` 各内联一份
+  `bak = _find_bak(p); if bak is not None: try os.unlink(bak) except OSError: pass`；
+  codex 目录还原 `if name == "codex": cat_msg = _restore_codex_catalog(p); if cat_msg: ...`
+  也重复 3 处。复制块意味着"改备份清理语义"要改 4 处，易漏改导致漂移。
+- **修前→修后**：抽 `_drop_stale_bak(p)` 与 `_codex_catalog_restore_msg(name, p)` 两个 helper，
+  6 处调用点改为单行委托，**行为逐字保持**（同样的守卫、同样的 OSError 静默、同样的消息文案）。
+  ```diff
+  - bak = _find_bak(p)
+  - if bak is not None:
+  -     try: os.unlink(bak)
+  -     except OSError: pass
+  + _drop_stale_bak(p)
+  ```
+- **测试**：helper 由既有 restore 测试覆盖（`test_proxy_wiring.py::TestRestoreOnStop`、
+  `TestCodexCatalogModalities`、`TestRestoreBySnapshot`），未新增专门测试（既有断言已锁住
+  "还原后删 .bak""codex 目录还原消息"行为）；全量 578 passed 证明语义未变。
+
+### 薄弱 3：facade 公共面无回归测试（`__all__` 漂移只在运行时暴露）
+
+- **问题**：facade 的 `__all__` 是手写 72 项。子模块搬运/改名后，`from vision_relay.wiring import X`
+  或 `wiring.X` **不会在 import 期报错**，只在真正调用时 `AttributeError`——原无任何测试守护
+  这条契约，是"测试弱"。
+- **修前→修后**：新增 `TestFacadeContract`（3 例，纯测试提交 `10fb73e`）：
+  - `test_original_public_surface_still_reachable`：原 wiring 单体的 61 个顶层符号仍可经
+    `wiring.X` 访问（防搬运丢失/改名）；
+  - `test_all_dunder_resolves_to_real_objects`：`__all__` 每项真实可解析（防 star-import 静默缺项）；
+  - `test_home_bound_wrappers_delegate_to_submodules`：10 个 HOME 绑定包装确实注入 HOME 并委托
+    子模块（防退化为空壳/自实现业务逻辑）。
+- **测试**：本身即测试，17 守护测试全绿。
+
+> 自审后 wiring 相关覆盖率 87.4%→**88.5%**，整包 85.5%→**85.7%**；模块数 7→**8**（仍在 4~8 区间）。
