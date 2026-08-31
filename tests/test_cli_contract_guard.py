@@ -35,6 +35,7 @@ def _stdin(monkeypatch, raw):
         (["stop"], "stop"),
         (["status"], "status"),
         (["logs"], "logs"),
+        (["test-image", "x.png"], "test-image"),
         (["check"], "check"),
         (["models"], "models"),
         (["models-scan"], "models-scan"),
@@ -265,3 +266,119 @@ def test_relay_set_suppressed_and_api_key(tmp_path, monkeypatch):
     assert verbs.relay_set(cfg)["ok"] is False
     _stdin(monkeypatch, {"name": "ghost", "suppressed": True})
     assert verbs.relay_set(cfg)["ok"] is False  # 未知 relay
+
+
+# ── 自审补强 ①：facade 公共面契约（防 __all__/重导出漂移只在运行时暴露）──────
+
+_VERBS_ORIGINAL_SURFACE = {
+    "CONTRACT_VERSION", "envelope", "_stdin_json", "_locked_save",
+    "_observe_for_status", "_reconcile", "_probe_tools", "_tail_events", "_vl_query",
+    "_lookup_cap", "_lookup_probe", "_scan_triples",
+    "status", "refresh", "diagnose", "models_scan", "config_get", "tools", "events", "visionlog",
+    "models_set", "vlm_set", "vlm_secret", "vlm_test", "_VLMClient",
+    "settings_set", "relay_set", "zcode_restart",
+    "probe_target_for", "probe_target_info", "_run_probe", "probe_one", "probe_all_untested",
+    "models_fetch", "httpx",
+}
+
+_CLI_ORIGINAL_SURFACE = {
+    "PID_FILE", "LOG_FILE", "_JSON_MAP", "parse_args",
+    "_pid_path", "_log_path", "_write_pid",
+    "cmd_start", "cmd_stop", "cmd_start_intent", "_spawn_detached", "cmd_start_detach",
+    "cmd_refresh", "cmd_diagnose", "cmd_tools", "cmd_probe", "_provider_for_group",
+    "cmd_events", "cmd_visionlog", "_terminate", "_pid_running", "_pid_matches_ours",
+    "cmd_status", "cmd_logs", "cmd_test_image", "cmd_models", "cmd_models_scan", "cmd_check",
+    "_safe_stdio", "main", "reconcile_reconcile",
+}
+
+
+class TestFacadeContract:
+    def test_verbs_original_surface_still_reachable(self):
+        """重构后原 verbs 的全部符号仍可经 verbs.X 访问（防搬运丢失/改名）。"""
+        missing = [s for s in sorted(_VERBS_ORIGINAL_SURFACE) if not hasattr(verbs, s)]
+        assert missing == [], f"verbs facade 丢失符号: {missing}"
+
+    def test_cli_original_surface_still_reachable(self):
+        import vision_relay.cli as cli
+
+        missing = [s for s in sorted(_CLI_ORIGINAL_SURFACE) if not hasattr(cli, s)]
+        assert missing == [], f"cli facade 丢失符号: {missing}"
+
+    def test_all_dunder_resolves(self):
+        """两个 facade 的 __all__ 每项都须真实存在（防 star-import 静默缺项）。"""
+        import vision_relay.cli as cli
+
+        for mod in (verbs, cli):
+            stale = [n for n in mod.__all__ if not hasattr(mod, n)]
+            assert stale == [], f"{mod.__name__}.__all__ 含不可解析项: {stale}"
+
+
+# ── 自审补强 ②：三处分发注册一致性（防新增子命令漏注册致 main 静默 return 1）──
+
+
+def test_every_subcommand_is_dispatched():
+    """每个 parse_args 子命令要么在 _JSON_MAP（--json 通道），要么有 cmd_* 处理器。
+
+    main() 末尾 `return 1` 是兜底：若新增子命令但漏登记 _JSON_MAP / 漏写 cmd_*，
+    会静默走到兜底。本测试把三处分发注册（_JSON_MAP / cmd_* / parse_args）锁成一致。
+    """
+    import vision_relay.cli as cli
+    from vision_relay.cli_args import _JSON_MAP
+
+    commands = [
+        "start", "stop", "status", "logs", "test-image", "check", "models", "models-scan",
+        "models-set", "refresh", "diagnose", "tools", "probe", "events", "visionlog", "config",
+        "vlm-set", "vlm-test", "vlm-secret", "settings-set", "relay-set", "zcode-restart",
+        "models-fetch",
+    ]
+    assert len(commands) == len(set(commands))  # 无重复
+    for cmd in commands:
+        argv = [cmd, "x"] if cmd == "test-image" else [cmd]  # test-image 需位置参数 path
+        assert parse_args(argv).command == cmd  # 子命令可解析
+        in_json = cmd in _JSON_MAP
+        handler = "cmd_" + cmd.replace("-", "_")
+        has_handler = hasattr(cli, handler)
+        assert in_json or has_handler, (
+            f"{cmd}: 不在 _JSON_MAP 也无 {handler} → main() 会静默 return 1（漏注册）"
+        )
+
+
+def test_dual_commands_have_both_paths():
+    """双路命令（既可 --json 又有交互 cmd_*）两处都在，缺一即漂移。"""
+    import vision_relay.cli as cli
+    from vision_relay.cli_args import _JSON_MAP
+
+    for cmd in ("status", "refresh", "diagnose", "models-scan", "tools", "events", "visionlog", "probe"):
+        assert cmd in _JSON_MAP, f"{cmd} 应在 _JSON_MAP"
+        assert hasattr(cli, "cmd_" + cmd.replace("-", "_")), f"{cmd} 应有 cmd_* 处理器"
+
+
+# ── 自审补强 ③：models_fetch 的网络 patch 点契约（verbs.httpx 重导出非显然）────
+
+
+def test_models_fetch_intercepted_by_verbs_httpx_patch(tmp_path, monkeypatch):
+    """契约：patch verbs.httpx.get 即拦截 models_fetch 的网络请求（不发真实 HTTP）。
+
+    verbs.py facade 的 `import httpx as httpx` 是为测试 patch 而存在的重导出；
+    models_fetch 用本模块顶层 httpx，二者同一模块对象，故 patch facade 的 .get 生效。
+    本测试把这条非显然的桥接锁成显式契约。
+    """
+    cfg = _cfg(tmp_path, monkeypatch)
+    cfg.relays = [RelayConfig(name="r1", protocol="chat", base_url="https://up.example/v1")]
+    seen: dict = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"data": [{"id": "m1"}, {"id": "m2"}]}
+
+    monkeypatch.setattr(verbs.httpx, "get", lambda url, **k: seen.__setitem__("url", url) or _Resp())
+    out = verbs.models_fetch(cfg)
+    assert seen["url"] == "https://up.example/v1/models"  # 真实 URL 拼接
+    assert out["ok"] is True and out["data"]["providers"] == {"r1": ["m1", "m2"]}
+    # 回环 relay 不发请求：只进 skipped，不进 providers
+    cfg2 = _cfg(tmp_path / "x", monkeypatch)
+    cfg2.relays = [RelayConfig(name="r2", protocol="chat", base_url="http://127.0.0.1:9")]
+    out2 = verbs.models_fetch(cfg2)
+    assert out2["data"]["providers"] == {} and out2["data"]["skipped"] == {"r2": "loopback"}

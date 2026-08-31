@@ -428,9 +428,9 @@ facade 提交前旧单体仍在、测试可独立回退。
 
 | 维度 | 指标 | 结果 |
 |---|---|---|
-| 结构 | cli.py / verbs.py ≤ 300 行 | **158 / 93 行**（原 595 / 642） |
+| 结构 | cli.py / verbs.py ≤ 300 行 | **159 / 93 行**（原 595 / 642） |
 | 结构 | 新模块数 6~10 | **9 个**（6 verbs 域 + 3 cli 域），各一句话 docstring |
-| 结构 | 涉及文件 ≤ 500 行 | 最大 `cli_lifecycle.py` 237 行 |
+| 结构 | 涉及文件 ≤ 500 行 | 最大 `cli_commands.py` 244 行 |
 | 结构 | 包内顶层导入无环 | DAG（见 CLI-5）；领域/命令模块仅在**函数内**延迟 import facade |
 | 契约 | envelope/contract_version 零变更 | `verbs_contract.py` 单点持有，审查契约只看此文件 |
 | 测试 | 4 条点名守护 | 解析矩阵 / envelope / stdin 非法输入 / 交互确认流 |
@@ -473,7 +473,7 @@ b5a6e26 refactor(verbs): 抽出 verbs_models 模块
 | 模块 | 行数 | 一句话职责 |
 |---|---:|---|
 | `cli_args.py` | 75 | argparse 解析 + _JSON_MAP（16 --json 动词分发表） |
-| `cli_lifecycle.py` | 237 | start/stop/status/logs + pid 管理 + 分离 spawn + 意图 |
+| `cli_lifecycle.py` | 243 | start/stop/status/logs + pid 管理 + 分离 spawn + 意图 |
 | `cli_commands.py` | 244 | refresh/diagnose/tools/probe/events/visionlog/test-image/models/check |
 | `cli.py`（facade） | 158 | main() 分发 + _safe_stdio + reconcile_reconcile DI 别名 + 重导出 |
 
@@ -533,7 +533,7 @@ b5a6e26 refactor(verbs): 抽出 verbs_models 模块
 
 ## CLI-4. 测试守护索引
 
-新文件：`tests/test_cli_contract_guard.py`（47 例，纯新增）。沿用 `VISION_RELAY_CONFIG_DIR`
+新文件：`tests/test_cli_contract_guard.py`（54 例，纯新增）。沿用 `VISION_RELAY_CONFIG_DIR`
 沙箱隔离，不触碰真实家目录。
 
 | 点名路径 | 测试 |
@@ -631,4 +631,42 @@ diff 噪音大、易碰契约），并在 595 行 `cli.py` 的 `parse_args`/`mai
   里程碑堆积注释（保留语义注释），消除"按行号定位改动点"的失效引用。
 - `verbs.py`/`cli.py` 模块 docstring 更新为 facade 职责说明，指向子模块。
 - 行为零变更：CLI 接口、输出文本、退出码、stdin JSON 协议、envelope 结构、
-  交互确认流全部不变（578 既有测试 + 47 新测试 = 625 passed 回归证明）。
+  交互确认流全部不变（578 既有测试 + 54 新测试 = 632 passed 回归证明）。
+
+## CLI-9. 自审与修正（CLI 段第二轮 review）
+
+对 CLI 拆分做严格自审，定位 3 处薄弱并已修复（提交随附）：
+
+### 薄弱 1：verbs/cli facade 公共面无契约测试（`__all__` 漂移只在运行时暴露）
+
+- **问题**：phase-1 给 wiring facade 加了 `TestFacadeContract`，但 CLI 重构漏了同类守护。
+  `verbs.py`/`cli.py` 的 `__all__`（各 30+ 项）是手写重导出，子模块改名/删符号后
+  `from verbs import X` 不在 import 期报错、只在调用时 `AttributeError`。
+- **修前→修后**：新增 `TestFacadeContract`（3 例）——
+  `test_verbs_original_surface_still_reachable`（原 34 符号仍可达）、
+  `test_cli_original_surface_still_reachable`（原 31 符号仍可达）、
+  `test_all_dunder_resolves`（两 facade 的 `__all__` 每项真实可解析）。
+- **测试**：本身即测试，54 守护测试全绿。
+
+### 薄弱 2：三处分发注册无一致性守护（新增子命令易漏注册致 main 静默 `return 1`）
+
+- **问题**：`main()` 有三处分发——早返回 dict（stop/status/logs）、`_JSON_MAP`（--json）、
+  非 json if-chain。新增子命令若漏登记 `_JSON_MAP` 或漏写 `cmd_*`，会静默落到末尾
+  `return 1`，无任何报错。原无测试锁这三者一致。
+- **修前→修后**：新增 `test_every_subcommand_is_dispatched`（23 子命令每个要么在
+  `_JSON_MAP` 要么有 `cmd_*`）与 `test_dual_commands_have_both_paths`（8 个双路命令
+  两处都在）。顺带发现解析矩阵漏了 `test-image`（23 子命令只覆盖 22），已补。
+- **测试**：本身即测试。
+
+### 薄弱 3：`models_fetch` 的网络 patch 点（`verbs.httpx`）是非显然桥接，无显式契约测试
+
+- **问题**：`verbs.py` facade 的 `import httpx as httpx` 纯粹是为让测试
+  `monkeypatch verbs.httpx.get` 而存在的重导出；`models_fetch` 用本模块顶层 httpx，
+  二者靠"同一模块对象"隐式关联。新读者难以看出 patch 点，且原 guard 文件无锁定。
+- **修前→修后**：新增 `test_models_fetch_intercepted_by_verbs_httpx_patch`——
+  patch `verbs.httpx.get` 后断言 `models_fetch` 不发真实 HTTP、URL 拼接正确、
+  回环 relay 只进 `skipped` 不进 `providers`。把隐式桥接锁成显式契约。
+- **测试**：本身即测试。
+
+> 自审后守护测试 47→**54** 例，全量 625→**632 passed**；行数校准：cli.py 158→**159**、
+> cli_lifecycle 237→**243**（ruff 重排 import 后漂移，NOTES 已据实测订正）。
