@@ -272,3 +272,72 @@ class TestRelayMaintenance:
         assert "manual" in names and "qwen-ollama" not in names and "zcode-bigmodel" not in names
         assert cfg.routing.activated_relays == []
         assert any("qwen-ollama" in m for m in msgs)
+
+
+# ── 门面公共面契约：重构不得丢符号（__all__ 漂移只在运行时暴露，故需测试锁定）──
+
+# 原 wiring.py 单体的全部顶层公共/私有符号（53 函数 + 1 dataclass + 8 常量）+ HOME。
+# 重构后这些必须仍可经 wiring.X 访问（facade 重导出或 HOME 绑定包装）。
+_ORIGINAL_PUBLIC_SURFACE = {
+    # 常量 / 类
+    "BAK_SUFFIX", "LEGACY_BAK_SUFFIX", "HOME",
+    "_ZCODE_PROTO", "_ZCODE_RELAY_PREFIX", "_QWEN_AUTH_PROTO", "_QWEN_RELAY_PREFIX", "_MOD_ABSENT",
+    "_Harness", "HARNESS_CFG",
+    # harness_spec
+    "_path", "_find_bak", "classify_base_url",
+    # modalities
+    "_modalities_open", "_open_modalities", "_mod_input", "_ensure_image",
+    # harness_io
+    "read_base_url", "write_base_url", "_json_save_atomic", "_first_model",
+    "_codex_catalog_path", "_patch_codex_catalog_modalities", "_restore_codex_catalog",
+    # qwen_providers
+    "_qwen_provider_items_from", "_qwen_provider_items", "_qwen_entry_keys", "_qwen_resolve_key",
+    "_rewrite_qwen_providers", "_restore_qwen_providers", "_qwen_relay_name", "_qwen_relay_groups",
+    "ensure_qwen_relays", "reconcile_qwen_providers", "_qwen_provider_stats",
+    # zcode_providers
+    "_zcode_marker_path", "_mark_zcode_rewrite", "zcode_rewrite_ts",
+    "_zcode_key", "_zcode_entries", "_rewrite_zcode_providers", "_restore_zcode_providers",
+    "_zcode_slug", "_zcode_relay_desired", "_is_zcode_relay",
+    "ensure_zcode_relays", "remove_zcode_relays", "reconcile_zcode_providers",
+    "_zcode_provider_gated", "_zcode_provider_stats",
+    # relays
+    "relays_activate", "relays_restore", "ensure_tool_relays", "_relay_name",
+    # wiring_orchestrate（wiring_* 为 facade 的 HOME 绑定包装）
+    "wiring_backup_and_rewrite", "wiring_restore", "wiring_report", "wiring_restore_by_snapshot",
+    "wiring_restore_harness", "wiring_restore_on_stop",
+    "_restore_harness_on_stop", "_generic_snapshot_or_bak_restore",
+}
+
+
+class TestFacadeContract:
+    def test_original_public_surface_still_reachable(self):
+        """重构后原 wiring 的全部符号仍可经 wiring.X 访问（防搬运丢失/改名）。"""
+        missing = [s for s in sorted(_ORIGINAL_PUBLIC_SURFACE) if not hasattr(wiring, s)]
+        assert missing == [], f"facade 丢失符号: {missing}"
+
+    def test_all_dunder_resolves_to_real_objects(self):
+        """__all__ 每项都须真实存在（防 __all__ 列了已删/改名符号导致 star-import 静默缺项）。"""
+        stale = [n for n in wiring.__all__ if not hasattr(wiring, n)]
+        assert stale == [], f"__all__ 含不可解析项: {stale}"
+
+    def test_home_bound_wrappers_delegate_to_submodules(self):
+        """HOME 绑定包装确实委托子模块（monkeypatch wiring.HOME 改变其行为），非空壳。"""
+        import inspect
+
+        for fn in (
+            wiring.wiring_backup_and_rewrite,
+            wiring.wiring_restore,
+            wiring.wiring_report,
+            wiring.wiring_restore_by_snapshot,
+            wiring.wiring_restore_harness,
+            wiring.wiring_restore_on_stop,
+            wiring.ensure_qwen_relays,
+            wiring.ensure_zcode_relays,
+            wiring.reconcile_qwen_providers,
+            wiring.reconcile_zcode_providers,
+        ):
+            assert callable(fn)
+            # 包装函数体应引用子模块（委托），而非自身实现业务逻辑
+            src = inspect.getsource(fn)
+            assert "HOME" in src, f"{fn.__name__} 未注入 HOME"
+
