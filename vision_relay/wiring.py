@@ -1,1297 +1,186 @@
-"""start/stop 自动接线与回滚：把三处 harness 的 base_url 指到本代理(第一跳，有备份)，并在 stop 还原。"""
+"""start/stop 自动接线与回滚的 facade：把四处 harness 的 base_url 指到本代理(第一跳，有备份)，并在 stop 还原。
+
+本模块在重构后只保留"组装层"职责：持有测试可 monkeypatch 的 HOME 隔离点、
+重导出接线子模块的公共 API、并为依赖 home 的入口函数注入 HOME（薄包装）。
+具体实现按职责拆分到：harness_spec（规格/路径/归属）、modalities（图片门原语）、
+harness_io（base_url 读写/codex 目录补丁）、qwen_providers / zcode_providers
+（条目级接线）、relays（模板/工具 relay）、wiring_orchestrate（start/stop 编排）。
+"""
 
 from __future__ import annotations
 
-import json
 import os
-import re
-import time
-from dataclasses import dataclass
 
-from . import fingerprint, snapshot
-from .config import RelayConfig, save_config
-from .tools import _TEMPLATES, TOOL_DOSSIERS
+from . import qwen_providers, wiring_orchestrate, zcode_providers
+from .harness_io import (
+    _codex_catalog_path,
+    _first_model,
+    _json_save_atomic,
+    _patch_codex_catalog_modalities,
+    _restore_codex_catalog,
+    read_base_url,
+    write_base_url,
+)
+from .harness_spec import (
+    _QWEN_AUTH_PROTO,
+    _QWEN_RELAY_PREFIX,
+    _ZCODE_PROTO,
+    _ZCODE_RELAY_PREFIX,
+    BAK_SUFFIX,
+    HARNESS_CFG,
+    LEGACY_BAK_SUFFIX,
+    _find_bak,
+    _Harness,
+    _path,
+    classify_base_url,
+)
+from .modalities import _MOD_ABSENT, _ensure_image, _mod_input, _modalities_open, _open_modalities
+from .qwen_providers import (
+    _qwen_entry_keys,
+    _qwen_provider_items,
+    _qwen_provider_items_from,
+    _qwen_provider_stats,
+    _qwen_relay_groups,
+    _qwen_relay_name,
+    _qwen_resolve_key,
+    _restore_qwen_providers,
+    _rewrite_qwen_providers,
+)
+from .relays import _relay_name, ensure_tool_relays, relays_activate, relays_restore
+from .wiring_orchestrate import (
+    _generic_snapshot_or_bak_restore,
+    _restore_harness_on_stop,
+)
+from .zcode_providers import (
+    _is_zcode_relay,
+    _mark_zcode_rewrite,
+    _restore_zcode_providers,
+    _rewrite_zcode_providers,
+    _zcode_entries,
+    _zcode_key,
+    _zcode_marker_path,
+    _zcode_provider_gated,
+    _zcode_provider_stats,
+    _zcode_relay_desired,
+    _zcode_slug,
+    remove_zcode_relays,
+    zcode_rewrite_ts,
+)
 
-BAK_SUFFIX = ".vision-relay.bak"
-LEGACY_BAK_SUFFIX = ".qwen-mm-proxy.bak"
-# 测试可 monkeypatch 此值以隔离（不触碰真实 ~）。
+# 重导出清单：`from wiring import *` 与 F401 均以此为准（facade 公共面 = 原子模块公共面）。
+__all__ = [
+    "HOME",
+    # harness_spec
+    "BAK_SUFFIX",
+    "LEGACY_BAK_SUFFIX",
+    "HARNESS_CFG",
+    "_Harness",
+    "_QWEN_AUTH_PROTO",
+    "_QWEN_RELAY_PREFIX",
+    "_ZCODE_PROTO",
+    "_ZCODE_RELAY_PREFIX",
+    "_find_bak",
+    "_path",
+    "classify_base_url",
+    # modalities
+    "_MOD_ABSENT",
+    "_ensure_image",
+    "_modalities_open",
+    "_mod_input",
+    "_open_modalities",
+    # harness_io
+    "read_base_url",
+    "write_base_url",
+    "_json_save_atomic",
+    "_first_model",
+    "_codex_catalog_path",
+    "_patch_codex_catalog_modalities",
+    "_restore_codex_catalog",
+    # qwen_providers
+    "ensure_qwen_relays",
+    "reconcile_qwen_providers",
+    "_qwen_provider_items_from",
+    "_qwen_provider_items",
+    "_qwen_entry_keys",
+    "_qwen_resolve_key",
+    "_rewrite_qwen_providers",
+    "_restore_qwen_providers",
+    "_qwen_relay_name",
+    "_qwen_relay_groups",
+    "_qwen_provider_stats",
+    # zcode_providers
+    "ensure_zcode_relays",
+    "remove_zcode_relays",
+    "reconcile_zcode_providers",
+    "zcode_rewrite_ts",
+    "_zcode_marker_path",
+    "_mark_zcode_rewrite",
+    "_rewrite_zcode_providers",
+    "_restore_zcode_providers",
+    "_zcode_slug",
+    "_zcode_relay_desired",
+    "_is_zcode_relay",
+    "_zcode_key",
+    "_zcode_entries",
+    "_zcode_provider_gated",
+    "_zcode_provider_stats",
+    # relays
+    "relays_activate",
+    "relays_restore",
+    "ensure_tool_relays",
+    "_relay_name",
+    # wiring_orchestrate（wiring_* 为本模块内的 HOME 绑定包装）
+    "wiring_backup_and_rewrite",
+    "wiring_restore",
+    "wiring_report",
+    "wiring_restore_by_snapshot",
+    "wiring_restore_harness",
+    "wiring_restore_on_stop",
+    "_restore_harness_on_stop",
+    "_generic_snapshot_or_bak_restore",
+]
+
+# 测试可 monkeypatch 此值以隔离（不触碰真实 ~）。子模块函数不直接读它，
+# 而由下列薄包装在调用时注入——保证 monkeypatch wiring.HOME 立即对全部入口生效。
 HOME = os.path.expanduser("~")
 
 
-@dataclass(frozen=True)
-class _Harness:
-    kind: str  # json | toml | env
-    rel_path: str
-    key: str
-
-
-HARNESS_CFG: dict[str, _Harness] = {
-    # qwen-code 实际配置在 ~/.qwen/settings.json 的 model.baseUrl（不是旧路径 ~/.qwen-code/.env）
-    "claude": _Harness("json", (".claude", "settings.json"), "env.ANTHROPIC_BASE_URL"),
-    "codex": _Harness("toml", (".codex", "config.toml"), "base_url"),
-    "qwen-code": _Harness("json", (".qwen", "settings.json"), "model.baseUrl"),
-    # zcode 供应商配置在 ~/.zcode/v2/config.json 的 provider.<id>.options.baseURL（纯条目级，
-    # 无全局 base_url；key 字段仅作路径占位，read_base_url 特判返回激活供应商地址）
-    "zcode": _Harness("zcode-v2", (".zcode", "v2", "config.json"), "provider"),
-}
-
-# zcode provider.kind → relay 协议（spec §4；未知 kind 不接管）
-_ZCODE_PROTO = {"anthropic": "anthropic", "openai": "chat", "openai-compatible": "chat"}
-_ZCODE_RELAY_PREFIX = "zcode-"
-
-# qwen-code ≥0.22.0：模型选中 modelProviders 条目时，请求端点取条目自身 baseUrl
-# （解析优先级第二层），model.baseUrl 只是 /model 选择器的消歧提示、不在解析链内。
-# 因此接管必须条目级改写；authType 即协议族，仅改写本代理支持的协议。
-_QWEN_AUTH_PROTO = {"openai": "chat", "anthropic": "anthropic"}
-_QWEN_RELAY_PREFIX = "qwen-"
-# modalities 原值哨兵：接管前该字段不存在（还原时删除字段而非写回字符串）
-_MOD_ABSENT = "~absent~"
-
-
-def _qwen_provider_items_from(data: dict) -> tuple[list[tuple[str, int, dict]], int]:
-    """在已解析的 settings.json dict 上收集可改写条目（同一份 dict，改动可落回）。"""
-    mp = data.get("modelProviders")
-    if not isinstance(mp, dict):
-        return [], 0
-    items: list[tuple[str, int, dict]] = []
-    skipped = 0
-    for auth_type, val in mp.items():
-        if auth_type not in _QWEN_AUTH_PROTO:
-            if isinstance(val, list):
-                skipped += sum(
-                    1 for e in val if isinstance(e, dict) and isinstance(e.get("baseUrl"), str) and e.get("baseUrl")
-                )
-            elif isinstance(val, dict):
-                skipped += 1
-            continue
-        if not isinstance(val, list):  # wrapped 旧形态
-            skipped += 1
-            continue
-        for i, e in enumerate(val):
-            if isinstance(e, dict) and isinstance(e.get("baseUrl"), str) and e.get("baseUrl"):
-                items.append((auth_type, i, e))
-            else:
-                skipped += 1
-    return items, skipped
-
-
-def _qwen_provider_items(path: str) -> tuple[list[tuple[str, int, dict]], int]:
-    """读 modelProviders 的可改写条目（authType→协议已知 + 裸数组形态 + baseUrl 非空）。
-
-    返回 ([(authType, index, entry)], skipped)。skipped 计 gemini/vertex/custom 等
-    不支持协议与 wrapped 旧形态（{protocol, models}，qwen 0.22.0 已忽略该形态）——
-    它们原样保留、不接管（无协议外壳可转写）。"""
-    try:
-        d = json.load(open(path, encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return [], 0
-    return _qwen_provider_items_from(d)
-
-
-def _qwen_entry_keys(items: list[tuple[str, int, dict]]) -> list[str]:
-    """改写侧快照键：envKey 名（位置引用，非 key 值）。同 envKey 多条目共用一个键
-    （同供应商多模型）；同 envKey 但原始 URL 不同者以 #id 消歧。无 envKey 用
-    authType|id|index。键只依赖 (envKey,id) 等稳定量——改写后 baseUrl 全变代理地址，
-    键计算不得依赖它。"""
-    first_url: dict[str, str] = {}
-    keys = []
-    for auth, idx, e in items:
-        env = str(e.get("envKey") or "")
-        eid = str(e.get("id") or idx)
-        url = str(e.get("baseUrl") or "")
-        if not env:
-            keys.append(f"{auth}|{eid}|{idx}")
-        elif env not in first_url:
-            first_url[env] = url
-            keys.append(env)
-        elif url == first_url[env]:
-            keys.append(env)
-        else:
-            keys.append(f"{env}#{eid}")
-    return keys
-
-
-def _qwen_resolve_key(auth: str, idx: int, entry: dict, provider_urls: dict[str, str]) -> str | None:
-    """还原侧键解析（与 _qwen_entry_keys 语义互逆）：#id 消歧键优先（更具体），
-    裸 envKey 兜底；无对应记录返回 None（该条目不动）。"""
-    env = str(entry.get("envKey") or "")
-    eid = str(entry.get("id") or idx)
-    if env:
-        specific = f"{env}#{eid}"
-        if specific in provider_urls:
-            return specific
-        if env in provider_urls:
-            return env
-        return None
-    key = f"{auth}|{eid}|{idx}"
-    return key if key in provider_urls else None
-
-
-def _json_save_atomic(path: str, data: dict) -> bool:
-    """JSON 原子写（tmp + replace，失败清 tmp）；qwen settings 与 codex catalog 共用。"""
-    tmp = path + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-        os.replace(tmp, path)
-        return True
-    except OSError:
-        try:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-        except OSError:
-            pass
-        return False
-
-
-def _modalities_open(entry: dict) -> bool:
-    gc = entry.get("generationConfig")
-    mod = gc.get("modalities") if isinstance(gc, dict) else None
-    return isinstance(mod, dict) and mod.get("image") is True
-
-
-def _open_modalities(entry: dict) -> object:
-    """打开准入门，返回原值（哨兵 ~absent~ 表示原本没有 modalities 字段）。
-
-    qwen-code 的 inputModalities 准入门不开，Read/粘贴的图片根本不会进请求体
-    （本代理转写无从谈起）。接管后"所有模型都识图"（文本模型由本代理转写），
-    故门一律代开；stop 按原值还原，避免直连态下图片被塞给纯文本上游报错。"""
-    gc = entry.setdefault("generationConfig", {})
-    if not isinstance(gc, dict):
-        return _MOD_ABSENT
-    mod = gc.get("modalities", _MOD_ABSENT)
-    if isinstance(mod, dict) and mod.get("image") is True:
-        return _MOD_ABSENT  # 已开着：不产生变更记录（幂等，还原不动它）
-    original = mod
-    gc["modalities"] = {"image": True}
-    return original
-
-
-def _mod_input(model: dict) -> list | None:
-    """zcode 模型 → modalities.input 列表；形态不认识返回 None（不硬造，spec §5.1）。"""
-    mods = model.get("modalities")
-    inp = mods.get("input") if isinstance(mods, dict) else None
-    return inp if isinstance(inp, list) else None
-
-
-def _ensure_image(mods_list: list) -> bool:
-    """输入模态列表没有 "image" 则追加（模态门共用原语：zcode 与 codex 目录补丁共用）。"""
-    if "image" in mods_list:
-        return False
-    mods_list.append("image")
-    return True
-
-
-def _zcode_marker_path() -> str:
-    from .env_util import config_dir
-
-    return os.path.join(config_dir(), "zcode.rewrite.json")
-
-
-def _mark_zcode_rewrite() -> None:
-    """记录本代理最后一次改写 zcode config.json 的时间（§7.2 待重启判定：进程启动须晚于它）。"""
-    try:
-        os.makedirs(os.path.dirname(_zcode_marker_path()), exist_ok=True)
-        tmp = _zcode_marker_path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"ts": time.time()}, f)
-        os.replace(tmp, _zcode_marker_path())
-    except OSError:
-        pass
-
-
-def zcode_rewrite_ts() -> float:
-    """本代理最后一次改写 zcode config.json 的时刻（无记录=0）。"""
-    try:
-        with open(_zcode_marker_path(), encoding="utf-8") as f:
-            return float(json.load(f).get("ts") or 0.0)
-    except (OSError, ValueError):
-        return 0.0
-
-
-def _rewrite_zcode_providers(path: str, proxy_url: str) -> tuple[dict[str, str], dict[str, dict], dict]:
-    """接管改写（spec §5.1）：可接管条目 baseURL→本代理 + 纯文本模型补 image 门与
-    modalitiesConfigured。返回 (url 原值映射, 模态门原值映射, 统计)；键 pid::kind /
-    pid::kind::model。已就位者不产生记录（幂等）；空 key 供应商完全不碰。"""
-    empty_stats = {"rewritten": 0, "gated": 0, "skipped_nokey": 0, "skipped_kind": 0, "skipped_mod": 0}
-    try:
-        d = json.load(open(path, encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}, {}, empty_stats
-    items, nokey, badkind = _zcode_entries(d)
-    url_originals: dict[str, str] = {}
-    mod_originals: dict[str, dict] = {}
-    stats = {"rewritten": 0, "gated": 0, "skipped_nokey": nokey, "skipped_kind": badkind, "skipped_mod": 0}
-    for pid, kind, e in items:
-        key = _zcode_key(pid, kind)
-        opts = e["options"]
-        if not (opts["baseURL"] == proxy_url or opts["baseURL"].startswith(proxy_url + "/")):
-            url_originals[key] = opts["baseURL"]
-            opts["baseURL"] = proxy_url
-            stats["rewritten"] += 1
-        models = e.get("models")
-        if not isinstance(models, dict):
-            continue
-        for mid, m in models.items():
-            if not isinstance(m, dict):
-                continue
-            inp = _mod_input(m)
-            if inp is None:
-                stats["skipped_mod"] += 1
-                continue
-            if "image" in inp:
-                continue  # 已开门（用户自配）：不动、不记录（幂等）
-            zc = m.get("zcode")
-            zc = zc if isinstance(zc, dict) else None
-            flag_orig = zc.get("modalitiesConfigured", _MOD_ABSENT) if zc else _MOD_ABSENT
-            mod_originals[f"{key}::{mid}"] = {"input": list(inp), "flag": flag_orig}
-            _ensure_image(inp)
-            if zc is None:
-                zc = m.setdefault("zcode", {})
-            zc["modalitiesConfigured"] = True
-            stats["gated"] += 1
-    if not (url_originals or mod_originals):
-        return {}, {}, stats
-    if not _json_save_atomic(path, d):
-        return {}, {}, {**stats, "rewritten": 0, "gated": 0}
-    _mark_zcode_rewrite()
-    return url_originals, mod_originals, stats
-
-
-def _restore_zcode_providers(
-    path: str, proxy_url: str, provider_urls: dict[str, str], provider_modalities: dict[str, object] | None
-) -> int:
-    """按快照还原（spec §5.2）。守卫：当前 baseURL 仍指本代理才动（用户改走别处不动）；
-    身份键 pid::kind 现场重算，kind 变更不命中→跳过（对账吸收新值）。返回还原条数。"""
-    try:
-        d = json.load(open(path, encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return 0
-    provs = d.get("provider")
-    if not isinstance(provs, dict):
-        return 0
-    provider_modalities = provider_modalities or {}
-    restored = 0
-    for pid, e in provs.items():
-        if not isinstance(e, dict) or not isinstance(e.get("options"), dict):
-            continue
-        opts = e["options"]
-        cur = opts.get("baseURL")
-        if not (isinstance(cur, str) and (cur == proxy_url or cur.startswith(proxy_url + "/"))):
-            continue
-        key = _zcode_key(str(pid), str(e.get("kind") or ""))
-        touched = False
-        if key in provider_urls:
-            opts["baseURL"] = provider_urls[key]
-            touched = True
-        models = e.get("models")
-        if isinstance(models, dict):
-            for mid, m in models.items():
-                rec = provider_modalities.get(f"{key}::{mid}")
-                if not (isinstance(m, dict) and isinstance(rec, dict)):
-                    continue
-                inp = _mod_input(m)
-                if inp is not None and isinstance(rec.get("input"), list):
-                    m["modalities"]["input"] = list(
-                        rec["input"]
-                    )  # 整列表写回原值（原值必不含 image——只记录过缺 image 的模型）
-                zc = m.get("zcode")
-                if isinstance(zc, dict) and "flag" in rec:
-                    if rec["flag"] == _MOD_ABSENT:
-                        zc.pop("modalitiesConfigured", None)
-                        if not zc:  # M5: 空壳（开窗时 setdefault 创建）一并移除；非空=用户数据不动
-                            m.pop("zcode", None)
-                    else:
-                        zc["modalitiesConfigured"] = rec["flag"]
-                touched = True
-        if touched:
-            restored += 1
-    if restored and _json_save_atomic(path, d):
-        _mark_zcode_rewrite()
-    return restored
-
-
-def _rewrite_qwen_providers(path: str, proxy_url: str) -> tuple[dict[str, str], dict[str, object], int, int, int]:
-    """把全部可改写条目 baseUrl 指到本代理并代开 modalities 准入门。
-
-    返回 (URL 新原值映射, modalities 原值映射, skipped, URL 改写条数, 开门条数)。
-    两类映射都只含本次实际变更的条目（已就位者不产生记录，防把代理地址/开门态
-    存成"原始值"；同 envKey 多条目共用一键，故映射数 ≤ 条数）。"""
-    try:
-        d = json.load(open(path, encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}, {}, 0, 0, 0
-    items, skipped = _qwen_provider_items_from(d)
-    url_originals: dict[str, str] = {}
-    mod_originals: dict[str, object] = {}
-    rewritten = gated = 0
-    for (auth, _idx, e), key in zip(items, _qwen_entry_keys(items)):
-        if not (e["baseUrl"] == proxy_url or e["baseUrl"].startswith(proxy_url + "/")):
-            url_originals[key] = e["baseUrl"]
-            e["baseUrl"] = proxy_url
-            rewritten += 1
-        if not _modalities_open(e):
-            mod_originals[key] = _open_modalities(e)
-            gated += 1
-    if (url_originals or mod_originals) and not _json_save_atomic(path, d):
-        return {}, {}, skipped, 0, 0
-    return url_originals, mod_originals, skipped, rewritten, gated
-
-
-def _restore_qwen_providers(
-    path: str, proxy_url: str, provider_urls: dict[str, str], provider_modalities: dict[str, object] | None
-) -> int:
-    """按快照映射逐条写回原值（URL + modalities 门）。守卫：仅当前 baseUrl 仍指向
-    本代理才动（用户运行期改走别处的条目原样保留）。返回还原条数。"""
-    try:
-        d = json.load(open(path, encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return 0
-    items, _ = _qwen_provider_items_from(d)
-    provider_modalities = provider_modalities or {}
-    restored = 0
-    for auth, idx, e in items:
-        cur = e.get("baseUrl")
-        if not (cur == proxy_url or (isinstance(cur, str) and cur.startswith(proxy_url + "/"))):
-            continue
-        key = _qwen_resolve_key(auth, idx, e, provider_urls)
-        touched = False
-        if key is not None and key in provider_urls:
-            e["baseUrl"] = provider_urls[key]
-            touched = True
-        if key is not None and key in provider_modalities:
-            gc = e.get("generationConfig")
-            if isinstance(gc, dict):
-                orig = provider_modalities[key]
-                if orig == _MOD_ABSENT:
-                    gc.pop("modalities", None)
-                else:
-                    gc["modalities"] = orig
-                touched = True
-        if touched:
-            restored += 1
-    if restored:
-        _json_save_atomic(path, d)
-    return restored
-
-
-def _qwen_relay_name(base_url: str, taken: set[str]) -> str:
-    import re as _re
-    from urllib.parse import urlparse
-
-    host = (urlparse(base_url).hostname or "upstream").lower()
-    name = _QWEN_RELAY_PREFIX + _re.sub(r"[^a-z0-9.-]+", "-", host)
-    if name not in taken:
-        return name
-    i = 2
-    while f"{name}-{i}" in taken:
-        i += 1
-    return f"{name}-{i}"
-
-
-def _qwen_relay_groups(
-    path: str, provider_urls: dict[str, str] | None, bind_port: int
-) -> dict[tuple[str, str], list[str]]:
-    """(协议, 原始 baseUrl) → 条目 id 列表。工具端口原值（两层语义，由既有 relay
-    服务）与已指本代理者不建 relay。"""
-    if not provider_urls:
-        return {}
-    items, _ = _qwen_provider_items(path)
-    groups: dict[tuple[str, str], list[str]] = {}
-    for auth, idx, e in items:
-        # 改写后条目 baseUrl 全为代理地址，键只能按解析规则取（#id 优先、裸键兜底），
-        # 不能重算——冲突检测依赖的原始 URL 信号已被改写抹掉
-        key = _qwen_resolve_key(auth, idx, e, provider_urls)
-        if key is None:
-            continue
-        orig = provider_urls[key]
-        owner = classify_base_url(orig, bind_port)
-        if owner == "ours" or owner in TOOL_DOSSIERS:
-            continue
-        groups.setdefault((_QWEN_AUTH_PROTO[auth], orig), []).append(str(e.get("id") or idx))
-    return groups
-
-
+# ── 依赖 home 的入口：薄包装，注入 HOME ──────────────────────────────
 def ensure_qwen_relays(cfg) -> list[str]:
-    """按接管快照 + 当前 settings.json 维护 qwen 一层直连 relay（spec §5：qwen-code
-    无路由工具，永远一层直连）。缺失则建（prepend，精确 id 先于通配 "*" 命中），
-    原值已不存在于快照的旧 qwen relay 移除。models 为条目 id 精确匹配；api_key 留空
-    ——转发时透传客户端自己的鉴权头（统一鉴权链）。返回新增 name 列表。"""
-    p = _path(HOME, "qwen-code")
-    if not os.path.exists(p):
-        return []
-    snap = snapshot.load().get("qwen-code")
-    groups = _qwen_relay_groups(p, getattr(snap, "provider_urls", None), cfg.bind_port)
-    changed = False
-    # 清理：activated 里的 qwen relay 若其 (协议, 原始地址) 已不在当前分组 → 移除
-    keep = []
-    for r in cfg.relays:
-        if (
-            r.name.startswith(_QWEN_RELAY_PREFIX)
-            and r.name in cfg.routing.activated_relays
-            and (r.protocol, r.base_url) not in groups
-        ):
-            changed = True
-            continue
-        keep.append(r)
-    cfg.relays = keep
-    added = []
-    taken = {r.name for r in cfg.relays}
-    for (proto, orig), ids in groups.items():
-        if any(r.protocol == proto and r.base_url == orig for r in cfg.relays):
-            continue
-        name = _qwen_relay_name(orig, taken)
-        taken.add(name)
-        cfg.relays.insert(0, RelayConfig(name=name, protocol=proto, base_url=orig, models=list(ids)))
-        if name not in cfg.routing.activated_relays:
-            cfg.routing.activated_relays.append(name)
-        added.append(name)
-        changed = True
-    if changed:
-        save_config(cfg)
-    return added
-
-
-def _zcode_slug(pid: str) -> str:
-    return re.sub(r"[^a-z0-9.-]+", "-", pid.lower()).strip("-") or "provider"
-
-
-def _zcode_relay_desired(
-    d: dict, provider_urls: dict[str, str] | None, proxy_url: str, bind_port: int
-) -> list[RelayConfig]:
-    """期望 zcode relay 列表（有序：激活供应商最前）。一供应商一条；原值=现场非代理地址
-    优先、现场指代理时取快照原值；ours/工具端口不建（防回环）。名称待 ensure 侧消歧。"""
-    items, _nokey, _bad = _zcode_entries(d)
-    provider_urls = provider_urls or {}
-    ordered = [t for t in items if t[2].get("enabled") is True] + [t for t in items if t[2].get("enabled") is not True]
-    out: list[RelayConfig] = []
-    for pid, kind, e in ordered:
-        key = _zcode_key(pid, kind)
-        live = e["options"]["baseURL"]
-        orig = live
-        if live == proxy_url or live.startswith(proxy_url + "/"):
-            orig = provider_urls.get(key) or live
-        owner = classify_base_url(orig, bind_port)
-        if owner == "ours" or owner in TOOL_DOSSIERS:
-            continue
-        names: list[str] = []
-        models = e.get("models")
-        if isinstance(models, dict):
-            for mid, m in models.items():
-                if isinstance(m, dict):
-                    names.append(mid)
-                    api = m.get("name")
-                    if isinstance(api, str) and api and api != mid:
-                        names.append(api)  # 双名收录（spec §6.3）
-        out.append(
-            RelayConfig(
-                name=_ZCODE_RELAY_PREFIX + _zcode_slug(pid),  # 暂定名，ensure 侧查重
-                protocol=_ZCODE_PROTO[kind],
-                base_url=orig,
-                models=names,
-                provider_id=pid,
-                auth_hints=[fingerprint.key_fingerprint(e["options"]["apiKey"])],
-            )
-        )
-    return out
-
-
-def _is_zcode_relay(r) -> bool:
-    """zcode 自动条目判定：provider_id + 前缀双条件（手编同名前缀 relay 不误伤）。"""
-    return bool(getattr(r, "provider_id", None)) and r.name.startswith(_ZCODE_RELAY_PREFIX)
-
-
-def ensure_zcode_relays(cfg) -> list[str]:
-    """按现场 config.json + 快照维护 zcode 一层直连 relay（spec §6）：一供应商一条、激活优先、
-    指纹随行。现状（成员/字段/顺序/指纹）与期望不一致 → 整块重建；返回新增 name 列表。"""
-    p = _path(HOME, "zcode")
-    if not os.path.exists(p):
-        return []
-    try:
-        d = json.load(open(p, encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    snap = snapshot.load().get("zcode")
-    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    desired = _zcode_relay_desired(d, getattr(snap, "provider_urls", None), proxy_url, cfg.bind_port)
-    current = [r for r in cfg.relays if _is_zcode_relay(r)]
-    same = [r.provider_id for r in current] == [r.provider_id for r in desired] and all(
-        c.protocol == w.protocol
-        and c.base_url == w.base_url
-        and list(c.models) == list(w.models)
-        and list(c.auth_hints or []) == list(w.auth_hints or [])  # 密钥轮换 → 指纹必须跟随重建（评审⑤）
-        for c, w in zip(current, desired)
-    )
-    if same:
-        return []
-    names_before = {r.name for r in current}
-    taken = {r.name for r in cfg.relays if not _is_zcode_relay(r)}
-    cfg.relays = [r for r in cfg.relays if not _is_zcode_relay(r)]
-    added: list[str] = []
-    for i, r in enumerate(desired):
-        name = r.name
-        n = 2
-        while name in taken:  # slug 撞名消歧（与 qwen _qwen_relay_name 同风格）
-            name = f"{r.name}-{n}"
-            n += 1
-        taken.add(name)
-        r.name = name
-        cfg.relays.insert(i, r)  # 整块插头部：先于通配 "*" 既有 relay（prepend 语义同 qwen）
-        if name not in cfg.routing.activated_relays:
-            cfg.routing.activated_relays.append(name)
-        if name not in names_before:
-            added.append(name)
-    save_config(cfg)
-    return added
-
-
-def remove_zcode_relays(cfg) -> list[str]:
-    """移除全部 zcode 自动 relay 并清出 activated_relays（「取消勾选 zcode」配套，评审④）：
-    残留条目会继续参与选路且停止跟随现场。返回被移除的 name 列表。"""
-    removed = [r.name for r in cfg.relays if _is_zcode_relay(r)]
-    if not removed:
-        return []
-    cfg.relays = [r for r in cfg.relays if not _is_zcode_relay(r)]
-    cfg.routing.activated_relays = [n for n in cfg.routing.activated_relays if n not in set(removed)]
-    save_config(cfg)
-    return removed
-
-
-def reconcile_zcode_providers(cfg) -> dict | None:
-    """接管态校正 zcode 条目漂移（spec §7.1）：非本代理条目重指、关门重开、新原值吸收进
-    快照合并映射。返回 None 或摘要 {rewritten, gated}。"""
-    p = _path(HOME, "zcode")
-    if not os.path.exists(p):
-        return None
-    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    new_urls, new_mods, _stats = _rewrite_zcode_providers(p, proxy_url)
-    if not new_urls and not new_mods:
-        return None
-    old = snapshot.load().get("zcode")
-    merged = dict(old.provider_urls or {}) if old and old.provider_urls else {}
-    merged.update(new_urls)
-    merged_mod = dict(old.provider_modalities or {}) if old and old.provider_modalities else {}
-    merged_mod.update(new_mods)
-    try:
-        snapshot.save(
-            "zcode",
-            snapshot.Snapshot(
-                base_url=old.base_url if old else proxy_url,
-                key_ref=snapshot.key_ref_for("zcode"),
-                model=old.model if old else "",
-                second_hop=None,
-                provider_urls=merged or None,
-                provider_modalities=merged_mod or None,
-            ),
-        )
-    except Exception:  # 快照尽力而为，不打断重接管
-        pass
-    return {"rewritten": len(new_urls), "gated": len(new_mods)}
+    return qwen_providers.ensure_qwen_relays(cfg, HOME)
 
 
 def reconcile_qwen_providers(cfg) -> dict | None:
-    """接管态下校正 qwen provider 条目漂移：非本代理的条目重指本代理、被关的
-    modalities 门重开，新原值吸收进快照（对应 absorb 语义，spec §5 始终接管）。
-    返回 None 或摘要。"""
-    p = _path(HOME, "qwen-code")
-    if not os.path.exists(p):
-        return None
-    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    new_urls, new_mods, _, _, _ = _rewrite_qwen_providers(p, proxy_url)
-    if not new_urls and not new_mods:
-        return None
-    old = snapshot.load().get("qwen-code")
-    merged = dict(old.provider_urls or {}) if old and old.provider_urls else {}
-    merged.update(new_urls)
-    merged_mod = dict(old.provider_modalities or {}) if old and old.provider_modalities else {}
-    merged_mod.update(new_mods)
-    try:
-        snapshot.save(
-            "qwen-code",
-            snapshot.Snapshot(
-                base_url=old.base_url if old else proxy_url,
-                key_ref=snapshot.key_ref_for("qwen-code"),
-                model=old.model if old else _first_model(p),
-                second_hop=old.second_hop if old else None,
-                provider_urls=merged or None,
-                provider_modalities=merged_mod or None,
-            ),
-        )
-    except Exception:  # 快照尽力而为，不打断重接管
-        pass
-    return {"rewritten": len(new_urls), "gated": len(new_mods)}
+    return qwen_providers.reconcile_qwen_providers(cfg, HOME)
 
 
-def _path(home: str, harness: str) -> str:
-    rel = HARNESS_CFG[harness].rel_path
-    return os.path.join(home, *rel) if isinstance(rel, tuple) else os.path.join(home, rel)
+def ensure_zcode_relays(cfg) -> list[str]:
+    return zcode_providers.ensure_zcode_relays(cfg, HOME)
 
 
-def _find_bak(p: str) -> str | None:
-    new = p + BAK_SUFFIX
-    if os.path.exists(new):
-        return new
-    old = p + LEGACY_BAK_SUFFIX
-    if os.path.exists(old):
-        return old
-    return None
-
-
-def read_base_url(path: str, h: _Harness) -> str | None:
-    try:
-        if h.kind == "zcode-v2":
-            d = json.load(open(path, encoding="utf-8"))
-            provs = d.get("provider")
-            if isinstance(provs, dict):
-                for e in provs.values():
-                    if isinstance(e, dict) and e.get("enabled") is True:
-                        opts = e.get("options")
-                        if isinstance(opts, dict) and isinstance(opts.get("baseURL"), str) and opts["baseURL"]:
-                            return opts["baseURL"]
-            return None
-        if h.kind == "json":
-            d = json.load(open(path, encoding="utf-8"))
-            node = d
-            for part in h.key.split("."):
-                node = node.get(part) if isinstance(node, dict) else None
-                if node is None:
-                    break
-            return node if isinstance(node, str) else None
-        if h.kind == "env":
-            for line in open(path, encoding="utf-8"):
-                m = re.match(rf"^{h.key}=(.*)$", line.strip())
-                if m:
-                    return m.group(1).strip()
-            return None
-        # toml
-        m = re.search(r'base_url\s*=\s*"([^"]*)"', open(path, encoding="utf-8").read())
-        return m.group(1) if m else None
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def write_base_url(path: str, h: _Harness, url: str) -> bool:
-    tmp = path + ".tmp"
-    try:
-        if h.kind == "json":
-            d = json.load(open(path, encoding="utf-8"))
-            parts = h.key.split(".")
-            node = d
-            for part in parts[:-1]:
-                node = node.setdefault(part, {})
-            node[parts[-1]] = url
-            data = json.dumps(d, ensure_ascii=False, indent=2) + "\n"
-        elif h.kind == "env":
-            lines = []
-            hit = False
-            for line in open(path, encoding="utf-8"):
-                if re.match(rf"^{h.key}=", line.strip()):
-                    lines.append(f"{h.key}={url}\n")
-                    hit = True
-                else:
-                    lines.append(line)
-            if not hit:
-                lines.append(f"{h.key}={url}\n")
-            data = "".join(lines)
-        else:  # toml
-            raw = open(path, encoding="utf-8").read()
-            if re.search(r'base_url\s*=\s*"[^"]*"', raw):
-                data = re.sub(r'base_url\s*=\s*"[^"]*"', f'base_url = "{url}"', raw)
-            else:
-                data = raw + f'\nbase_url = "{url}"\n'
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(data)
-        os.replace(tmp, path)
-        return True
-    except (OSError, json.JSONDecodeError):
-        try:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-        except OSError:
-            pass
-        return False
-
-
-def _codex_catalog_path(config_path: str) -> str | None:
-    """config.toml 引用的 model catalog 路径（相对路径按 config 所在目录解析）；无引用 None。"""
-    try:
-        raw = open(config_path, encoding="utf-8").read()
-    except OSError:
-        return None
-    m = re.search(r'model_catalog_json\s*=\s*"([^"]*)"', raw)
-    if not m or not m.group(1).strip():
-        return None
-    v = m.group(1).strip()
-    return v if v.startswith("/") else os.path.join(os.path.dirname(config_path), v)
-
-
-def _patch_codex_catalog_modalities(config_path: str) -> str | None:
-    """目录模态补丁（接管配套）：Codex 按 catalog 的 input_modalities 放行 view_image/
-    贴图——纯文本标注会把图片挡在请求之外，代理转写永远收不到图。给 models[] 每条
-    补 "image"（已含者不动，缺字段/非列表设 ["text","image"]）；首次改动前整文件备份
-    （与 harness 配置同后缀、同"已有备份不覆盖"语义），重复接管幂等。读/解析失败
-    静默跳过，不打断接线。"""
-    cat = _codex_catalog_path(config_path)
-    if cat is None or not os.path.exists(cat):
-        return None
-    try:
-        d = json.load(open(cat, encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    models = d.get("models") if isinstance(d, dict) else None
-    if not isinstance(models, list):
-        return None
-    patched = 0
-    for m in models:
-        if not isinstance(m, dict):
-            continue
-        mods = m.get("input_modalities")
-        if isinstance(mods, list):
-            if _ensure_image(mods):
-                patched += 1
-        else:
-            m["input_modalities"] = ["text", "image"]
-            patched += 1
-    if not patched:
-        return None
-    if not os.path.exists(cat + BAK_SUFFIX):
-        try:
-            import shutil
-
-            shutil.copyfile(cat, cat + BAK_SUFFIX)
-        except OSError:
-            pass
-    if not _json_save_atomic(cat, d):
-        return None
-    return f"catalog {os.path.basename(cat)}: +image modalities ({patched} models)"
-
-
-def _restore_codex_catalog(config_path: str) -> str | None:
-    """目录补丁的对称还原：备份存在则整文件还原并删备份（base_url 守卫由调用方负责）。"""
-    cat = _codex_catalog_path(config_path)
-    if cat is None:
-        return None
-    bak = cat + BAK_SUFFIX
-    if not os.path.exists(bak):
-        return None
-    try:
-        import shutil
-
-        shutil.copyfile(bak, cat)
-        os.unlink(bak)
-    except OSError:
-        return None
-    return f"catalog {os.path.basename(cat)}: restored"
+def reconcile_zcode_providers(cfg) -> dict | None:
+    return zcode_providers.reconcile_zcode_providers(cfg, HOME)
 
 
 def wiring_backup_and_rewrite(cfg) -> list[str]:
-    """为启用的 harness 备份(不重复)并把 base_url 指到本代理；接管前记录组合快照。
-
-    qwen-code 额外做条目级接管(modelProviders[].baseUrl)：qwen 0.22.0 起条目 baseUrl
-    优先于 model.baseUrl，只改全局字段等于没接管。"""
-    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    home = HOME
-    changed: list[str] = []
-    for name in cfg.routing.harnesses:
-        h = HARNESS_CFG[name]
-        p = _path(home, name)
-        if not os.path.exists(p):
-            changed.append(f"{name}: no config file, skipped")
-            continue
-        original = read_base_url(p, h)
-        if _find_bak(p) is None:  # 已有备份（含旧后缀）不覆盖，防止把代理地址存成"原始值"
-            try:
-                os.makedirs(os.path.dirname(p), exist_ok=True)
-                import shutil
-
-                shutil.copyfile(p, p + BAK_SUFFIX)
-            except OSError:
-                pass
-        # qwen 条目级改写（必须在备份之后；快照需要合并条目原值映射）
-        qwen_new, qwen_mod, qwen_skipped, qwen_rewritten, qwen_gated = (None, None, 0, 0, 0)
-        zcode_new: dict = {}
-        zcode_mod: dict = {}
-        zcode_stats: dict = {}
-        if name == "qwen-code":
-            qwen_new, qwen_mod, qwen_skipped, qwen_rewritten, qwen_gated = _rewrite_qwen_providers(p, proxy_url)
-        elif name == "zcode":
-            zcode_new, zcode_mod, zcode_stats = _rewrite_zcode_providers(p, proxy_url)
-        base_changed = bool(original) and classify_base_url(original, cfg.bind_port) != "ours"
-        if base_changed or qwen_new or qwen_mod or zcode_new or zcode_mod:
-            # 接管前组合快照：base_url + key 位置 + 模型 + 第二跳归属（spec §5）；
-            # 条目映射与既有快照合并（重复 start 时已指本代理的条目保留首次记录）
-            second_hop = classify_base_url(original, cfg.bind_port) if original else None
-            second_hop = second_hop if second_hop in TOOL_DOSSIERS else None
-            model = _first_model(p)  # 内部自吞读取失败（返回空串），无需再包
-            old = snapshot.load().get(name)
-            merged = dict(old.provider_urls or {}) if old and old.provider_urls else {}
-            merged.update(qwen_new or zcode_new or {})
-            merged_mod = dict(old.provider_modalities or {}) if old and old.provider_modalities else {}
-            merged_mod.update(qwen_mod or zcode_mod or {})
-            try:
-                snapshot.save(
-                    name,
-                    snapshot.Snapshot(
-                        base_url=original if base_changed else (old.base_url if old else (original or "")),
-                        key_ref=snapshot.key_ref_for(name),
-                        model=model,
-                        second_hop=second_hop,
-                        provider_urls=merged or None,
-                        provider_modalities=merged_mod or None,
-                    ),
-                )
-            except Exception:  # 快照尽力而为，绝不打断接管（保护面不依赖 snapshot 内部实现）
-                pass
-        if name == "zcode":
-            changed.append(
-                f"zcode: providers {zcode_stats.get('rewritten', 0)} -> proxy"
-                + (f", {zcode_stats.get('gated', 0)} modalities gated" if zcode_stats.get("gated") else "")
-                + f", {zcode_stats.get('skipped_nokey', 0)} nokey skipped, {zcode_stats.get('skipped_kind', 0)} unknown-kind skipped"
-            )
-        else:
-            ok = write_base_url(p, h, proxy_url)
-            msg = f"{name}: base_url -> {proxy_url} ({'ok' if ok else 'FAIL'})"
-            if name == "qwen-code":
-                msg += (
-                    f"; providers {qwen_rewritten} entries -> proxy"
-                    + (f", {qwen_gated} modalities gate opened" if qwen_gated else "")
-                    + f", {qwen_skipped} skipped"
-                )
-            changed.append(msg)
-        # base 已指本代理的重复接管也补（捕获 Codex++ 运行期重新生成的目录）
-        if name == "codex":
-            cat_msg = _patch_codex_catalog_modalities(p)
-            if cat_msg:
-                changed.append(f"codex: {cat_msg}")
-    if any(h == "qwen-code" for h in cfg.routing.harnesses):
-        for n in ensure_qwen_relays(cfg):
-            changed.append(f"qwen-code: relay {n} added (一层直连, 鉴权透传客户端头)")
-    if any(h == "zcode" for h in cfg.routing.harnesses):
-        for n in ensure_zcode_relays(cfg):
-            changed.append(f"zcode: relay {n} added (一层直连, 鉴权透传, 指纹选路)")
-    return changed
-
-
-def _first_model(path: str) -> str:
-    """从 harness 配置尽力抽一个模型名（快照记录用；失败返回空串）。"""
-    try:
-        txt = open(path, encoding="utf-8", errors="replace").read()
-    except OSError:
-        return ""
-    m = re.search(r'(?i)(?:model|name)["\']?\s*[:=]\s*["\']([\w@.\-/]+)["\']', txt)
-    return m.group(1) if m else ""
+    return wiring_orchestrate.backup_and_rewrite(cfg, HOME)
 
 
 def wiring_restore(cfg) -> list[str]:
-    """从整文件备份还原（start 的对称动作；仅当前 base_url 指向本代理时执行）。
-
-    与 wiring_restore_by_snapshot 的分工：本函数按"第一次接管前的原始文件"还原，
-    供正常 stop 使用；崩溃/漂移后的修复走 wiring_restore_by_snapshot（组合快照）。
-    """
-    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    home = HOME
-    restored: list[str] = []
-    for name in cfg.routing.harnesses:
-        h = HARNESS_CFG[name]
-        p = _path(home, name)
-        bak = _find_bak(p)
-        if bak is None:
-            continue
-        cur = read_base_url(p, h)
-        # 精确匹配（或带路径前缀）才视为本代理：startswith(proxy_url) 会把 :87870 误判为 :8787。
-        if cur is not None and cur != proxy_url and not cur.startswith(proxy_url + "/"):
-            restored.append(f"{name}: 当前 base_url={cur!r} 非本代理，未还原(保留备份)")
-            continue
-        if name == "codex":  # 目录还原须在 config 整文件换回前（当前 config 仍引用被补丁目录）
-            cat_msg = _restore_codex_catalog(p)
-            if cat_msg:
-                restored.append(f"{name}: {cat_msg}")
-        try:
-            import shutil
-
-            shutil.copyfile(bak, p)
-            os.unlink(bak)
-            restored.append(f"{name}: restored")
-        except OSError as exc:
-            restored.append(f"{name}: restore FAIL {exc}")
-    return restored
-
-
-def relays_activate(cfg) -> list[str]:
-    """把 routing.relay_templates 合入 relays(name 去重，冲突不覆盖)，记录 activated_relays 并落盘。"""
-    msgs: list[str] = []
-    for name, spec in cfg.routing.relay_templates.items():
-        existing = next((r for r in cfg.relays if r.name == name), None)
-        if existing is not None:
-            msgs.append(f"relay {name}: 已存在，跳过")
-            continue
-        try:
-            cfg.relays.append(RelayConfig(name=name, **spec))
-        except TypeError as exc:  # 模板字段非法
-            msgs.append(f"relay {name}: 模板非法，跳过（{exc}）")
-            continue
-        if name not in cfg.routing.activated_relays:
-            cfg.routing.activated_relays.append(name)
-        msgs.append(f"relay {name} 已激活")
-    save_config(cfg)
-    return msgs
-
-
-def relays_restore(cfg) -> list[str]:
-    """移除 start 激活的 relay(仅移除与模板匹配者；qwen 一层直连 relay 按
-    activated_relays + 名字前缀识别)，清空 activated_relays 并落盘。"""
-    msgs: list[str] = []
-    templates = cfg.routing.relay_templates
-    remaining = []
-    for r in cfg.relays:
-        if (
-            r.name.startswith(_QWEN_RELAY_PREFIX) or r.name.startswith(_ZCODE_RELAY_PREFIX)
-        ) and r.name in cfg.routing.activated_relays:
-            msgs.append(f"relay {r.name} 已还原移除")
-        elif (
-            r.name in cfg.routing.activated_relays
-            and r.name in templates
-            and r.__dict__ == RelayConfig(name=r.name, **templates[r.name]).__dict__
-        ):
-            msgs.append(f"relay {r.name} 已还原移除")
-        else:
-            remaining.append(r)
-    cfg.relays = remaining
-    cfg.routing.activated_relays = []
-    save_config(cfg)
-    return msgs
-
-
-def _zcode_key(pid: str, kind: str) -> str:
-    """快照身份键：供应商 ID + 接口格式（kind 变更=身份变更→还原不命中，交给对账吸收）。"""
-    return f"{pid}::{kind}"
-
-
-def _zcode_entries(d: dict) -> tuple[list[tuple[str, str, dict]], int, int]:
-    """收集可接管条目 (pid, kind, entry)：baseURL/apiKey 均非空 + kind 已知。
-    返回 (items, skipped_nokey, skipped_kind)——空 key 预设供应商不接管（spec §5.1）。"""
-    provs = d.get("provider")
-    if not isinstance(provs, dict):
-        return [], 0, 0
-    items: list[tuple[str, str, dict]] = []
-    nokey = badkind = 0
-    for pid, e in provs.items():
-        if not isinstance(e, dict) or not isinstance(e.get("options"), dict):
-            continue
-        opts = e["options"]
-        url, key = opts.get("baseURL"), opts.get("apiKey")
-        if not (isinstance(url, str) and url):
-            continue
-        if not (isinstance(key, str) and key):
-            nokey += 1
-            continue
-        kind = e.get("kind")
-        if kind not in _ZCODE_PROTO:
-            badkind += 1
-            continue
-        items.append((str(pid), kind, e))
-    return items, nokey, badkind
-
-
-def _zcode_provider_gated(entry: dict) -> bool:
-    """该供应商全部模型的图片门都已开（无模型视为 True；input 形态不认识不计）。"""
-    models = entry.get("models")
-    if not isinstance(models, dict) or not models:
-        return True
-    for m in models.values():
-        if isinstance(m, dict):
-            mods = m.get("modalities")
-            inp = mods.get("input") if isinstance(mods, dict) else None
-            if isinstance(inp, list) and "image" not in inp:
-                return False
-    return True
-
-
-def _zcode_provider_stats(path: str, proxy_url: str) -> dict:
-    """zcode 条目统计（wiring_report/observe 用）：wired 要求 URL 指本代理，gated 要求门全开。"""
-    empty = {"total": 0, "eligible": 0, "wired": 0, "gated": 0, "skipped_nokey": 0, "skipped_kind": 0}
-    try:
-        d = json.load(open(path, encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return empty
-    items, nokey, badkind = _zcode_entries(d)
-    wired = gated = total = 0
-    provs = d.get("provider")
-    if isinstance(provs, dict):
-        total = sum(
-            1
-            for e in provs.values()
-            if isinstance(e, dict) and isinstance(e.get("options"), dict) and e["options"].get("baseURL")
-        )
-    for _pid, _kind, e in items:
-        url = e["options"]["baseURL"]
-        if url == proxy_url or url.startswith(proxy_url + "/"):
-            wired += 1
-        if _zcode_provider_gated(e):
-            gated += 1
-    return {
-        "total": total,
-        "eligible": len(items),
-        "wired": wired,
-        "gated": gated,
-        "skipped_nokey": nokey,
-        "skipped_kind": badkind,
-    }
-
-
-def _qwen_provider_stats(path: str, proxy_url: str) -> dict[str, int]:
-    """qwen modelProviders 条目统计：total=带 baseUrl 的条目数，eligible=可改写
-    （协议已知+裸数组），wired=已指本代理，gated=modalities 准入门已开（门不开
-    图片根本进不了请求），skipped=不支持协议/旧形态。"""
-    empty = {"total": 0, "eligible": 0, "wired": 0, "gated": 0, "skipped": 0}
-    try:
-        d = json.load(open(path, encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return empty
-    mp = d.get("modelProviders")
-    if not isinstance(mp, dict):
-        return empty
-    total = eligible = wired = gated = 0
-    for auth_type, val in mp.items():
-        entries = val if isinstance(val, list) else []
-        for e in entries:
-            if not (isinstance(e, dict) and isinstance(e.get("baseUrl"), str) and e.get("baseUrl")):
-                continue
-            total += 1
-            if auth_type in _QWEN_AUTH_PROTO:
-                eligible += 1
-                if e["baseUrl"] == proxy_url or e["baseUrl"].startswith(proxy_url + "/"):
-                    wired += 1
-                if _modalities_open(e):
-                    gated += 1
-    return {"total": total, "eligible": eligible, "wired": wired, "gated": gated, "skipped": total - eligible}
+    return wiring_orchestrate.restore(cfg, HOME)
 
 
 def wiring_report(cfg) -> list[dict]:
-    """三处 harness 当前 base_url 归属。qwen-code 另附条目级统计（0.22.0 条目
-    baseUrl 优先，全局字段 wired 不代表真接管；门不开图片进不了请求，故 wired
-    要求 URL 指向本代理且门全开）。"""
-    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    home = HOME
-    out = []
-    for name in HARNESS_CFG:
-        p = _path(home, name)
-        cur = read_base_url(p, HARNESS_CFG[name]) if os.path.exists(p) else None
-        row = {
-            "harness": name,
-            "path": p,
-            "base_url": cur,
-            "wired": bool(cur and (cur == proxy_url or cur.startswith(proxy_url + "/"))),
-            "has_backup": _find_bak(p) is not None,
-        }
-        if name == "qwen-code" and os.path.exists(p):
-            stats = _qwen_provider_stats(p, proxy_url)
-            row["providers"] = stats
-            row["wired"] = row["wired"] and stats["eligible"] == stats["wired"] and stats["eligible"] == stats["gated"]
-        if name == "zcode" and os.path.exists(p):
-            stats = _zcode_provider_stats(p, proxy_url)
-            row["providers"] = stats
-            # zcode 纯条目级：wired 只看 eligible 全覆盖+门全开（激活供应商可能是空 key 未接管者，
-            # 其直连地址不代表接管失败）
-            row["wired"] = stats["eligible"] > 0 and stats["eligible"] == stats["wired"] == stats["gated"]
-        out.append(row)
-    return out
-
-
-def classify_base_url(url: str | None, bind_port: int) -> str:
-    """base_url 归属：ours | cc-switch | codex-plus | other | none（spec §5 观测信号①）。"""
-    if not url:
-        return "none"
-    if url == f"http://127.0.0.1:{bind_port}" or url.startswith(f"http://127.0.0.1:{bind_port}/"):
-        return "ours"
-    m = re.search(r":(\d+)", url)
-    if not m:
-        return "other"
-    port = int(m.group(1))
-    for name, d in TOOL_DOSSIERS.items():
-        if port == d.port:
-            return name
-    return "other"
+    return wiring_orchestrate.report(cfg, HOME)
 
 
 def wiring_restore_by_snapshot(cfg) -> list[str]:
-    """按接管组合快照还原（spec §5 修复：路由关-崩溃路径）。仅当前指向本代理时执行。
-
-    与 wiring_restore 的分工：本函数按"接管前正确组合"还原（防外部工具档案污染），
-    供对账/修复使用；正常 stop 的整文件备份还原走 wiring_restore。还原成功后删掉
-    该 harness 的 .bak——防止后续 stop 走 wiring_restore 时用过期整文件备份覆盖掉
-    已按快照还原的状态。
-    """
-    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    snaps = snapshot.load()
-    restored: list[str] = []
-    for name in cfg.routing.harnesses:
-        snap = snaps.get(name)
-        if snap is None:
-            continue
-        p = _path(HOME, name)
-        if name == "zcode":
-            if snap.provider_urls or snap.provider_modalities:
-                n = _restore_zcode_providers(p, proxy_url, snap.provider_urls or {}, snap.provider_modalities)
-                restored.append(f"{name}: providers restored ({n} entries)")
-            bak = _find_bak(p)
-            if bak is not None:  # 整文件备份已过期（快照才是真相），删除防误还原
-                try:
-                    os.unlink(bak)
-                except OSError:
-                    pass
-            continue
-        cur = read_base_url(p, HARNESS_CFG[name]) if os.path.exists(p) else None
-        if cur is None or (cur != proxy_url and not cur.startswith(proxy_url + "/")):
-            restored.append(f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原")
-            continue
-        if name == "codex":
-            cat_msg = _restore_codex_catalog(p)
-            if cat_msg:
-                restored.append(f"{name}: {cat_msg}")
-        ok = write_base_url(p, HARNESS_CFG[name], snap.base_url)
-        if ok and name == "qwen-code" and snap.provider_urls:
-            n = _restore_qwen_providers(p, proxy_url, snap.provider_urls, snap.provider_modalities)
-            restored.append(f"{name}: providers restored ({n} entries)")
-        if ok:
-            bak = _find_bak(p)
-            if bak is not None:  # 整文件备份已过期（快照才是真相），删除防误还原
-                try:
-                    os.unlink(bak)
-                except OSError:
-                    pass
-        restored.append(f"{name}: restored to {snap.base_url} ({'ok' if ok else 'FAIL'})")
-    return restored
-
-
-def ensure_tool_relays(cfg, tool_states) -> list[str]:
-    """在线工具档案 → 自动 relay（name 去重不覆盖；离线不加；spec §5/§12）。
-    返回新增 relay name 列表。"""
-    added: list[str] = []
-    online_names = {s.name for s in tool_states if s.online}
-    for (tool_name, harness), tpl in _TEMPLATES.items():
-        if tool_name not in online_names:
-            continue
-        if harness not in cfg.routing.harnesses:
-            continue
-        name = _relay_name(tool_name, harness, tpl)
-        if any(r.name == name for r in cfg.relays):
-            continue
-        if name in cfg.routing.suppressed_relays or (
-            tool_name == "cc-switch" and f"cc-{harness}" in cfg.routing.suppressed_relays
-        ):
-            continue  # 用户显式停用 > 自动探测（spec §7.5；兼容规范名 cc-<harness>）
-        try:
-            cfg.relays.append(RelayConfig(name=name, **dict(tpl)))
-            if name not in cfg.routing.activated_relays:
-                cfg.routing.activated_relays.append(name)
-            added.append(name)
-        except Exception:  # 模板非法跳过（§12.3）
-            continue
-    if added:  # 无新增不落盘（幂等：无漂移不写文件）
-        save_config(cfg)
-    return added
-
-
-def _relay_name(tool_name: str, harness: str, tpl: dict) -> str:
-    if tool_name == "cc-switch":
-        return "cc-anthropic" if tpl["protocol"] == "anthropic" else "cc-codex"
-    return "codex-plus"
-
-
-def _restore_harness_on_stop(cfg, snaps: dict, name: str) -> list[str]:
-    """stop 的单 harness 还原步骤（wiring_restore_on_stop 与「取消勾选即还原」共用，spec §8）。"""
-    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    h = HARNESS_CFG[name]
-    p = _path(HOME, name)
-    if not os.path.exists(p):
-        return []
-    if name == "zcode":
-        snap = snaps.get(name)
-        if snap is not None and (snap.provider_urls or snap.provider_modalities):
-            n = _restore_zcode_providers(p, proxy_url, snap.provider_urls or {}, snap.provider_modalities)
-            bak = _find_bak(p)
-            if bak is not None:
-                try:
-                    os.unlink(bak)
-                except OSError:
-                    pass
-            return [f"{name}: providers restored ({n} entries)"]
-        stats = _zcode_provider_stats(p, proxy_url)
-        if stats["wired"] == 0:
-            return []  # 无本代理痕迹：不动
-        bak = _find_bak(p)
-        if bak is None:
-            return [f"{name}: 无快照且无备份，跳过"]
-        try:
-            import shutil
-
-            shutil.copyfile(bak, p)
-            os.unlink(bak)
-            _mark_zcode_rewrite()
-            return [f"{name}: bak restored"]
-        except OSError as exc:
-            return [f"{name}: restore FAIL {exc}"]
-    # ---- 以下为既有 claude/codex/qwen-code 逻辑（逐字保留）----
-    cur = read_base_url(p, h)
-    if cur is None or (cur != proxy_url and not cur.startswith(proxy_url + "/")):
-        return [f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原"]
-    if name == "codex":  # 目录还原须在 config 整文件换回前（当前 config 仍引用被补丁目录）
-        cat_msg = _restore_codex_catalog(p)
-        if cat_msg:
-            return [f"{name}: {cat_msg}"] + _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url)
-    return _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url)
-
-
-def _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url):
-    """既有通用还原尾段（快照优先 → .bak 兜底），从原 wiring_restore_on_stop 循环体原样抽出。"""
-    msgs: list[str] = []
-    snap = snaps.get(name)
-    if snap is not None:
-        ok = write_base_url(p, h, snap.base_url)
-        if ok and name == "qwen-code" and snap.provider_urls:
-            n = _restore_qwen_providers(p, proxy_url, snap.provider_urls, snap.provider_modalities)
-            msgs.append(f"{name}: providers restored ({n} entries)")
-        if ok:
-            bak = _find_bak(p)
-            if bak is not None:
-                try:
-                    os.unlink(bak)
-                except OSError:
-                    pass
-        msgs.append(f"{name}: snapshot restored to {snap.base_url} ({'ok' if ok else 'FAIL'})")
-        return msgs
-    bak = _find_bak(p)
-    if bak is None:
-        return [f"{name}: 无快照且无备份，跳过"]
-    try:
-        import shutil
-
-        shutil.copyfile(bak, p)
-        os.unlink(bak)
-        return [f"{name}: bak restored"]
-    except OSError as exc:
-        return [f"{name}: restore FAIL {exc}"]
+    return wiring_orchestrate.restore_by_snapshot(cfg, HOME)
 
 
 def wiring_restore_harness(cfg, name: str) -> list[str]:
-    """单 harness 还原（「路由范围取消勾选」用；与 stop 同一还原步骤，spec §8）。"""
-    if name not in HARNESS_CFG:
-        return [f"{name}: unknown harness"]
-    return _restore_harness_on_stop(cfg, snapshot.load(), name)
+    return wiring_orchestrate.restore_harness(cfg, name, HOME)
 
 
 def wiring_restore_on_stop(cfg) -> list[str]:
-    """stop 的统一还原（既有语义不变）：按最新接管组合快照；快照缺失退回整文件 .bak 兜底。
-
-    每 harness 独立决策：有快照 → 只写回 base_url（运行期间用户对配置文件的其他
-    修改原样保留），并删除已过期的 .bak；无快照 → .bak 整文件还原（含 key 位置等
-    完整原始状态）。两者都要求当前 base_url 指向本代理才动文件（zcode 为条目级
-    守卫，见 _restore_zcode_providers）。崩溃修复路径不走这里（reconcile 仍用
-    wiring_restore_by_snapshot）。
-    """
-    snaps = snapshot.load()
-    msgs: list[str] = []
-    for name in cfg.routing.harnesses:
-        msgs.extend(_restore_harness_on_stop(cfg, snaps, name))
-    return msgs
+    return wiring_orchestrate.restore_on_stop(cfg, HOME)
