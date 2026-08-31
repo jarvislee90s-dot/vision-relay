@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-from . import qwen_providers, wiring_orchestrate, zcode_providers
+from . import qwen_providers, wiring_orchestrate, wiring_status, zcode_providers
 from .harness_io import (
     _codex_catalog_path,
     _first_model,
@@ -171,7 +171,7 @@ def wiring_restore(cfg) -> list[str]:
 
 
 def wiring_report(cfg) -> list[dict]:
-    return wiring_orchestrate.report(cfg, HOME)
+    return wiring_status.report(cfg, HOME)
 
 
 def wiring_restore_by_snapshot(cfg) -> list[str]:

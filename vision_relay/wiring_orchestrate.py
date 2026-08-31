@@ -1,8 +1,9 @@
 """start/stop 接线编排与回滚：备份→改写→快照，stop/对账时按快照或 .bak 还原。
 
-本模块是 wiring 的薄编排层：遍历启用的 harness，委托 harness_io / qwen_providers /
-zcode_providers 完成各格式改写与还原，并维护接管组合快照。所有函数接收显式 home
-（由 wiring facade 注入，作为测试隔离 monkeypatch 点），自身不读全局 HOME。
+本模块只做"编排"：遍历启用的 harness，委托 harness_io / qwen_providers /
+zcode_providers 完成各格式改写与还原，并维护接管组合快照。状态查询（report）
+另在 wiring_status 模块。所有函数接收显式 home（由 wiring facade 注入，作为
+测试隔离 monkeypatch 点），自身不读全局 HOME。
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from .harness_io import (
     write_base_url,
 )
 from .harness_spec import BAK_SUFFIX, HARNESS_CFG, _find_bak, _path, classify_base_url
-from .qwen_providers import _qwen_provider_stats, _restore_qwen_providers, _rewrite_qwen_providers, ensure_qwen_relays
+from .qwen_providers import _restore_qwen_providers, _rewrite_qwen_providers, ensure_qwen_relays
 from .tools import TOOL_DOSSIERS
 from .zcode_providers import (
     _mark_zcode_rewrite,
@@ -27,6 +28,27 @@ from .zcode_providers import (
     _zcode_provider_stats,
     ensure_zcode_relays,
 )
+
+
+def _drop_stale_bak(p: str) -> None:
+    """删除整文件备份（快照才是真相时 .bak 已过期，须清理防后续误还原）；OSError 静默。"""
+    bak = _find_bak(p)
+    if bak is None:
+        return
+    try:
+        os.unlink(bak)
+    except OSError:
+        pass
+
+
+def _codex_catalog_restore_msg(name: str, p: str) -> str | None:
+    """codex 目录补丁的对称还原消息（非 codex 或无备份/无引用返回 None）。
+
+    调用方须保证此步在 config 整文件换回之前（当前 config 仍引用被补丁目录）。
+    """
+    if name != "codex":
+        return None
+    return _restore_codex_catalog(p)
 
 
 def backup_and_rewrite(cfg, home: str) -> list[str]:
@@ -135,10 +157,9 @@ def restore(cfg, home: str) -> list[str]:
         if cur is not None and cur != proxy_url and not cur.startswith(proxy_url + "/"):
             restored.append(f"{name}: 当前 base_url={cur!r} 非本代理，未还原(保留备份)")
             continue
-        if name == "codex":  # 目录还原须在 config 整文件换回前（当前 config 仍引用被补丁目录）
-            cat_msg = _restore_codex_catalog(p)
-            if cat_msg:
-                restored.append(f"{name}: {cat_msg}")
+        cat_msg = _codex_catalog_restore_msg(name, p)  # 目录还原须在 config 整文件换回前
+        if cat_msg:
+            restored.append(f"{name}: {cat_msg}")
         try:
             import shutil
 
@@ -148,36 +169,6 @@ def restore(cfg, home: str) -> list[str]:
         except OSError as exc:
             restored.append(f"{name}: restore FAIL {exc}")
     return restored
-
-
-def report(cfg, home: str) -> list[dict]:
-    """四处 harness 当前 base_url 归属。qwen-code 另附条目级统计（0.22.0 条目
-    baseUrl 优先，全局字段 wired 不代表真接管；门不开图片进不了请求，故 wired
-    要求 URL 指向本代理且门全开）。"""
-    proxy_url = f"http://127.0.0.1:{cfg.bind_port}"
-    out = []
-    for name in HARNESS_CFG:
-        p = _path(home, name)
-        cur = read_base_url(p, HARNESS_CFG[name]) if os.path.exists(p) else None
-        row = {
-            "harness": name,
-            "path": p,
-            "base_url": cur,
-            "wired": bool(cur and (cur == proxy_url or cur.startswith(proxy_url + "/"))),
-            "has_backup": _find_bak(p) is not None,
-        }
-        if name == "qwen-code" and os.path.exists(p):
-            stats = _qwen_provider_stats(p, proxy_url)
-            row["providers"] = stats
-            row["wired"] = row["wired"] and stats["eligible"] == stats["wired"] and stats["eligible"] == stats["gated"]
-        if name == "zcode" and os.path.exists(p):
-            stats = _zcode_provider_stats(p, proxy_url)
-            row["providers"] = stats
-            # zcode 纯条目级：wired 只看 eligible 全覆盖+门全开（激活供应商可能是空 key 未接管者，
-            # 其直连地址不代表接管失败）
-            row["wired"] = stats["eligible"] > 0 and stats["eligible"] == stats["wired"] == stats["gated"]
-        out.append(row)
-    return out
 
 
 def restore_by_snapshot(cfg, home: str) -> list[str]:
@@ -200,32 +191,21 @@ def restore_by_snapshot(cfg, home: str) -> list[str]:
             if snap.provider_urls or snap.provider_modalities:
                 n = _restore_zcode_providers(p, proxy_url, snap.provider_urls or {}, snap.provider_modalities)
                 restored.append(f"{name}: providers restored ({n} entries)")
-            bak = _find_bak(p)
-            if bak is not None:  # 整文件备份已过期（快照才是真相），删除防误还原
-                try:
-                    os.unlink(bak)
-                except OSError:
-                    pass
+            _drop_stale_bak(p)  # 整文件备份已过期（快照才是真相），删除防误还原
             continue
         cur = read_base_url(p, HARNESS_CFG[name]) if os.path.exists(p) else None
         if cur is None or (cur != proxy_url and not cur.startswith(proxy_url + "/")):
             restored.append(f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原")
             continue
-        if name == "codex":
-            cat_msg = _restore_codex_catalog(p)
-            if cat_msg:
-                restored.append(f"{name}: {cat_msg}")
+        cat_msg = _codex_catalog_restore_msg(name, p)
+        if cat_msg:
+            restored.append(f"{name}: {cat_msg}")
         ok = write_base_url(p, HARNESS_CFG[name], snap.base_url)
         if ok and name == "qwen-code" and snap.provider_urls:
             n = _restore_qwen_providers(p, proxy_url, snap.provider_urls, snap.provider_modalities)
             restored.append(f"{name}: providers restored ({n} entries)")
         if ok:
-            bak = _find_bak(p)
-            if bak is not None:  # 整文件备份已过期（快照才是真相），删除防误还原
-                try:
-                    os.unlink(bak)
-                except OSError:
-                    pass
+            _drop_stale_bak(p)  # 整文件备份已过期（快照才是真相），删除防误还原
         restored.append(f"{name}: restored to {snap.base_url} ({'ok' if ok else 'FAIL'})")
     return restored
 
@@ -241,12 +221,7 @@ def _restore_harness_on_stop(cfg, snaps: dict, name: str, home: str) -> list[str
         snap = snaps.get(name)
         if snap is not None and (snap.provider_urls or snap.provider_modalities):
             n = _restore_zcode_providers(p, proxy_url, snap.provider_urls or {}, snap.provider_modalities)
-            bak = _find_bak(p)
-            if bak is not None:
-                try:
-                    os.unlink(bak)
-                except OSError:
-                    pass
+            _drop_stale_bak(p)
             return [f"{name}: providers restored ({n} entries)"]
         stats = _zcode_provider_stats(p, proxy_url)
         if stats["wired"] == 0:
@@ -267,10 +242,9 @@ def _restore_harness_on_stop(cfg, snaps: dict, name: str, home: str) -> list[str
     cur = read_base_url(p, h)
     if cur is None or (cur != proxy_url and not cur.startswith(proxy_url + "/")):
         return [f"{name}: 当前 base_url={cur!r} 非本代理，跳过还原"]
-    if name == "codex":  # 目录还原须在 config 整文件换回前（当前 config 仍引用被补丁目录）
-        cat_msg = _restore_codex_catalog(p)
-        if cat_msg:
-            return [f"{name}: {cat_msg}"] + _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url)
+    cat_msg = _codex_catalog_restore_msg(name, p)  # 目录还原须在 config 整文件换回前
+    if cat_msg:
+        return [f"{name}: {cat_msg}"] + _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url)
     return _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url)
 
 
@@ -284,12 +258,7 @@ def _generic_snapshot_or_bak_restore(cfg, snaps, name, p, h, cur, proxy_url):
             n = _restore_qwen_providers(p, proxy_url, snap.provider_urls, snap.provider_modalities)
             msgs.append(f"{name}: providers restored ({n} entries)")
         if ok:
-            bak = _find_bak(p)
-            if bak is not None:
-                try:
-                    os.unlink(bak)
-                except OSError:
-                    pass
+            _drop_stale_bak(p)
         msgs.append(f"{name}: snapshot restored to {snap.base_url} ({'ok' if ok else 'FAIL'})")
         return msgs
     bak = _find_bak(p)
