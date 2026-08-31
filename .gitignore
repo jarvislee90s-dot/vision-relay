@@ -29,3 +29,7 @@ gui/src-tauri/icons/ios/
 
 # PyInstaller 在 CWD 生成的 spec 残留
 /*.spec
+
+# 浏览器测试临时产物与 CI 日志抓取（本机排查用，不入库）
+.playwright-mcp/
+l3.log
