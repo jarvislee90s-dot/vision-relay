@@ -496,7 +496,7 @@ def cmd_check(cfg) -> int:
         print(f"  {relay.name}: {relay.protocol} → {topo}  ({relay.base_url})")
         if via and port is not None and VIA_TOOLS[via] != port:
             problems.append(f"relay {relay.name!r}: via={via} 期望端口 {VIA_TOOLS[via]}，实际 base_url 端口 {port}")
-    # 三处 harness 第一跳接线状态
+    # 四处 harness 第一跳接线状态
     try:
         from .wiring import wiring_report
 
