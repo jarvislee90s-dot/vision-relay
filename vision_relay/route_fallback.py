@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sqlite3
 import time
@@ -22,11 +23,20 @@ import time
 from . import tools
 from .config import RelayConfig
 
+try:  # Python ≥3.11 才有 tomllib;3.10 退正则(同 model_sources 模式)
+    import tomllib
+except ImportError:  # pragma: no cover - 取决于解释器版本
+    tomllib = None
+
 # 测试挂点(与 model_sources 同款:模块级别名,测试 monkeypatch 这里)
 CCSWITCH_DB = tools.CCSWITCH_DB
 CODEXPP_SETTINGS = tools.CODEXPP_SETTINGS
 
 _WIRE_TO_PROTO = {"chat": "chat", "chatcompletions": "chat", "responses": "responses"}
+
+# 3.10 无 tomllib 的正则兜底:首个 [model_providers.<id>] 段内取 base_url/wire_api
+_TOML_FIRST_PROVIDER = re.compile(r"(?ms)^\[model_providers\.[^\]]+\][^\n]*(.*?)(?=^\[|\Z)")
+_TOML_PROVIDER_KV = re.compile(r'(?m)^(base_url|wire_api)\s*=\s*"([^"]+)"')
 
 
 def _port_online(port: int, host: str = "127.0.0.1", timeout: float = 0.3) -> bool:
@@ -91,17 +101,29 @@ def ccswitch_app_direct(app_type: str, template_name: str) -> RelayConfig | None
     return RelayConfig(name=f"{template_name}~direct", protocol=proto, base_url=base, api_key=key, models=["*"])
 
 
-def _codex_toml_target(d: dict) -> tuple[str | None, str | None, str]:
-    """codex 供应商 settings_config:config TOML 取 base_url/wire_api,auth JSON 取 key。"""
-    import tomllib
+def _codex_toml_entry(text: str) -> dict:
+    """config TOML 的首个 model_providers 条目(best-effort:损坏/缺失退空 dict)。
 
-    try:
-        mp = tomllib.loads(d.get("config") or "").get("model_providers")
-        entry = next(iter(mp.values())) if isinstance(mp, dict) and mp else {}
-    except Exception:  # TOML 损坏 best-effort
-        entry = {}
-    if not isinstance(entry, dict):
-        entry = {}
+    Python 3.10 无 tomllib 时退正则兜底,语义与 tomllib 路径一致(首条目)。
+    """
+    if tomllib is not None:
+        try:
+            mp = tomllib.loads(text).get("model_providers")
+            entry = next(iter(mp.values())) if isinstance(mp, dict) and mp else {}
+        except Exception:  # TOML 损坏 best-effort
+            entry = {}
+        return entry if isinstance(entry, dict) else {}
+    m = _TOML_FIRST_PROVIDER.search(text)
+    if not m:
+        return {}
+    return dict(_TOML_PROVIDER_KV.findall(m.group(1)))
+
+
+def _codex_toml_target(d: dict) -> tuple[str | None, str | None, str]:
+    """codex 供应商 settings_config:config TOML 取 base_url/wire_api,auth JSON 取 key。
+
+    Python 3.10 无 tomllib 时 _codex_toml_entry 退正则(同 model_sources 模式)。"""
+    entry = _codex_toml_entry(d.get("config") or "")
     try:
         auth = json.loads(d.get("auth") or "{}")
         key = auth.get("OPENAI_API_KEY") or "" if isinstance(auth, dict) else ""

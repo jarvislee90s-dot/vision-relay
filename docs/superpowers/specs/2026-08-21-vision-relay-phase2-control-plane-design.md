@@ -104,7 +104,7 @@ flowchart LR
 |---|---|
 | 服务在跑，接线正确，relay 与工具状态一致 | 不动任何文件（幂等） |
 | 服务在跑，harness 被工具改指工具端口 | 抢回：base_url → 本代理，relay 确认指向该工具；记录事件 |
-| 服务在跑，工具路由关（端口离线） | base_url 保持本代理；**请求期回落直连**（2026-08-25 落地）：两层 relay 在目标端口死时读工具档案当前供应商真实地址+key 直连，协议跟随档案（CC Switch codex 按 wire_api、Codex++ 按 profile.protocol；chat 上游由本代理做协议转换）；档案不可读保持原 relay（502 可见）+ 警告；端口恢复自动回两层；状态转换记 `relay_fallback` 事件、status 透出 `upstream_effective` |
+| 服务在跑，工具路由关（端口离线） | base_url 保持本代理；**请求期回落直连**（2026-08-25 落地）：两层 relay 在目标端口死时读工具档案当前供应商真实地址+key 直连，协议跟随档案（CC Switch codex 按 wire_api、Codex++ 按 profile.protocol；chat 上游由本代理做协议转换）；档案不可读保持原 relay（502 可见）+ 警告；端口恢复自动回两层；状态转换记 `relay_fallback` 事件、status 透出 `upstream_effective`。codex 档案 TOML 解析：Python 3.10 无 tomllib 时退正则兜底取首 `[model_providers.*]` 条目（2026-09-01 修订，同 model_sources 模式——3.10 是 `requires-python` 下限，裸导入曾致回落路径整条失效） |
 | 服务在跑，harness 被改成陌生地址（用户换供应商） | **吸收**：接管回本代理，同时把新地址记为该 harness 的直连上游；GUI 明确告知「检测到上游变为 X，已接管、转发已指向 X」，缺 key 则提醒补。codex 吸收时同步重打 model catalog 模态补丁（2026-08-26 修订，见主 spec §8.2——换上游常伴新目录，纯文本标注会把图片挡在请求外） |
 | 服务已死，harness 仍指向本代理 | 进入修复流程 |
 | harness 配置出现新模型 | 不碰 base_url；自动探测/按目录标注 + 被动通知可改（文案双向提醒误标代价） |
