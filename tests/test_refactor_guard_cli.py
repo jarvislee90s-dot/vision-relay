@@ -138,9 +138,23 @@ class TestEnvelopeContract:
         from vision_relay.cli import _JSON_MAP
 
         assert set(_JSON_MAP) == {
-            "status", "refresh", "diagnose", "models-scan", "models-set", "config",
-            "tools", "events", "visionlog", "vlm-set", "vlm-test", "vlm-secret",
-            "settings-set", "relay-set", "zcode-restart", "probe", "models-fetch",
+            "status",
+            "refresh",
+            "diagnose",
+            "models-scan",
+            "models-set",
+            "config",
+            "tools",
+            "events",
+            "visionlog",
+            "vlm-set",
+            "vlm-test",
+            "vlm-secret",
+            "settings-set",
+            "relay-set",
+            "zcode-restart",
+            "probe",
+            "models-fetch",
         }
         for name, fn in _JSON_MAP.items():
             assert callable(fn), name
@@ -152,7 +166,9 @@ class TestEnvelopeContract:
         此处覆盖不依赖 stdin 的只读动词。
         """
         monkeypatch.setattr(
-            verbs, "_observe_for_status", lambda c: {"service_alive": False, "harnesses": {}, "tools": [], "routing_on": False}
+            verbs,
+            "_observe_for_status",
+            lambda c: {"service_alive": False, "harnesses": {}, "tools": [], "routing_on": False},
         )
         monkeypatch.setattr(verbs, "_reconcile", lambda c, **kw: {"actions": [], "needs_you": [], "observed": {}})
         monkeypatch.setattr(verbs, "_probe_tools", lambda: [])
@@ -174,13 +190,9 @@ class TestEnvelopeContract:
             assert out["contract_version"] == 1 and out["ok"] is True, name
 
     def test_diagnose_envelope_ok_reflects_needs_you(self, cfg, monkeypatch):
-        monkeypatch.setattr(
-            verbs, "_reconcile", lambda c, **kw: {"actions": [], "needs_you": ["x"], "observed": {}}
-        )
+        monkeypatch.setattr(verbs, "_reconcile", lambda c, **kw: {"actions": [], "needs_you": ["x"], "observed": {}})
         assert verbs.diagnose(cfg)["ok"] is False
-        monkeypatch.setattr(
-            verbs, "_reconcile", lambda c, **kw: {"actions": [], "needs_you": [], "observed": {}}
-        )
+        monkeypatch.setattr(verbs, "_reconcile", lambda c, **kw: {"actions": [], "needs_you": [], "observed": {}})
         assert verbs.diagnose(cfg)["ok"] is True
 
 
@@ -261,10 +273,21 @@ class TestConfirmationAndScanStability:
         """同输入两次运行 models-scan，草稿输出逐字节一致（GUI diff 稳定性的前提）。"""
         from vision_relay.onboarding import models_scan_report
 
-        monkeypatch.setattr(verbs, "_scan_triples", lambda c: [
-            {"harness": "claude", "provider": "bigmodel", "model": "m1", "value": None,
-             "source": None, "probe_cached": None, "is_current": True},
-        ])
+        monkeypatch.setattr(
+            verbs,
+            "_scan_triples",
+            lambda c: [
+                {
+                    "harness": "claude",
+                    "provider": "bigmodel",
+                    "model": "m1",
+                    "value": None,
+                    "source": None,
+                    "probe_cached": None,
+                    "is_current": True,
+                },
+            ],
+        )
         models_scan_report(cfg)
         first = capsys.readouterr().out
         models_scan_report(cfg)
@@ -287,8 +310,7 @@ class TestConfirmationAndScanStability:
 # ── ⑤ 自选：verbs 门面 __all__ 与 DI seam 透传 ──────────────────────
 class TestProbeTargetForBranches:
     def _tools(self, *states):
-        return {name: {"online": on, "port": port, "active_provider": "bigmodel"}
-                for name, port, on in states}
+        return {name: {"online": on, "port": port, "active_provider": "bigmodel"} for name, port, on in states}
 
     def test_two_layer_uses_tool_port_without_key(self, cfg):
         from vision_relay.tools import TOOL_DOSSIERS
@@ -334,7 +356,9 @@ class TestProbeTargetForBranches:
         monkeypatch.setattr(W, "HOME", str(home))
         (home / ".zcode" / "v2").mkdir(parents=True)
         (home / ".zcode" / "v2" / "config.json").write_text(
-            json.dumps({"provider": {"k": {"kind": "anthropic", "options": {"baseURL": "https://z.example", "apiKey": "zk"}}}}),
+            json.dumps(
+                {"provider": {"k": {"kind": "anthropic", "options": {"baseURL": "https://z.example", "apiKey": "zk"}}}}
+            ),
             encoding="utf-8",
         )
         base, key, proto = verbs.probe_target_for(cfg, "zcode", "k", self._tools())

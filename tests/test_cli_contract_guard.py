@@ -197,9 +197,7 @@ def test_models_scan_output_stable_keys(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     from vision_relay import model_sources
 
-    monkeypatch.setattr(
-        model_sources, "harness_matrix", lambda c: {}
-    )  # 无供应商 → 空模型列表，仍验证信封与字段
+    monkeypatch.setattr(model_sources, "harness_matrix", lambda c: {})  # 无供应商 → 空模型列表，仍验证信封与字段
     out = verbs.models_scan(cfg)
     assert out["ok"] is True and out["data"] == {"models": []}
     # 有一行时字段集稳定
@@ -233,9 +231,7 @@ def test_config_get_masks_secrets_and_strips_auth_hints(tmp_path, monkeypatch):
     """config_get 打码：明文 key 不出被动输出，auth_hints 逐条剥离（工程宪法）。"""
     cfg = _cfg(tmp_path, monkeypatch)
     cfg.vlm.api_key = "sk-secret"
-    cfg.relays = [
-        RelayConfig(name="r1", protocol="chat", base_url="https://x", api_key="sk-relay", auth_hints=["fp"])
-    ]
+    cfg.relays = [RelayConfig(name="r1", protocol="chat", base_url="https://x", api_key="sk-relay", auth_hints=["fp"])]
     out = verbs.config_get(cfg)
     data = out["data"]
     assert data["vlm"]["api_key"] == "●●●●"
@@ -271,24 +267,75 @@ def test_relay_set_suppressed_and_api_key(tmp_path, monkeypatch):
 # ── 自审补强 ①：facade 公共面契约（防 __all__/重导出漂移只在运行时暴露）──────
 
 _VERBS_ORIGINAL_SURFACE = {
-    "CONTRACT_VERSION", "envelope", "_stdin_json", "_locked_save",
-    "_observe_for_status", "_reconcile", "_probe_tools", "_tail_events", "_vl_query",
-    "_lookup_cap", "_lookup_probe", "_scan_triples",
-    "status", "refresh", "diagnose", "models_scan", "config_get", "tools", "events", "visionlog",
-    "models_set", "vlm_set", "vlm_secret", "vlm_test", "_VLMClient",
-    "settings_set", "relay_set", "zcode_restart",
-    "probe_target_for", "probe_target_info", "_run_probe", "probe_one", "probe_all_untested",
-    "models_fetch", "httpx",
+    "CONTRACT_VERSION",
+    "envelope",
+    "_stdin_json",
+    "_locked_save",
+    "_observe_for_status",
+    "_reconcile",
+    "_probe_tools",
+    "_tail_events",
+    "_vl_query",
+    "_lookup_cap",
+    "_lookup_probe",
+    "_scan_triples",
+    "status",
+    "refresh",
+    "diagnose",
+    "models_scan",
+    "config_get",
+    "tools",
+    "events",
+    "visionlog",
+    "models_set",
+    "vlm_set",
+    "vlm_secret",
+    "vlm_test",
+    "_VLMClient",
+    "settings_set",
+    "relay_set",
+    "zcode_restart",
+    "probe_target_for",
+    "probe_target_info",
+    "_run_probe",
+    "probe_one",
+    "probe_all_untested",
+    "models_fetch",
+    "httpx",
 }
 
 _CLI_ORIGINAL_SURFACE = {
-    "PID_FILE", "LOG_FILE", "_JSON_MAP", "parse_args",
-    "_pid_path", "_log_path", "_write_pid",
-    "cmd_start", "cmd_stop", "cmd_start_intent", "_spawn_detached", "cmd_start_detach",
-    "cmd_refresh", "cmd_diagnose", "cmd_tools", "cmd_probe", "_provider_for_group",
-    "cmd_events", "cmd_visionlog", "_terminate", "_pid_running", "_pid_matches_ours",
-    "cmd_status", "cmd_logs", "cmd_test_image", "cmd_models", "cmd_models_scan", "cmd_check",
-    "_safe_stdio", "main", "reconcile_reconcile",
+    "PID_FILE",
+    "LOG_FILE",
+    "_JSON_MAP",
+    "parse_args",
+    "_pid_path",
+    "_log_path",
+    "_write_pid",
+    "cmd_start",
+    "cmd_stop",
+    "cmd_start_intent",
+    "_spawn_detached",
+    "cmd_start_detach",
+    "cmd_refresh",
+    "cmd_diagnose",
+    "cmd_tools",
+    "cmd_probe",
+    "_provider_for_group",
+    "cmd_events",
+    "cmd_visionlog",
+    "_terminate",
+    "_pid_running",
+    "_pid_matches_ours",
+    "cmd_status",
+    "cmd_logs",
+    "cmd_test_image",
+    "cmd_models",
+    "cmd_models_scan",
+    "cmd_check",
+    "_safe_stdio",
+    "main",
+    "reconcile_reconcile",
 }
 
 
@@ -326,9 +373,28 @@ def test_every_subcommand_is_dispatched():
     from vision_relay.cli_args import _JSON_MAP
 
     commands = [
-        "start", "stop", "status", "logs", "test-image", "check", "models", "models-scan",
-        "models-set", "refresh", "diagnose", "tools", "probe", "events", "visionlog", "config",
-        "vlm-set", "vlm-test", "vlm-secret", "settings-set", "relay-set", "zcode-restart",
+        "start",
+        "stop",
+        "status",
+        "logs",
+        "test-image",
+        "check",
+        "models",
+        "models-scan",
+        "models-set",
+        "refresh",
+        "diagnose",
+        "tools",
+        "probe",
+        "events",
+        "visionlog",
+        "config",
+        "vlm-set",
+        "vlm-test",
+        "vlm-secret",
+        "settings-set",
+        "relay-set",
+        "zcode-restart",
         "models-fetch",
     ]
     assert len(commands) == len(set(commands))  # 无重复
@@ -338,9 +404,7 @@ def test_every_subcommand_is_dispatched():
         in_json = cmd in _JSON_MAP
         handler = "cmd_" + cmd.replace("-", "_")
         has_handler = hasattr(cli, handler)
-        assert in_json or has_handler, (
-            f"{cmd}: 不在 _JSON_MAP 也无 {handler} → main() 会静默 return 1（漏注册）"
-        )
+        assert in_json or has_handler, f"{cmd}: 不在 _JSON_MAP 也无 {handler} → main() 会静默 return 1（漏注册）"
 
 
 def test_dual_commands_have_both_paths():

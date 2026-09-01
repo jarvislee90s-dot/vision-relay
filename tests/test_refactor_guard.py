@@ -43,11 +43,15 @@ def _cfg(*harnesses: str) -> ProxyConfig:
 class TestLegacyBakMigration:
     def test_restore_prefers_new_suffix_when_both_exist(self, fake_home):
         """新旧备份并存时新后缀优先（_find_bak 先查 .vision-relay.bak）；未选中的旧备份保留。"""
-        f = _write(
-            fake_home / ".claude" / "settings.json", {"env": {"ANTHROPIC_BASE_URL": PROXY}}
+        f = _write(fake_home / ".claude" / "settings.json", {"env": {"ANTHROPIC_BASE_URL": PROXY}})
+        _write(
+            fake_home / ".claude" / "settings.json.vision-relay.bak",
+            {"env": {"ANTHROPIC_BASE_URL": "https://new.example"}},
         )
-        _write(fake_home / ".claude" / "settings.json.vision-relay.bak", {"env": {"ANTHROPIC_BASE_URL": "https://new.example"}})
-        _write(fake_home / ".claude" / "settings.json.qwen-mm-proxy.bak", {"env": {"ANTHROPIC_BASE_URL": "https://old.example"}})
+        _write(
+            fake_home / ".claude" / "settings.json.qwen-mm-proxy.bak",
+            {"env": {"ANTHROPIC_BASE_URL": "https://old.example"}},
+        )
         msg = wiring.wiring_restore(_cfg("claude"))
         assert any("claude: restored" in m for m in msg)
         assert json.loads(f.read_text(encoding="utf-8"))["env"]["ANTHROPIC_BASE_URL"] == "https://new.example"
@@ -56,9 +60,7 @@ class TestLegacyBakMigration:
 
     def test_restore_accepts_legacy_suffix_and_deletes_it(self, fake_home):
         """只有旧后缀备份时：照样还原并删除该备份（升级前接的线，升级后 stop 仍能收尾）。"""
-        f = _write(
-            fake_home / ".claude" / "settings.json", {"env": {"ANTHROPIC_BASE_URL": PROXY}}
-        )
+        f = _write(fake_home / ".claude" / "settings.json", {"env": {"ANTHROPIC_BASE_URL": PROXY}})
         legacy = _write(
             fake_home / ".claude" / "settings.json.qwen-mm-proxy.bak",
             {"env": {"ANTHROPIC_BASE_URL": "https://real.example"}},
@@ -70,9 +72,7 @@ class TestLegacyBakMigration:
 
     def test_start_does_not_overwrite_existing_legacy_bak(self, fake_home):
         """已有旧后缀备份时 start 不新建备份、不覆盖——原配置不丢（不静默覆盖丢失原配置）。"""
-        f = _write(
-            fake_home / ".claude" / "settings.json", {"env": {"ANTHROPIC_BASE_URL": PROXY}}
-        )
+        f = _write(fake_home / ".claude" / "settings.json", {"env": {"ANTHROPIC_BASE_URL": PROXY}})
         legacy = _write(
             fake_home / ".claude" / "settings.json.qwen-mm-proxy.bak",
             {"env": {"ANTHROPIC_BASE_URL": "https://real.example"}},
@@ -156,7 +156,10 @@ class TestZcodeEntryRestore:
         )
         n = wiring._restore_zcode_providers(str(p), PROXY, {"p1::anthropic": "https://orig.example"}, None)
         assert n == 0
-        assert json.loads(p.read_text(encoding="utf-8"))["provider"]["p1"]["options"]["baseURL"] == "https://elsewhere.example"
+        assert (
+            json.loads(p.read_text(encoding="utf-8"))["provider"]["p1"]["options"]["baseURL"]
+            == "https://elsewhere.example"
+        )
 
     def test_modalities_flag_absent_removes_key_and_empty_shell(self, fake_home):
         """flag=~absent~：整列表写回原值并删 modalitiesConfigured；zcode 壳空了一并移除（M5）。"""
@@ -166,7 +169,9 @@ class TestZcodeEntryRestore:
                 {
                     "p1": _zcode_provider(
                         PROXY,
-                        models={"m1": {"modalities": {"input": ["text", "image"]}, "zcode": {"modalitiesConfigured": True}}},
+                        models={
+                            "m1": {"modalities": {"input": ["text", "image"]}, "zcode": {"modalitiesConfigured": True}}
+                        },
                     )
                 }
             ),
@@ -216,9 +221,7 @@ class TestStopRollbackOrdering:
         catalog = codex_dir / "catalog.json"
         original_catalog = {"models": [{"id": "gpt", "input_modalities": ["text"]}]}
         original_config = 'model = "gpt"\n'  # 原始 config 无 catalog 引用
-        live_config = (
-            'model = "gpt"\nbase_url = "http://127.0.0.1:8787/v1"\nmodel_catalog_json = "catalog.json"\n'
-        )
+        live_config = 'model = "gpt"\nbase_url = "http://127.0.0.1:8787/v1"\nmodel_catalog_json = "catalog.json"\n'
         _write(codex_dir / "config.toml", live_config)
         _write(codex_dir / "config.toml.vision-relay.bak", original_config)
         _write(catalog, {"models": [{"id": "gpt", "input_modalities": ["text", "image"]}]})
@@ -251,7 +254,9 @@ class TestStopRollbackOrdering:
         )
         msg = wiring.wiring_restore_by_snapshot(_cfg("zcode"))
         assert any("providers restored (1 entries)" in m for m in msg)
-        assert json.loads(p.read_text(encoding="utf-8"))["provider"]["p1"]["options"]["baseURL"] == "https://orig.example"
+        assert (
+            json.loads(p.read_text(encoding="utf-8"))["provider"]["p1"]["options"]["baseURL"] == "https://orig.example"
+        )
         assert not bak.exists()
 
     def test_qwen_snapshot_restore_then_bak_cleanup(self, fake_home):
@@ -289,13 +294,12 @@ class TestStopRollbackOrdering:
 
     def test_stop_independent_per_harness_skip_keeps_backup(self, fake_home):
         """多 harness stop：codex 当前不指代理→跳过且保留备份，claude 照常还原（互不阻塞）。"""
-        f = _write(
-            fake_home / ".claude" / "settings.json", {"env": {"ANTHROPIC_BASE_URL": PROXY}}
+        f = _write(fake_home / ".claude" / "settings.json", {"env": {"ANTHROPIC_BASE_URL": PROXY}})
+        _write(
+            fake_home / ".claude" / "settings.json.vision-relay.bak",
+            {"env": {"ANTHROPIC_BASE_URL": "https://real.example"}},
         )
-        _write(fake_home / ".claude" / "settings.json.vision-relay.bak", {"env": {"ANTHROPIC_BASE_URL": "https://real.example"}})
-        codex_bak = _write(
-            fake_home / ".codex" / "config.toml.vision-relay.bak", 'base_url = "https://real.example"\n'
-        )
+        codex_bak = _write(fake_home / ".codex" / "config.toml.vision-relay.bak", 'base_url = "https://real.example"\n')
         _write(fake_home / ".codex" / "config.toml", 'base_url = "https://elsewhere.example"\n')
         msg = wiring.wiring_restore(_cfg("claude", "codex"))
         assert any("claude: restored" in m for m in msg)

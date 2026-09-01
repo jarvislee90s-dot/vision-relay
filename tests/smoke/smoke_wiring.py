@@ -71,9 +71,7 @@ def _seed_harnesses(home: str) -> dict[str, str]:
         "env": {"QWEN_KEY": "sk-test"},
         "model": {"name": "m-1", "baseUrl": "https://real-qwen.example/v1"},
         "modelProviders": {
-            "openai": [
-                {"id": "p1", "name": "p1", "baseUrl": "https://real-qwen.example/v1", "envKey": "QWEN_KEY"}
-            ]
+            "openai": [{"id": "p1", "name": "p1", "baseUrl": "https://real-qwen.example/v1", "envKey": "QWEN_KEY"}]
         },
     }
     originals["qwen-code"] = json.dumps(qwen, indent=2)
@@ -104,9 +102,8 @@ def _points_at_proxy(home: str, harness: str) -> bool:
         return all(e["options"]["baseURL"] == PROXY for e in d["provider"].values())
     if harness == "qwen-code":
         d = json.load(open(p, encoding="utf-8"))
-        return (
-            d.get("model", {}).get("baseUrl") == PROXY
-            and all(e["baseUrl"] == PROXY for e in d["modelProviders"]["openai"])
+        return d.get("model", {}).get("baseUrl") == PROXY and all(
+            e["baseUrl"] == PROXY for e in d["modelProviders"]["openai"]
         )
     return wiring.read_base_url(p, wiring.HARNESS_CFG[harness]) == PROXY
 

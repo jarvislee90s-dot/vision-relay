@@ -114,7 +114,11 @@ class TestZcodeBakFallbackOnStop:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(
             json.dumps(
-                {"provider": {"p1": {"kind": "anthropic", "enabled": True, "options": {"baseURL": baseurl, "apiKey": "k"}}}}
+                {
+                    "provider": {
+                        "p1": {"kind": "anthropic", "enabled": True, "options": {"baseURL": baseurl, "apiKey": "k"}}
+                    }
+                }
             ),
             encoding="utf-8",
         )
@@ -125,13 +129,23 @@ class TestZcodeBakFallbackOnStop:
         bak = p.parent / "config.json.vision-relay.bak"
         bak.write_text(
             json.dumps(
-                {"provider": {"p1": {"kind": "anthropic", "enabled": True, "options": {"baseURL": "https://real.example", "apiKey": "k"}}}}
+                {
+                    "provider": {
+                        "p1": {
+                            "kind": "anthropic",
+                            "enabled": True,
+                            "options": {"baseURL": "https://real.example", "apiKey": "k"},
+                        }
+                    }
+                }
             ),
             encoding="utf-8",
         )
         msg = wiring.wiring_restore_harness(ProxyConfig(bind_port=8787), "zcode")
         assert msg == ["zcode: bak restored"]
-        assert json.loads(p.read_text(encoding="utf-8"))["provider"]["p1"]["options"]["baseURL"] == "https://real.example"
+        assert (
+            json.loads(p.read_text(encoding="utf-8"))["provider"]["p1"]["options"]["baseURL"] == "https://real.example"
+        )
         assert not bak.exists()
 
     def test_no_snapshot_not_wired_noop(self, fake_home):
