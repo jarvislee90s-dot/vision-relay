@@ -106,6 +106,54 @@ def test_ccswitch_codex_direct_parses_wire_api(tmp_path, monkeypatch):
     assert r2 is not None and r2.protocol == "responses"  # wire_api=responses 原生
 
 
+def test_ccswitch_codex_direct_tomllib_absent_regex_fallback(tmp_path, monkeypatch):
+    """Python 3.10 无 tomllib：codex 直连目标退正则解析（同 model_sources 模式）。
+
+    语义与 tomllib 路径一致：取首个 [model_providers.<id>] 条目的 base_url/wire_api；
+    顶层键与其他供应商段不串线（第二个段的值不得污染首条目）。
+    """
+    monkeypatch.setattr(rf, "tomllib", None)
+    db = tmp_path / "cc-switch.db"
+    _mk_db(
+        db,
+        [
+            (
+                "c1",
+                "codex",
+                "Kimi For Coding",
+                json.dumps(
+                    {
+                        "config": 'model_provider = "custom"\nmodel = "kimi-for-coding"\n\n'
+                        '[model_providers.first]\nname = "n1"\n'
+                        'base_url = "https://first.example/coding/v1"\nwire_api = "chat"\n\n'
+                        '[model_providers.second]\nbase_url = "https://second.example/v1"\nwire_api = "responses"\n',
+                        "auth": json.dumps({"OPENAI_API_KEY": "sk-codex-key"}),
+                    }
+                ),
+                1,
+                0,
+            )
+        ],
+    )
+    monkeypatch.setattr(rf, "CCSWITCH_DB", str(db))
+    r = rf.ccswitch_app_direct("codex", "cc-codex")
+    assert r is not None and r.protocol == "chat"  # 首条目 wire_api=chat,非第二段的 responses
+    assert r.base_url == "https://first.example/coding/v1"
+    assert r.api_key == "sk-codex-key"
+
+
+def test_codex_toml_target_regex_fallback_edges(monkeypatch):
+    """3.10 正则兜底边界：无供应商段/段内缺键 → (None, None)；auth 损坏 → key 空串。"""
+    monkeypatch.setattr(rf, "tomllib", None)
+    assert rf._codex_toml_target({"config": 'model = "m"\n'}) == (None, None, "")
+    assert rf._codex_toml_target({"config": '[model_providers.x]\nname = "n"\n', "auth": "not-json"}) == (
+        None,
+        None,
+        "",
+    )
+    assert rf._codex_toml_target({}) == (None, None, "")
+
+
 def test_ccswitch_direct_missing_or_bad_db_returns_none(tmp_path, monkeypatch):
     monkeypatch.setattr(rf, "CCSWITCH_DB", str(tmp_path / "nope.db"))
     assert rf.ccswitch_app_direct("claude", "cc-anthropic") is None

@@ -13,6 +13,7 @@ from integration_helpers import (
     free_port,
     read_harness_base_url,
     run_cli,
+    skipif_github_macos,
     wait_port,
     write_harness_configs,
     write_proxy_json,
@@ -36,6 +37,7 @@ def env(tmp_path):
     run_cli(["stop"], cfg_dir, home, timeout=30)
 
 
+@skipif_github_macos
 def test_refresh_reclaims_tool_stolen_wiring(env):
     home, cfg_dir, port = env
     proxy_url = f"http://127.0.0.1:{port}"

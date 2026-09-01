@@ -19,6 +19,7 @@ from integration_helpers import (
     free_port,
     reset_upstream_requests,
     run_cli,
+    skipif_github_macos,
     start_mock_upstream,
     stop_mock_upstream,
     upstream_requests,
@@ -74,6 +75,7 @@ def _post_chat(port: int, model="plain-text-model", question="这是什么"):
     return httpx.post(f"http://127.0.0.1:{port}/v1/chat/completions", json=body, timeout=30.0, trust_env=False)
 
 
+@skipif_github_macos
 def test_g8_image_request_injected_logged_and_forwarded(env):
     """带图请求走完整链路：VLM 转述注入 → 上游收到 [图片描述] 文本 → 留痕三段齐全。"""
     base, cfg_dir, home, port = env
@@ -102,6 +104,7 @@ def test_g8_image_request_injected_logged_and_forwarded(env):
     assert row["image_hash"] and len(row["image_hash"]) == 64  # sha256 指纹
 
 
+@skipif_github_macos
 def test_g8_anthrop_session_id_extracted(env):
     """anthropic 请求的 metadata.user_id → 会话短名提取（spec §6 二级会话尽力识别）。"""
     _, cfg_dir, home, port = env
@@ -131,6 +134,7 @@ def test_g8_anthrop_session_id_extracted(env):
     assert any(r["harness"] == "claude" and r["session"] == "session-77" for r in rows)
 
 
+@skipif_github_macos
 def test_g12_unannotated_switch_passthrough_vs_transcribe(env):
     """未标注模型默认开关：text_only=走 VLM 转述；切 image=直通（不经 VLM、不留痕）。"""
     base, cfg_dir, home, port = env

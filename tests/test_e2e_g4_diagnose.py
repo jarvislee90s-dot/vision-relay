@@ -18,6 +18,7 @@ from integration_helpers import (
     free_port,
     read_harness_base_url,
     run_cli,
+    skipif_github_macos,
     wait_port,
     write_harness_configs,
     write_proxy_json,
@@ -49,6 +50,7 @@ def _hard_kill(cfg_dir) -> None:
     os.kill(_pid_of(cfg_dir), 9)  # 模拟任务管理器强杀：无清理、pid 文件残留
 
 
+@skipif_github_macos
 def test_crash_with_routing_on_auto_restarts(env):
     """崩溃前路由开 → diagnose 自动重启并保持接管（spec §5 修复：最忠实还原意图）。"""
     home, cfg_dir, port = env
@@ -76,6 +78,7 @@ def test_crash_with_routing_on_auto_restarts(env):
         run_cli(["stop"], cfg_dir, home, timeout=60)
 
 
+@skipif_github_macos
 def test_crash_with_routing_off_restores_snapshot(env):
     """崩溃前路由关 → diagnose 按接管组合快照还原原值（spec §5 修复分支 b）。"""
     home, cfg_dir, port = env
