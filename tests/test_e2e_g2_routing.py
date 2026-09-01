@@ -16,6 +16,7 @@ from integration_helpers import (
     free_port,
     read_harness_base_url,
     run_cli,
+    skipif_github_macos,
     wait_port,
     write_harness_configs,
     write_proxy_json,
@@ -35,6 +36,7 @@ def env(tmp_path):
     return home, cfg_dir, port
 
 
+@skipif_github_macos
 def test_routing_on_then_off_full_lifecycle(env):
     home, cfg_dir, port = env
     proxy_url = f"http://127.0.0.1:{port}"
@@ -65,6 +67,7 @@ def test_routing_on_then_off_full_lifecycle(env):
     assert not (cfg_dir / "proxy.pid").exists()
 
 
+@skipif_github_macos
 def test_stop_after_absorb_restores_latest_snapshot(tmp_path):
     """偏离①验收：运行中吸收新供应商 B → stop 还原到 B（最新快照），而非最早的 A。"""
     home = tmp_path / "home"

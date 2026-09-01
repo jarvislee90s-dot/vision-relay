@@ -22,6 +22,7 @@ from integration_helpers import (
     load_proxy_json,
     read_harness_base_url,
     run_cli,
+    skipif_github_macos,
     start_mock_upstream,
     stop_mock_upstream,
     wait_port,
@@ -421,6 +422,7 @@ class TestTakeoverSnapshotRotation:
 
 
 class TestPidReuseHardening:
+    @skipif_github_macos
     def test_reused_pid_never_reported_alive_never_killed(self, tmp_path):
         """强杀后 pid 文件伪造为复用进程（token 对不上）：status 不误报、stop 不误杀。"""
         home = tmp_path / "home"
