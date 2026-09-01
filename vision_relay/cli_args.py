@@ -32,6 +32,56 @@ _JSON_MAP = {
     "models-fetch": verbs.models_fetch,  # 拉上游模型 ID 清单（spec §5）
 }
 
+# 子命令全集（真相源）：与 parse_args 的 add_parser 注册一一对应，
+# 守护测试（test_refactor_guard_cli）据此构建解析矩阵并校验无静默缺口。
+SUBCOMMANDS: tuple[str, ...] = (
+    "start",
+    "stop",
+    "status",
+    "logs",
+    "test-image",
+    "check",
+    "models-scan",
+    "models-set",
+    "models",
+    "refresh",
+    "diagnose",
+    "tools",
+    "probe",
+    "events",
+    "visionlog",
+    "config",
+    "vlm-set",
+    "vlm-test",
+    "vlm-secret",
+    "settings-set",
+    "relay-set",
+    "zcode-restart",
+    "models-fetch",
+)
+# 按设计不挂公共 --json parent 的子命令：start（起服直连）/ test-image（直连工具）。
+_NO_JSON_PARENT = frozenset({"start", "test-image"})
+# 有专属旗标的子命令（其余仅公共 --json）。
+_SPECIAL_FLAGS = frozenset({"start", "test-image", "probe", "events", "visionlog"})
+
+
+def _add_special_flags(parser: argparse.ArgumentParser, name: str) -> None:
+    """为带专属旗标的子命令挂旗标（与 parse_args 内注册逐字一致；守护测试据此比对）。"""
+    if name == "start":
+        parser.add_argument("--detach", action="store_true", help="分离进程启动（GUI/自动重试用）")
+    elif name == "test-image":
+        parser.add_argument("path")
+        parser.add_argument("--question", default=None)
+    elif name == "probe":
+        parser.add_argument("--harness")
+        parser.add_argument("--provider")
+        parser.add_argument("--model")
+        parser.add_argument("--all-untested", action="store_true")
+    elif name == "events":
+        parser.add_argument("--limit", type=int, default=50)
+    elif name == "visionlog":
+        parser.add_argument("--harness")
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="vision-relay")
