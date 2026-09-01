@@ -24,6 +24,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": { "resources/core": "core/" }
+    "resources": { "resources/core": "core/" },
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }
