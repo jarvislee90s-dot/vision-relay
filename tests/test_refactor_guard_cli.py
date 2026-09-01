@@ -388,3 +388,27 @@ class TestVlmSetBranches:
         _set_stdin(monkeypatch, {"vlm_by_harness": {"zcode": None}})
         assert verbs.vlm_set(cfg)["ok"] is True
         assert "zcode" not in cfg.vlm_by_harness
+
+
+class TestVerbsFacadeContract:
+    def test_all_names_resolve_and_match_lazy_map(self):
+        """__all__ 每个名字都可访问；DI seam 与契约名在门面 __dict__，
+        领域动词经 _verbs() 访问器解析（无环纪律的可观测面）。"""
+        from vision_relay import verbs as v
+
+        for name in v.__all__:
+            assert hasattr(v, name), name
+        # DI seam 是门面自有定义（patch 挂点），不经过惰性访问器
+        for seam in ("_observe_for_status", "_reconcile", "_probe_tools", "_tail_events", "_vl_query"):
+            assert seam in v.__dict__
+
+    def test_di_seams_delegate_to_real_impls(self, cfg):
+        """DI seam 默认透传真实现（测试替换的是挂点，不是行为）。"""
+        assert verbs._reconcile is not None
+        assert verbs._observe_for_status is not None
+        assert verbs._probe_tools is not None
+        assert verbs._tail_events is not None
+        assert verbs._vl_query is not None
+
+
+# ── ⑥ 自选：probe_target_for 分支矩阵 ───────────────────────────────
