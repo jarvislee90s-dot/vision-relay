@@ -33,3 +33,8 @@ gui/src-tauri/icons/ios/
 # 浏览器测试临时产物与 CI 日志抓取（本机排查用，不入库）
 .playwright-mcp/
 l3.log
+
+# pytest-cov / coverage 本地产物
+.coverage
+coverage.json
+htmlcov/

@@ -1,0 +1,14 @@
+AFTER refactor coverage — pytest 578 passed, 1 skipped, ~50s
+(561 baseline + 14 guard + 3 facade-contract tests; wiring split into 8 modules + facade)
+==================================================================================
+Name                               Stmts  Miss  Cover   Missing
+vision_relay/wiring                     32    0 100.0%   -
+vision_relay/harness_spec               42    1  97.6%   80
+vision_relay/modalities                 25    2  92.0%   29,32
+vision_relay/harness_io                150   28  81.3%   26-32,47,61,103-109,116-117,126-127,150,154,169-170,172,183,189-190
+vision_relay/qwen_providers            210   26  87.6%   39-40,45,57-58,96,109-110,124,135-136,173-176,193,221-222,248,252,270-271,282-283,286,292
+vision_relay/zcode_providers           259   21  91.9%   38-39,66,89-90,104,107,126,138-139,142,147,241-242,264-265,294,298,316-317,331
+vision_relay/relays                     62    6  90.3%   25-27,69,82-83
+vision_relay/wiring_orchestrate        196   31  84.2%   40-41,74-75,154,162,169-170,191-195,198-199,202,229-233,235-240,266,273-274,280
+vision_relay/wiring_status              23    0 100.0%   -
+TOTAL (vision_relay pkg)            4648   664  85.7%

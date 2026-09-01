@@ -1,0 +1,31 @@
+wiring 端到端冒烟（沙箱 HOME，四种 harness）
+  ① 正常接线：start 改写 + .bak；stop 还原为原始内容
+    [PASS] claude: start 后 base_url 指向本代理
+    [PASS] codex: start 后 base_url 指向本代理
+    [PASS] qwen-code: start 后 base_url 指向本代理
+    [PASS] zcode: start 后 base_url 指向本代理
+    [PASS] claude: 生成 .vision-relay.bak
+    [PASS] codex: 生成 .vision-relay.bak
+    [PASS] claude: stop 后有效路由状态与原始一致
+    [PASS] claude: .bak 已清理
+    [PASS] codex: stop 后有效路由状态与原始一致
+    [PASS] codex: stop 后与原始内容逐字节一致
+    [PASS] codex: .bak 已清理
+    [PASS] qwen-code: stop 后有效路由状态与原始一致
+    [PASS] qwen-code: .bak 已清理
+    [PASS] zcode: stop 后有效路由状态与原始一致
+    [PASS] zcode: .bak 已清理
+  ② 重复启动：已有 .bak 不静默覆盖丢失原配置
+    [PASS] claude: 重复 start 后 .bak 仍为首次原始值
+    [PASS] codex: 重复 start 后 .bak 仍为首次原始值
+    [PASS] claude: .bak 内容等于原始配置（未被代理地址污染）
+    [PASS] claude: stop 还原原始路由状态
+    [PASS] codex: stop 还原原始
+  ③ legacy 迁移：.qwen-mm-proxy.bak 按既有兼容逻辑处理
+    [PASS] 前置：仅 legacy .bak 存在
+    [PASS] 产生还原消息: ['claude: bak restored']
+    [PASS] claude: 从 legacy .bak 还原为原始内容
+    [PASS] legacy .bak 已清理
+    [PASS] 无残留新后缀 .bak
+
+冒烟全部通过 ✅（三场景）
