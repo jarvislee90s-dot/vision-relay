@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-01
+
+稳定性补丁：修复 v1.0.0 在 Python 3.10 上的回落直连崩溃；两大子系统按职责模块化（零行为变更）。GUI 与 CLI 使用方式完全不变。
+
+### Fixed
+- Python 3.10 上 cc-switch（codex）请求期回落直连整条路径抛 `ModuleNotFoundError`：v1.0.0 的回落功能裸 `import tomllib`（3.11+ 标准库），而 3.10 是声明支持的最低版本（`requires-python >=3.10`）。现为守卫导入 + 正则兜底（取首个 `[model_providers.*]` 条目，同 model_sources 既有模式）。影响面：外层 fail-open 兜底一直在（代理不崩），但受影响请求会从设计上的「保持死端口 502 可见」劣化为整请求异常降级。pip 安装且 Python 3.10 的用户建议升级。
+
+### Changed
+- wiring（配置接线）与 CLI/verbs（参数解析 + 动词层）按职责拆分为单一职责模块，`wiring.py` / `cli.py` / `verbs.py` 收敛为组装层门面（PR #5，零行为变更：CLI 接口、输出文本、退出码、stdin JSON 协议、envelope 契约全部不变；既有测试断言零改动，测试 561→757、行覆盖率 85%→88%；迁移映射与守护测试索引见 `REFACTOR_NOTES.md`）。
+- 发布流水线正文改为人工文案优先：`docs/release-notes/v<版本>.md` 存在则整体覆盖 CHANGELOG 兜底正文，重跑工作流不再盖掉已发布的图文公告（2026-08-27 v1.0.0 正文被覆盖事故的修复）。
+- CI：GitHub 托管 macOS runner 上 9 个派生进程类 e2e 条件跳过——定性为 runner 环境对分离进程的清理/限制（本机 macOS 与 ubuntu/windows CI 全过），非代码问题，根因排查后移除。
+- README 按读者漏斗重排：对比表讲透（跨 harness / fail-open / 成本）、界面速览前置、快速开始瘦身；harness 列表三家统一为四家（补 zcode）；中英同步。
+
 ## [1.0.0] - 2026-08-27
 
 首个公开版本：一期数据面（三协议透明代理 + VLM 转述 + fail-open）+ 二期控制面（GUI 控制台、对账与自动修复、模型能力实测、识图留痕、四 harness 支持）+ 三平台安装包分发（装完即用零 Python 依赖）。
