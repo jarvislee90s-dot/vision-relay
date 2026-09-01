@@ -73,6 +73,14 @@ first hop and the tool becomes the downstream relay (two-hop routing; templates 
 
 Zero Python required — the core ships frozen inside the app. Install, open, done.
 
+> **🍎 macOS first launch**: the app is distributed without Apple notarization (no Developer Program membership yet), so double-clicking may show "'vision-relay' is damaged and can't be opened" — the file is fine; that's Gatekeeper's standard wording for unsigned downloads. After dragging the app into `/Applications`, run this once in Terminal:
+>
+> ```bash
+> xattr -cr /Applications/vision-relay.app
+> ```
+>
+> Then open it normally. Repeat after each new-version install.
+
 **pip (advanced / headless)**:
 
 ```bash

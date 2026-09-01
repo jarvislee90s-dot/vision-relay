@@ -65,6 +65,14 @@
 
 零 Python 依赖——核心已冻结内嵌,装完即用。
 
+> **🍎 macOS 首次打开**:应用未购 Apple 开发者计划公证,双击会弹「"vision-relay"已损坏」——文件没坏,是 Gatekeeper 对网络下载未公证应用的统一措辞。拖入「应用程序」后在终端执行一次:
+>
+> ```bash
+> xattr -cr /Applications/vision-relay.app
+> ```
+>
+> 之后正常打开;每个新版本安装后需再执行一次。
+
 **pip（高级 / 无界面场景）**:
 
 ```bash
