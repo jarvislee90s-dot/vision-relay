@@ -33,7 +33,7 @@ _LEGACY_DEFAULT_HARNESSES = ["claude", "codex", "qwen-code"]
 class RoutingConfig:
     """自动接线与路由的开关/状态。"""
 
-    auto_wire: bool = True  # start 自动改三处 harness base_url→本代理、stop 自动还原
+    auto_wire: bool = True  # start 自动改四处 harness base_url→本代理、stop 自动还原
     harnesses: list[str] = field(default_factory=lambda: list(HARNESSES))  # 可排除任一
     relay_templates: dict[str, dict] = field(default_factory=dict)  # name -> {protocol,base_url,via?,models[]}
     capability_confirmed: bool = False  # 首次是否已显式确认过各模型看图能力
