@@ -120,9 +120,17 @@ def observe(cfg: ProxyConfig, tool_states: list | None = None) -> dict:
         p = wiring._path(HOME, name)
         exists = os.path.exists(p)
         cur = wiring.read_base_url(p, wiring.HARNESS_CFG[name]) if exists else None
+        ownership = wiring.classify_base_url(cur, cfg.bind_port)
+        if name == "zcode" and exists:
+            # zcode 纯条目级：全局 base_url（=激活条目地址）是原值不代表没接管——
+            # 任一可接管条目指本代理即 ours（与下方僵尸判定同源信号）。zcode CLI
+            # 会把它托管的 builtin 条目改回原值（磁盘漂移，2026-09-02 实测），
+            # 只看激活地址会把正在走中继的会话误显示成"已旁路"。
+            if wiring._zcode_provider_stats(p, _expected_base(cfg))["wired"] > 0:
+                ownership = "ours"
         harness_rows[name] = {
             "base_url": cur,
-            "ownership": wiring.classify_base_url(cur, cfg.bind_port),
+            "ownership": ownership,
             "has_snapshot": name in snapshot.load(),
             "config_exists": exists,  # 区分"文件不存在"与"文件在但读不到 base_url"（后者仍走 reclaim）
             "config_path": p,  # GUI 详情抽屉「配置文件」入口（2026-08-23 决策③）
@@ -218,7 +226,6 @@ def _restart_service(cfg: ProxyConfig) -> bool:
     spawn 成功 ≠ 服务起来了（stale pid 等场景会谎报）：短轮询端口后如实返回。
     """
     import subprocess
-    import sys
 
     kwargs: dict = {}
     if os.name == "nt":
@@ -234,7 +241,7 @@ def _restart_service(cfg: ProxyConfig) -> bool:
         # 注入 VISION_RELAY_RESTART=1：分离重启的子进程无控制台，cmd_start 据此跳过
         # 交互 onboarding（capability_confirmed 未确认时否则会在无终端环境下挂死）。
         subprocess.Popen(
-            [sys.executable, "-m", "vision_relay", "start"],
+            pid_util.core_argv(["start"]),
             env={**os.environ, "VISION_RELAY_RESTART": "1"},
             **kwargs,
         )
@@ -290,6 +297,17 @@ def reconcile(
                         res = wiring.reconcile_qwen_providers(cfg)
                         if res:
                             actions.append({"type": "provider_absorb", "harness": name, "rewritten": res["rewritten"]})
+                    # 两跳接线真相下清理陈旧 direct-{harness}：它是旧一次 absorb 的
+                    # 遗留（如 claude 曾直连 ark），无指纹钉死，会在选路②层按列表顺序
+                    # 截胡 cc-anthropic 等工具中继（2026-09-02 实测：claude 流量被陈旧
+                    # direct-claude 引去 ark，401/10054、fail-open 502）。
+                    snap = snapshot.load().get(name)
+                    if snap is not None and snap.second_hop in tools.TOOL_DOSSIERS:
+                        stale = f"direct-{name}"
+                        if any(r.name == stale for r in cfg.relays):
+                            cfg.relays = [r for r in cfg.relays if r.name != stale]
+                            append_event("relay_removed", name, {"name": stale, "reason": "stale-under-two-hop"})
+                            actions.append({"type": "relay_removed", "name": stale})
                 elif owner in tools.TOOL_DOSSIERS:
                     if _reclaim(cfg, name, cur or ""):
                         actions.append({"type": "reclaim", "harness": name, "from": cur})
@@ -305,9 +323,15 @@ def reconcile(
                     else:
                         if _reclaim(cfg, name, cur or ""):
                             actions.append({"type": "reclaim", "harness": name, "from": cur})
-                # 吸收/抢回后可能缺 key（被动提醒，不代填）
+                # 吸收/抢回后可能缺 key（被动提醒，不代填）。harness 配置里 key 位置
+                # 真实存在（如 claude 的 env.ANTHROPIC_AUTH_TOKEN）时直连透传可用，
+                # 不告"缺 key"（2026-09-02：direct-* 无自有 key 是设计常态而非缺件）。
                 if any(a.get("type") == "absorb" and a.get("harness") == name for a in actions):
-                    needs_you.append({"type": "missing_key", "harness": name, "hint": f"direct-{name} 需补 API key"})
+                    snap = snapshot.load().get(name)
+                    if not snapshot.key_ref_resolvable(snap.key_ref if snap is not None else None):
+                        needs_you.append(
+                            {"type": "missing_key", "harness": name, "hint": f"direct-{name} 需补 API key"}
+                        )
             elif not obs["service_alive"] and (
                 owner == "ours"
                 or (

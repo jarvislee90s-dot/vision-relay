@@ -108,6 +108,20 @@ def key_ref_for(harness: str) -> str:
         return "unparsable"
 
 
+# key_ref 的"位置缺失/不可判定"取值：这些之外的位置描述都意味着 key 真实存在于
+# harness 配置（如 claude 的 env.ANTHROPIC_AUTH_TOKEN）。
+_KEY_REF_UNRESOLVABLE = ("", "not-found", "unknown", "unparsable")
+
+
+def key_ref_resolvable(key_ref: str | None) -> bool:
+    """key 位置描述是否指向真实存在的 key。
+
+    direct-* 直连中继设计上无自有 key、认证靠客户端请求头透传（server 原样转交）；
+    只要 harness 配置里 key 位置存在，"直连上游缺 API key" 提醒就是误报
+    （2026-09-02 回归：direct-claude 透传明明可用、GUI/对账却持续告缺 key）。"""
+    return bool(key_ref) and key_ref not in _KEY_REF_UNRESOLVABLE
+
+
 def _dig(d: dict, dotted: str):
     node = d
     for part in dotted.split("."):

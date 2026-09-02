@@ -87,9 +87,10 @@ describe("ModelsPage (G5 UI)", () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
-  it("重测 probes the row and reloads rows (draft preserved)", async () => {
+  it("重测后非 user 行清 draft（探测结果立即上屏，2026-09-02 回归：draft 不再盖住新标注）", async () => {
     await rendered();
-    fireEvent.click(screen.getAllByText("切换")[0]); // 制造一个未保存 draft
+    fireEvent.click(screen.getAllByText("切换")[0]); // gpt-5-codex（source=null）制造未保存 draft
+    expect(screen.getByText(/1 处未保存/)).toBeTruthy();
     fireEvent.click(screen.getAllByText("重测")[0]);
     await waitFor(() =>
       expect(coreMock.mock.calls.some(
@@ -97,7 +98,18 @@ describe("ModelsPage (G5 UI)", () => {
       )).toBe(true),
     );
     await waitFor(() => expect(coreMock.mock.calls.filter((c) => c[0] === "models-scan").length).toBeGreaterThanOrEqual(2));
-    expect(screen.getByText(/1 处未保存/)).toBeTruthy(); // refreshRows 不清 draft
+    expect(screen.getByText(/无未保存修改/)).toBeTruthy(); // 非 user 来源：探测后 draft 清掉
+  });
+
+  it("重测后 user 行 draft 保留（用户意图优先，探测只更新实测列）", async () => {
+    await rendered();
+    const qwenRow = screen.getByText("qwen3-coder").closest("tr")!;
+    fireEvent.click(qwenRow.querySelector("a")!); // 行内「切换」：image → 未标注
+    expect(screen.getByText(/1 处未保存/)).toBeTruthy();
+    fireEvent.click(qwenRow.querySelectorAll("a")[1]); // 行内「重测」
+    await waitFor(() => expect(coreMock.mock.calls.some((c) => c[0] === "probe")).toBe(true));
+    await waitFor(() => expect(coreMock.mock.calls.filter((c) => c[0] === "models-scan").length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByText(/1 处未保存/)).toBeTruthy(); // source=user：draft 不清
   });
 });
 
@@ -167,6 +179,7 @@ describe("ModelsPage 探测反馈", () => {
         { harness: "codex", provider: "?", model: "gpt-5-codex", value: null, source: null, probe_cached: null, is_current: true },
         { harness: "codex", provider: "?", model: "gpt-5.5", value: null, source: null, probe_cached: null, is_current: true },
         { harness: "qwen-code", provider: "?", model: "qwen3-coder", value: "image", source: "user", probe_cached: "image", is_current: true }, // 有缓存,跳过
+        { harness: "qwen-code", provider: "?", model: "glm-x", value: "text_only", source: "user", probe_cached: null, is_current: true }, // 用户手动标注,无缓存——批量不测(2026-09-02)
         { harness: "claude", provider: "Other", model: "kimi-x", value: null, source: null, probe_cached: null, is_current: false }, // 非当前,跳过
       ],
     };
@@ -188,7 +201,7 @@ describe("ModelsPage 探测反馈", () => {
     render(<ModelsPage lang="zh" refresh={vi.fn()} />);
     await screen.findByText("gpt-5-codex");
     fireEvent.click(screen.getByText("🔍 探测全部未测"));
-    await screen.findByText(/正在探测 1\/2：gpt-5-codex/); // 候选=当前且无缓存（2 个）
+    await screen.findByText(/正在探测 1\/2：gpt-5-codex/); // 候选=当前且未测且非 user 标注（2 个；glm-x 是 user 标注被排除）
     expect(document.querySelector(".spinner")).toBeTruthy();
     release(undefined);
     await waitFor(() => expect(alert).toHaveBeenCalledWith(expect.stringContaining("探测 2 个：1 支持图片、0 纯文本、0 无结论、1 不可达")));
@@ -201,14 +214,43 @@ describe("ModelsPage 探测反馈", () => {
   it("探测全部:零候选时状态行提示，不弹窗不探测", async () => {
     const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
     coreMock.mockImplementation(async () => ({
+      // 全部有结论或 user 标注（glm-y 无缓存但 source=user）→ 零候选
       models: MODELS.models.map((m) => ({ ...m, probe_cached: m.probe_cached ?? "text_only", is_current: true })),
     }));
     render(<ModelsPage lang="zh" refresh={vi.fn()} />);
     await screen.findByText("qwen3-coder");
     fireEvent.click(screen.getByText("🔍 探测全部未测"));
-    await screen.findByText(/均已有实测结论/);
+    await screen.findByText(/均已有标注或实测结论/);
     expect(alert).not.toHaveBeenCalled();
     expect(coreMock.mock.calls.some((c) => c[0] === "probe")).toBe(false);
+    alert.mockRestore();
+  });
+
+  it("批量探测可终止：按钮切「终止探测」，剩余行跳过、汇总注明完成数（2026-09-02 优化①）", async () => {
+    const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const batch = {
+      models: [
+        { harness: "codex", provider: "?", model: "m1", value: null, source: null, probe_cached: null, is_current: true },
+        { harness: "codex", provider: "?", model: "m2", value: null, source: null, probe_cached: null, is_current: true },
+        { harness: "codex", provider: "?", model: "m3", value: null, source: null, probe_cached: null, is_current: true },
+      ],
+    };
+    let release!: (v: unknown) => void;
+    const gate = new Promise((r) => (release = r));
+    coreMock.mockImplementation(async (verb: string) => {
+      if (verb === "models-scan") return JSON.parse(JSON.stringify(batch));
+      if (verb === "probe") await gate;
+      return { result: "image", target_found: true, reason: null };
+    });
+    render(<ModelsPage lang="zh" refresh={vi.fn()} />);
+    await screen.findByText("m1");
+    fireEvent.click(screen.getByText("🔍 探测全部未测"));
+    await screen.findByText(/正在探测 1\/3：m1/);
+    expect(screen.getByText("⏹ 终止探测")).toBeTruthy(); // 进行中按钮变为终止
+    fireEvent.click(screen.getByText("⏹ 终止探测"));
+    release(undefined); // 当前行跑完 → m2/m3 跳过
+    await waitFor(() => expect(alert).toHaveBeenCalledWith(expect.stringContaining("已手动终止，完成 1/3")));
+    expect(coreMock.mock.calls.filter((c) => c[0] === "probe").length).toBe(1);
     alert.mockRestore();
   });
 

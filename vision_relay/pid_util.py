@@ -12,6 +12,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import sys
 
 # Windows kernel32 绑定（延迟初始化；仅 os.name=="nt" 时触碰）。ctypes.windll 默认把
 # 参数按 c_int 转换，64 位进程里 byref 指针被截断成 32 位——GetProcessTimes 写越界
@@ -61,6 +62,18 @@ def default_pid_path() -> str:
     from .env_util import config_dir
 
     return os.path.join(config_dir(), "proxy.pid")
+
+
+def core_argv(args: list[str]) -> list[str]:
+    """重拉核心进程的完整 argv（args 为子命令及其参数，如 ["start"]）。
+
+    源码环境 sys.executable 是 python 解释器，走 `-m vision_relay`；PyInstaller
+    冻结态 sys.executable 即核心 exe 自身，`-m` 会被 argparse 拒绝（exit 2），
+    必须直接传子命令——v1.0.1 打包版 start --detach 孙进程静默死亡、服务永不
+    启动的根因（cmd_start_detach 与 reconcile._restart_service 共用此处）。"""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *args]
+    return [sys.executable, "-m", "vision_relay", *args]
 
 
 def process_token(pid: int) -> int | None:

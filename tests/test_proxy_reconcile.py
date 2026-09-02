@@ -98,6 +98,86 @@ class TestMatrix:
         direct = [r for r in cfg.relays if r.base_url == "https://new.upstream.example/api"]
         assert direct, "吸收的新地址必须成为直连 relay"
 
+    def test_absorb_missing_key_hint_suppressed_when_key_location_exists(self, env, monkeypatch):
+        """direct-* 直连中继设计上无自有 key（认证靠客户端请求头透传）：harness 配置
+        里 key 位置真实存在（如 env.ANTHROPIC_AUTH_TOKEN）时，吸收后不得误告缺 key
+        （2026-09-02 回归：direct-claude 透传可用、GUI/对账却持续告"缺 API key"）。"""
+        home, cfgdir = env
+        monkeypatch.setattr(snapshot, "HOME", str(home))  # key_ref_for 读 snapshot.HOME，须同源隔离
+        claude_dir = os.path.join(str(home), ".claude")
+        os.makedirs(claude_dir, exist_ok=True)
+        open(os.path.join(claude_dir, "settings.json"), "w", encoding="utf-8").write(
+            json.dumps(
+                {"env": {"ANTHROPIC_BASE_URL": "https://new.upstream.example/api", "ANTHROPIC_AUTH_TOKEN": "sk-x"}}
+            )
+        )
+        cfg = ProxyConfig()
+        _set_running(monkeypatch, cfgdir, True)
+        report = reconcile.reconcile(cfg, tool_states=[], expected_wired={"claude"})
+        assert any(a["type"] == "absorb" for a in report["actions"])
+        assert not any(n["type"] == "missing_key" for n in report["needs_you"])
+
+    def test_absorb_missing_key_hint_kept_when_key_truly_absent(self, env, monkeypatch):
+        """key 位置确实缺失（key_ref=not-found）→ 保留被动提醒。"""
+        home, cfgdir = env
+        monkeypatch.setattr(snapshot, "HOME", str(home))
+        _write_harness(home, "claude", "https://new.upstream.example/api")  # 无 AUTH_TOKEN
+        cfg = ProxyConfig()
+        _set_running(monkeypatch, cfgdir, True)
+        report = reconcile.reconcile(cfg, tool_states=[], expected_wired={"claude"})
+        assert any(n["type"] == "missing_key" and n["harness"] == "claude" for n in report["needs_you"])
+
+    def test_stale_direct_relay_removed_under_two_hop_truth(self, env, monkeypatch):
+        """两跳接线真相（快照 second_hop=工具）下清理陈旧 direct-{harness}：旧 absorb
+        遗留无指纹钉死，选路②层按列表顺序截胡工具中继（2026-09-02 实测：claude 流量
+        被陈旧 direct-claude 引去 ark，401/10054、fail-open 502）。"""
+        home, cfgdir = env
+        _write_harness(home, "claude", "http://127.0.0.1:8787")  # 已接管态
+        from vision_relay.config import RelayConfig
+
+        cfg = ProxyConfig()
+        cfg.relays = [
+            RelayConfig(name="direct-claude", protocol="anthropic", base_url="https://old-ark.example", models=["*"]),
+            RelayConfig(
+                name="cc-anthropic",
+                protocol="anthropic",
+                base_url="http://127.0.0.1:15721",
+                via="cc-switch",
+                models=["*"],
+            ),
+        ]
+        snapshot.save(
+            "claude",
+            snapshot.Snapshot(
+                base_url="http://127.0.0.1:15721", key_ref="env.ANTHROPIC_AUTH_TOKEN", model="", second_hop="cc-switch"
+            ),
+        )
+        _set_running(monkeypatch, cfgdir, True)
+        report = reconcile.reconcile(cfg, tool_states=[], expected_wired={"claude"})
+        assert any(a["type"] == "relay_removed" and a["name"] == "direct-claude" for a in report["actions"])
+        assert [r.name for r in cfg.relays] == ["cc-anthropic"]
+
+    def test_direct_relay_kept_when_truth_is_direct(self, env, monkeypatch):
+        """直连真相（second_hop=None）：direct-{harness} 是接线原值的载体，保留。"""
+        home, cfgdir = env
+        _write_harness(home, "claude", "http://127.0.0.1:8787")
+        from vision_relay.config import RelayConfig
+
+        cfg = ProxyConfig()
+        cfg.relays = [
+            RelayConfig(name="direct-claude", protocol="anthropic", base_url="https://ark.example", models=["*"]),
+        ]
+        snapshot.save(
+            "claude",
+            snapshot.Snapshot(
+                base_url="https://ark.example", key_ref="env.ANTHROPIC_AUTH_TOKEN", model="", second_hop=None
+            ),
+        )
+        _set_running(monkeypatch, cfgdir, True)
+        report = reconcile.reconcile(cfg, tool_states=[], expected_wired={"claude"})
+        assert not any(a["type"] == "relay_removed" for a in report["actions"])
+        assert [r.name for r in cfg.relays] == ["direct-claude"]
+
     def test_absorb_codex_repatches_catalog_modalities(self, env, monkeypatch):
         """Codex++ 切供应商生成新目录（纯文本模态）后 absorb 重接管：目录须重新补 image，
         否则 Codex 按 catalog 拒绝 view_image/贴图，图片进不了请求、代理转写收不到图。"""
@@ -300,6 +380,23 @@ class TestRestartHonesty:
         fix = [a for a in report["actions"] if a["type"] == "auto_fix" and a["fix"] == "restart"]
         assert fix and fix[0]["ok"] is True
 
+    def test_restart_frozen_core_spawns_subcommand_directly(self, env, monkeypatch):
+        """打包版自愈重启同样不能带 `-m`：argparse 拒绝 → 子进程 exit 2、端口永不恢复。"""
+        import subprocess
+        import sys
+
+        home, cfgdir = env
+        _write_harness(home, "claude", "http://127.0.0.1:8787")
+        cfg = ProxyConfig()
+        _set_running(monkeypatch, cfgdir, False)
+        reconcile.set_routing_on(True)
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        argv_seen = {}
+        monkeypatch.setattr(subprocess, "Popen", lambda argv, **k: argv_seen.update(argv=argv))
+        monkeypatch.setattr(reconcile, "_wait_port_online", lambda port, timeout_s=2.0: False, raising=False)
+        reconcile.reconcile(cfg, tool_states=[], expected_wired={"claude"})
+        assert argv_seen["argv"] == [sys.executable, "start"]
+
 
 class TestWaitPortOnline:
     def test_port_open(self):
@@ -348,3 +445,59 @@ class TestObserveContractFields:
         row = obs["harnesses"]["claude"]
         assert row["config_path"].endswith(os.path.join(".claude", "settings.json"))
         assert row["config_path"].startswith(str(home))  # 隔离 home 生效（HOME 被 monkeypatch）
+
+
+class TestZcodeObserveOwnership:
+    """zcode 接管归属用条目级信号（2026-09-02）：任一可接管条目指本代理即 ours——
+    zcode CLI 会把它托管的 builtin 条目改回原值（磁盘漂移），只看激活条目地址会把
+    正在走中继的会话误显示成"已旁路"。"""
+
+    @staticmethod
+    def _write_zcode(home, providers: dict) -> None:
+        p = os.path.join(str(home), ".zcode", "v2", "config.json")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w", encoding="utf-8").write(json.dumps({"provider": providers}))
+
+    def _observe_zcode(self, env, tool_states=None):
+        cfg = ProxyConfig()
+        return reconcile.observe(cfg, tool_states=tool_states or [])["harnesses"]["zcode"]
+
+    def test_wired_entry_means_ours_even_if_active_entry_drifted_back(self, env):
+        # 激活条目被 zcode 改回原值（漂移），但另一可接管条目仍指本代理 → ours
+        home, _ = env
+        self._write_zcode(
+            home,
+            {
+                "builtin:plan": {
+                    "kind": "anthropic",
+                    "options": {"apiKey": "k-1", "baseURL": "https://open.bigmodel.cn/api/anthropic"},
+                    "enabled": True,
+                    "models": {},
+                },
+                "custom": {
+                    "kind": "openai",
+                    "options": {"apiKey": "k-2", "baseURL": "http://127.0.0.1:8787"},
+                    "enabled": False,
+                    "models": {},
+                },
+            },
+        )
+        row = self._observe_zcode(env)
+        assert row["ownership"] == "ours"
+
+    def test_no_wired_entry_keeps_disk_classification(self, env):
+        # 无任何条目指本代理：按磁盘实际归属（other）如实显示旁路
+        home, _ = env
+        self._write_zcode(
+            home,
+            {
+                "builtin:plan": {
+                    "kind": "anthropic",
+                    "options": {"apiKey": "k-1", "baseURL": "https://open.bigmodel.cn/api/anthropic"},
+                    "enabled": True,
+                    "models": {},
+                },
+            },
+        )
+        row = self._observe_zcode(env)
+        assert row["ownership"] == "other"

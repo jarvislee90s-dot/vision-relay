@@ -27,6 +27,7 @@ const STATUS = {
   service_alive: true,
   routing_on: true,
   bind_port: 8787,
+  auto_wire: true,
   harnesses: {
     claude: {
       base_url: "http://127.0.0.1:8787",
@@ -34,11 +35,17 @@ const STATUS = {
       has_snapshot: true,
       config_path: "C:/Users/t/.claude/settings.json",
     },
+    codex: {
+      base_url: "http://127.0.0.1:8787",
+      ownership: "ours",
+      has_snapshot: false,
+      config_path: "C:/Users/t/.codex/config.toml",
+    },
   },
   tools: [{ name: "cc-switch", port: 15721, online: false, active_provider: null, provider_base_url: null }],
   relays: [
-    { name: "cc-claude", protocol: "anthropic", base_url: "http://127.0.0.1:15721", via: "cc-switch", models: ["*"], suppressed: false, has_key: true },
-    { name: "direct-codex", protocol: "responses", base_url: "https://up.example", via: null, models: ["*"], suppressed: false, has_key: false },
+    { name: "cc-anthropic", protocol: "anthropic", base_url: "http://127.0.0.1:15721", via: "cc-switch", models: ["*"], suppressed: false, has_key: true, harness: "claude" },
+    { name: "direct-codex", protocol: "responses", base_url: "https://up.example", via: null, models: ["*"], suppressed: false, has_key: false, harness: "codex" },
   ],
   snapshots: {
     claude: { base_url: "https://origin.example", key_ref: "env.ANTHROPIC_AUTH_TOKEN", model: "glm-5", second_hop: null, ts: 1 },
@@ -74,8 +81,13 @@ describe("Overview (G2/G3/G4 UI)", () => {
   it("banner shows service state and bind_port from status (决策⑥c：不硬编码)", () => {
     renderOverview();
     expect(screen.getByText("服务运行中")).toBeTruthy();
-    expect(screen.getByText(/127\.0\.0\.1:8787 · 自动对账中/)).toBeTruthy();
-    expect(screen.getByText("✓ 已接管")).toBeTruthy();
+    expect(screen.getByText(/127\.0\.0\.1:8787 · 自动接线已开启/)).toBeTruthy();
+    expect(screen.getAllByText("✓ 已接管").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("auto_wire=false 时地址行如实显示「自动接线已关闭」（原「自动对账中」为写死文案，2026-09-02）", () => {
+    renderOverview({ ...STATUS, auto_wire: false } as unknown as StatusData);
+    expect(screen.getByText(/自动接线已关闭/)).toBeTruthy();
   });
 
   it("routing off → relay hop marked 已旁路 (G2 关态拓扑)", () => {
@@ -128,15 +140,26 @@ describe("Overview (G2/G3/G4 UI)", () => {
   it("drawer shows snapshot, relays, config path with 打开 entry (决策③)", async () => {
     const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
     renderOverview();
-    fireEvent.click(screen.getByText(/详情：快照 · relay · 停用/));
+    fireEvent.click(screen.getAllByText(/详情：快照 · relay · 停用/)[0]); // claude 卡
     expect(screen.getByText(/https:\/\/origin\.example/)).toBeTruthy(); // 接管快照
-    expect(screen.getByText(/cc-claude/)).toBeTruthy();
-    // direct-codex 同时出现在抽屉 relay 行与「需要你」区（缺 key 的 direct relay），用 getAllByText
-    expect(screen.getAllByText(/direct-codex/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/补填 key/)).toBeTruthy(); // 需要你区动作（缺 key 的 direct relay）
+    expect(screen.getByText(/cc-anthropic/)).toBeTruthy();
+    // 无关 relay 不挂卡（2026-09-02 优化②）：codex 的 direct-codex 不出现在 claude 抽屉
+    expect(screen.queryByText(/direct-codex → https:\/\/up\.example/)).toBeNull();
     expect(screen.getByText("配置文件")).toBeTruthy();
     fireEvent.click(screen.getByText("打开"));
     await waitFor(() => expect(h.openPath).toHaveBeenCalledWith("C:/Users/t/.claude/settings.json"));
+    prompt.mockRestore();
+  });
+
+  it("codex 卡抽屉显示自己的 direct-codex，真正缺 key（无快照 key 位置）时提供补填", async () => {
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
+    renderOverview();
+    fireEvent.click(screen.getAllByText(/详情：快照 · relay · 停用/)[1]); // codex 卡
+    expect(screen.getByText(/direct-codex → https:\/\/up\.example/)).toBeTruthy();
+    expect(screen.getByText(/补填 key/)).toBeTruthy();
+    expect(screen.getByText("直连透传")).toBeTruthy();
+    // direct-* 保留「停用转发」：停用是坏中继自救手段（spec §7.5，压制后选路落到下一候选）
+    expect(screen.getByText("停用转发")).toBeTruthy();
     prompt.mockRestore();
   });
 
@@ -147,6 +170,31 @@ describe("Overview (G2/G3/G4 UI)", () => {
 
   it("需要你区 lists direct relays missing keys when no diag report", () => {
     renderOverview();
+    expect(screen.getByText(/直连上游缺 API key/)).toBeTruthy();
+  });
+
+  it("key 位置真实存在的 direct 直连不告缺 key（透传可用，2026-09-02 回归）", () => {
+    // direct-claude 无自有 key，但 claude 快照 key_ref=env.ANTHROPIC_AUTH_TOKEN 可解析
+    const st = {
+      ...STATUS,
+      relays: [
+        STATUS.relays[0],
+        { name: "direct-claude", protocol: "anthropic", base_url: "https://up2.example", via: null, models: ["*"], suppressed: false, has_key: false, harness: "claude" },
+      ],
+    } as unknown as StatusData;
+    renderOverview(st);
+    expect(screen.queryByText(/直连上游缺 API key/)).toBeNull();
+  });
+
+  it("key_ref=not-found（key 位置确实缺失）时仍告缺 key", () => {
+    const st = {
+      ...STATUS,
+      relays: [
+        { name: "direct-claude", protocol: "anthropic", base_url: "https://up2.example", via: null, models: ["*"], suppressed: false, has_key: false, harness: "claude" },
+      ],
+      snapshots: { claude: { ...STATUS.snapshots.claude, key_ref: "not-found" } },
+    } as unknown as StatusData;
+    renderOverview(st);
     expect(screen.getByText(/直连上游缺 API key/)).toBeTruthy();
   });
 

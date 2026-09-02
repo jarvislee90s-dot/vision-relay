@@ -43,3 +43,23 @@ def test_pid_is_ours_token_mismatch_is_not_ours():
     assert pid_util.pid_is_ours(os.getpid(), token=12345) is False
     assert pid_util.pid_is_ours(os.getpid(), token=None) is True  # 老文件：仅存活检查
     assert pid_util.pid_is_ours(99999999, token=None) is False
+
+
+class TestCoreArgv:
+    """重拉核心 argv：源码态 `python -m vision_relay`，PyInstaller 冻结态直接传子命令。
+
+    冻结态 `-m` 会被 argparse 拒绝（exit 2）——v1.0.1 打包版 start --detach
+    孙进程静默死亡的根因。"""
+
+    def test_source_mode_uses_module_flag(self):
+        import sys
+
+        argv = pid_util.core_argv(["start"])
+        assert argv == [sys.executable, "-m", "vision_relay", "start"]
+
+    def test_frozen_mode_passes_subcommand_directly(self, monkeypatch):
+        import sys
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        argv = pid_util.core_argv(["start"])
+        assert argv == [sys.executable, "start"]

@@ -36,7 +36,7 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
           <div className="row">
             <span className={"dot " + (s.service_alive ? "g" : "r")} />
             <b style={{ fontSize: 15 }}>{s.service_alive ? "服务运行中" : "服务已停止"}</b>
-            <span className="dim">127.0.0.1:{s.bind_port} · 自动对账中</span>
+            <span className="dim">127.0.0.1:{s.bind_port} · {s.auto_wire === false ? "自动接线已关闭" : "自动接线已开启"}</span>
           </div>
         </div>
         <RoutingToggle on={s.routing_on && s.service_alive} onChangeDone={p.refresh} lang={p.lang} status={s} />
@@ -91,13 +91,21 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
                       )}
                     </td></tr>
                     <tr><td className="dim small">接管快照</td><td className="mono small">{snap ? `${snap.base_url} · ${snap.key_ref} · ${snap.model}` : "无"}</td></tr>
-                    {s.relays.filter((r) => r.via || r.name.startsWith("direct-")).slice(0, 4).map((r) => (
-                      <tr key={r.name}><td className="dim small">relay</td><td className="small">
-                        {r.name} → {r.base_url} {r.suppressed ? <span className="tag gray">已停用</span> : null}
-                        {!r.has_key && r.name.startsWith("direct-") ? <button className="btn" onClick={() => fillKey(r.name, p.refresh)}>🔑 补填 key</button> : null}
-                        <button className="btn" onClick={() => toggleRelay(r.name, r.suppressed, p.refresh)}>{r.suppressed ? "恢复" : "停用转发"}</button>
-                      </td></tr>
-                    ))}
+                    {s.relays.filter((r) => r.harness === h).map((r) => {
+                      // relay 只挂所属 harness 卡片（2026-09-02 优化②）：无关 relay 不再出现
+                      // 在每个工具下。direct-* 标「直连透传」区分于工具转发，但保留
+                      // 「停用转发」——停用是坏中继的自救手段（spec §7.5：压制后选路
+                      // 自动落到下一个候选，2026-09-02：陈旧 direct-claude 截胡 cc-anthropic
+                      // 时靠它可手动止血；对账侧已自动清理此类遗留）。
+                      const direct = r.name.startsWith("direct-");
+                      return (
+                        <tr key={r.name}><td className="dim small">relay</td><td className="small">
+                          {r.name} → {r.base_url} {direct ? <span className="tag gray">直连透传</span> : null}{r.suppressed ? <span className="tag gray">已停用</span> : null}
+                          {direct && !r.has_key && !keyRefResolvable(s, h) ? <button className="btn" onClick={() => fillKey(r.name, p.refresh)}>🔑 补填 key</button> : null}
+                          <button className="btn" onClick={() => toggleRelay(r.name, r.suppressed, p.refresh)}>{r.suppressed ? "恢复" : "停用转发"}</button>
+                        </td></tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -156,11 +164,20 @@ function looksReachable(baseUrl: string): boolean {
     return false;
   }
 }
+const KEY_REF_UNRESOLVABLE = new Set(["", "not-found", "unknown", "unparsable"]);
+// direct-* 直连中继无自有 key 是设计常态（认证靠客户端请求头透传）：harness 配置里
+// key 位置真实存在（快照 key_ref 可解析，如 claude 的 env.ANTHROPIC_AUTH_TOKEN）
+// 即不告"缺 key"（2026-09-02 回归：direct-claude 透传明明可用、总览却持续误报）。
+function keyRefResolvable(s: StatusData | null, harness: string): boolean {
+  const ref = s?.snapshots?.[harness]?.key_ref;
+  return !!ref && !KEY_REF_UNRESOLVABLE.has(ref);
+}
 function autoNeedsYou(s: StatusData | null) {
   if (!s) return [];
-  // 已停用的不再提醒（停用=用户已处置）；地址明显无效的报「地址无效」而不是误导性的「缺 key」
+  // 已停用的不再提醒（停用=用户已处置）；地址明显无效的报「地址无效」而不是误导性的「缺 key」；
+  // key 位置存在的直连透传可用，不告缺 key
   return s.relays
-    .filter((r) => r.name.startsWith("direct-") && !r.has_key && !r.suppressed)
+    .filter((r) => r.name.startsWith("direct-") && !r.has_key && !r.suppressed && !keyRefResolvable(s, r.name.slice("direct-".length)))
     .map((r) =>
       looksReachable(r.base_url)
         ? { type: "missing_key", harness: r.name, hint: "直连上游缺 API key" }

@@ -13,6 +13,7 @@ import os
 
 from . import route_fallback
 from .config import ProxyConfig
+from .harness_spec import relay_harness
 from .verbs_contract import envelope
 
 
@@ -42,6 +43,8 @@ def status(cfg: ProxyConfig) -> dict:
                 "suppressed": r.name in cfg.routing.suppressed_relays,
                 "has_key": bool(r.api_key),
                 "upstream_effective": eff,
+                # GUI 详情抽屉按 harness 卡片过滤展示（2026-09-02 优化②）
+                "harness": relay_harness(r.name),
             }
         )
     snaps = load_snapshots()
@@ -70,6 +73,9 @@ def status(cfg: ProxyConfig) -> dict:
         "capability_confirmed": cfg.routing.capability_confirmed,
         "vlm_configured": bool(cfg.vlm.api_key),
     }
+    # GUI 拓扑卡地址行显示接线开关真状态（2026-09-02：原"自动对账中"为写死文案，
+    # 服务起不来时被误读为"卡在对账循环"）
+    obs["auto_wire"] = cfg.routing.auto_wire
     # zcode 重启交互支撑（spec §7.2）：进程在跑且其启动早于本代理最后一次改写 → 待重启
     from . import wiring, zcode_proc
 

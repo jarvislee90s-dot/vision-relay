@@ -246,6 +246,24 @@ class TestDetachStart:
         assert rc == 0
         assert spawned["argv"][1:] == ["-m", "vision_relay", "start"]
 
+    def test_detach_frozen_core_passes_subcommand_directly(self, tmp_path, monkeypatch):
+        """打包版（PyInstaller）sys.executable 即核心 exe：`-m` 会被 argparse 拒绝，
+        孙进程 exit 2 静默死亡——服务永不启动（v1.0.1 打包版实测）。"""
+        import sys
+
+        monkeypatch.setenv("VISION_RELAY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        spawned = {}
+
+        def _fake_spawn(argv):
+            spawned["argv"] = argv
+            return 0
+
+        monkeypatch.setattr(cli, "_spawn_detached", _fake_spawn)
+        rc = cli.cmd_start_detach(None)
+        assert rc == 0
+        assert spawned["argv"] == [sys.executable, "start"]
+
 
 class TestRefreshVerb:
     def test_refresh_calls_reconcile(self, tmp_path, monkeypatch):

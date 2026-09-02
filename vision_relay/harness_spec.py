@@ -78,3 +78,24 @@ def classify_base_url(url: str | None, bind_port: int) -> str:
         if port == d.port:
             return name
     return "other"
+
+
+def relay_harness(name: str) -> str | None:
+    """relay name → 所属 harness；无法判定（用户手编模板等）返回 None。
+
+    判定即本仓库各创建点的命名约定：direct-<harness>（_absorb 吸收直连）、
+    zcode-/qwen- 一层直连前缀（ensure_zcode/qwen_relays）、cc-anthropic /
+    cc-codex / codex-plus（ensure_tool_relays）。GUI 详情抽屉据此把 relay
+    只挂在相关 harness 卡片下（2026-09-02：此前每个工具下都显示全部 relay）。"""
+    if name.startswith("direct-"):
+        h = name[len("direct-") :]
+        return h if h in HARNESS_CFG else None
+    if name.startswith(_ZCODE_RELAY_PREFIX):
+        return "zcode"
+    if name.startswith(_QWEN_RELAY_PREFIX):
+        return "qwen-code"
+    if name == "cc-anthropic":
+        return "claude"
+    if name in ("cc-codex", "codex-plus"):
+        return "codex"
+    return None
