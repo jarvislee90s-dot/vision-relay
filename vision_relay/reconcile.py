@@ -218,7 +218,6 @@ def _restart_service(cfg: ProxyConfig) -> bool:
     spawn 成功 ≠ 服务起来了（stale pid 等场景会谎报）：短轮询端口后如实返回。
     """
     import subprocess
-    import sys
 
     kwargs: dict = {}
     if os.name == "nt":
@@ -234,7 +233,7 @@ def _restart_service(cfg: ProxyConfig) -> bool:
         # 注入 VISION_RELAY_RESTART=1：分离重启的子进程无控制台，cmd_start 据此跳过
         # 交互 onboarding（capability_confirmed 未确认时否则会在无终端环境下挂死）。
         subprocess.Popen(
-            [sys.executable, "-m", "vision_relay", "start"],
+            pid_util.core_argv(["start"]),
             env={**os.environ, "VISION_RELAY_RESTART": "1"},
             **kwargs,
         )
@@ -305,9 +304,15 @@ def reconcile(
                     else:
                         if _reclaim(cfg, name, cur or ""):
                             actions.append({"type": "reclaim", "harness": name, "from": cur})
-                # 吸收/抢回后可能缺 key（被动提醒，不代填）
+                # 吸收/抢回后可能缺 key（被动提醒，不代填）。harness 配置里 key 位置
+                # 真实存在（如 claude 的 env.ANTHROPIC_AUTH_TOKEN）时直连透传可用，
+                # 不告"缺 key"（2026-09-02：direct-* 无自有 key 是设计常态而非缺件）。
                 if any(a.get("type") == "absorb" and a.get("harness") == name for a in actions):
-                    needs_you.append({"type": "missing_key", "harness": name, "hint": f"direct-{name} 需补 API key"})
+                    snap = snapshot.load().get(name)
+                    if not snapshot.key_ref_resolvable(snap.key_ref if snap is not None else None):
+                        needs_you.append(
+                            {"type": "missing_key", "harness": name, "hint": f"direct-{name} 需补 API key"}
+                        )
             elif not obs["service_alive"] and (
                 owner == "ours"
                 or (

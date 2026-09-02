@@ -380,6 +380,37 @@ class TestZcodeHarnessRegistration:
 
         cfg = ProxyConfig.from_dict({"routing": {"harnesses": ["claude", "codex", "qwen-code"]}})
         assert "zcode" in cfg.routing.harnesses
+        assert cfg.routing.default_harnesses_upgraded is True  # 升级即落哨兵
+
+    def test_legacy_upgrade_is_one_shot_via_sentinel(self):
+        """哨兵置位后不再升级：用户"取消勾选 zcode"存盘恰等于旧默认 3 件套，
+        重载不得把 zcode 加回去（2026-09-02 回归——单独取消 zcode 永不生效）。"""
+        from vision_relay.config import ProxyConfig
+
+        cfg = ProxyConfig.from_dict(
+            {"routing": {"harnesses": ["claude", "codex", "qwen-code"], "default_harnesses_upgraded": True}}
+        )
+        assert cfg.routing.harnesses == ["claude", "codex", "qwen-code"]
+
+    def test_legacy_upgrade_survives_save_load_roundtrip(self):
+        """升级一次→存盘→重载：哨兵随盘持久，zcode 全集保持稳定（不再二次判别）。"""
+        import os
+
+        from vision_relay.config import ProxyConfig, default_config_path, load_config, save_config
+
+        legacy = ProxyConfig.from_dict({"routing": {"harnesses": ["claude", "codex", "qwen-code"]}})
+        path = str(default_config_path()).replace("proxy.json", "proxy.test.json")
+        try:
+            save_config(legacy, path)
+            reloaded = load_config(path)
+            assert "zcode" in reloaded.routing.harnesses
+            # 用户随后取消勾选 zcode（settings-set 写回 3 件套）→ 再读仍是 3 件套
+            reloaded.routing.harnesses = ["claude", "codex", "qwen-code"]
+            save_config(reloaded, path)
+            assert load_config(path).routing.harnesses == ["claude", "codex", "qwen-code"]
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
 
     def test_explicit_exclusion_not_upgraded(self):
         """曾显式排除过某工具（≠旧默认全集）→ 不自动加 zcode。"""

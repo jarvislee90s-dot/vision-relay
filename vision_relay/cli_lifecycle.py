@@ -113,7 +113,7 @@ def cmd_start_detach(cfg) -> int:
     """分离进程启动：父进程立即返回，子进程跑普通 start（写 pid/意图）。"""
     from . import cli
 
-    rc = cli._spawn_detached([sys.executable, "-m", "vision_relay", "start"])
+    rc = cli._spawn_detached(pid_util.core_argv(["start"]))
     print("started (detached)" if rc == 0 else "detach failed")
     return rc
 

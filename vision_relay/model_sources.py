@@ -38,8 +38,10 @@ class ProviderRow:
     models: list[str]
 
 
-# claude settings_config 里视作"模型值"的 env 键(白名单:不含任何 token 键)
-_CLAUDE_MODEL_KEY = re.compile(r"^ANTHROPIC_(?:DEFAULT_\w+_)?MODEL(?:_NAME)?$")
+# claude settings_config 里视作"模型值"的 env 键(白名单:不含任何 token 键)。
+# 只认 *_MODEL（传给 claude 的真实模型字段）；*_MODEL_NAME 是展示名，混进收集
+# 会把 GLM-5.3[1M]/GLM-5.3 这类成对条目拆成两个"模型"（2026-09-02 回归）。
+_CLAUDE_MODEL_KEY = re.compile(r"^ANTHROPIC_(?:DEFAULT_\w+_)?MODEL$")
 
 
 def _dedup_keep_order(items: list[str]) -> list[str]:

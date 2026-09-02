@@ -34,7 +34,9 @@ def test_ccswitch_matrix_claude_env_models(tmp_path, monkeypatch):
                             "ANTHROPIC_BASE_URL": "https://ark.cn-beijing.volces.com/api/coding",
                             "ANTHROPIC_AUTH_TOKEN": "ark-secret",  # 必须被忽略
                             "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3",
-                            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "MiniMax-M3",  # 同模型去重
+                            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "MiniMax-M3",  # 展示名：同值时无影响
+                            "ANTHROPIC_DEFAULT_FABLE_MODEL": "GLM-5.3[1M]",
+                            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "GLM-5.3",  # 展示名≠独立模型
                             "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Kimi-K2.7-Code",
                             "ANTHROPIC_MODEL": "deepseek-v4-flash",
                         },
@@ -52,7 +54,13 @@ def test_ccswitch_matrix_claude_env_models(tmp_path, monkeypatch):
     r = rows[0]
     assert r.provider == "火山Ark" and r.is_current is True
     assert r.base_url == "https://ark.cn-beijing.volces.com/api/coding"
-    assert r.models == ["fable", "MiniMax-M3", "Kimi-K2.7-Code", "deepseek-v4-flash"]  # 去重、保序
+    assert r.models == [
+        "fable",
+        "MiniMax-M3",
+        "GLM-5.3[1M]",
+        "Kimi-K2.7-Code",
+        "deepseek-v4-flash",
+    ]  # 去重、保序；*_MODEL_NAME 不独立成行
     assert not any("secret" in m or "ark-" in m for m in r.models)
 
 

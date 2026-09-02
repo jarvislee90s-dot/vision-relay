@@ -40,6 +40,8 @@ class RoutingConfig:
     unknown_default: str = "text_only"  # 未归类模型默认：text_only(安全) | vision
     activated_relays: list[str] = field(default_factory=list)  # start 激活、stop 还原的 relay name 记录
     suppressed_relays: list[str] = field(default_factory=list)  # 用户停用的自动 relay（压制名单，spec §7.5）
+    # 旧默认全集→含 zcode 全集的一次性升级哨兵（spec §8 迁移规则）。
+    default_harnesses_upgraded: bool = False
 
     def __post_init__(self) -> None:
         bad = [h for h in self.harnesses if h not in HARNESSES]
@@ -136,8 +138,13 @@ class ProxyConfig:
         server = data.get("server", {})
         vlm = data.get("vlm", {})
         routing = dict(data.get("routing", {}))
-        if routing.get("harnesses") == _LEGACY_DEFAULT_HARNESSES:
+        # 旧默认全集一次性升级（spec §8 迁移规则）：仅哨兵未置位时执行并落哨兵。
+        # 精确列表相等判定天然会被"用户取消勾选 zcode"复现——存盘恰好等于旧默认
+        # 3 件套，无哨兵时每次 load 都把 zcode 加回去，取消勾选永不生效
+        # （2026-09-02 回归：单独取消 zcode 失效、zcode+qwen 同轮却生效的根因）。
+        if routing.get("harnesses") == _LEGACY_DEFAULT_HARNESSES and not routing.get("default_harnesses_upgraded"):
             routing["harnesses"] = list(HARNESSES)
+            routing["default_harnesses_upgraded"] = True
         if routing.get("unknown_default") == "vision":
             routing["unknown_default"] = "image"
         caps, legacy_flat = _parse_capabilities(data.get("model_capabilities", {}))
