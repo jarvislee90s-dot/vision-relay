@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "vision-relay",
-  "version": "0.1.0",
+  "version": "1.0.2",
   "identifier": "com.visionrelay.gui",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -10,8 +10,18 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "vision-relay 控制台", "width": 1100, "height": 760, "minWidth": 960, "minHeight": 640 }],
-    "security": { "csp": null }
+    "windows": [
+      {
+        "title": "vision-relay 控制台",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
@@ -24,7 +34,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": { "resources/core": "core/" },
+    "resources": {
+      "resources/core": "core/"
+    },
     "macOS": {
       "signingIdentity": "-"
     }

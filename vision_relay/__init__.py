@@ -5,4 +5,4 @@ Anthropic / Responses / Chat requests, transcribes them via a VLM, and forwards
 text to the real upstream. Design: docs/superpowers/specs/2026-08-13-vision-relay-design.md.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.2"
