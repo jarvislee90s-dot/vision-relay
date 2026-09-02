@@ -179,6 +179,7 @@ describe("ModelsPage 探测反馈", () => {
         { harness: "codex", provider: "?", model: "gpt-5-codex", value: null, source: null, probe_cached: null, is_current: true },
         { harness: "codex", provider: "?", model: "gpt-5.5", value: null, source: null, probe_cached: null, is_current: true },
         { harness: "qwen-code", provider: "?", model: "qwen3-coder", value: "image", source: "user", probe_cached: "image", is_current: true }, // 有缓存,跳过
+        { harness: "qwen-code", provider: "?", model: "glm-x", value: "text_only", source: "user", probe_cached: null, is_current: true }, // 用户手动标注,无缓存——批量不测(2026-09-02)
         { harness: "claude", provider: "Other", model: "kimi-x", value: null, source: null, probe_cached: null, is_current: false }, // 非当前,跳过
       ],
     };
@@ -200,7 +201,7 @@ describe("ModelsPage 探测反馈", () => {
     render(<ModelsPage lang="zh" refresh={vi.fn()} />);
     await screen.findByText("gpt-5-codex");
     fireEvent.click(screen.getByText("🔍 探测全部未测"));
-    await screen.findByText(/正在探测 1\/2：gpt-5-codex/); // 候选=当前且无缓存（2 个）
+    await screen.findByText(/正在探测 1\/2：gpt-5-codex/); // 候选=当前且未测且非 user 标注（2 个；glm-x 是 user 标注被排除）
     expect(document.querySelector(".spinner")).toBeTruthy();
     release(undefined);
     await waitFor(() => expect(alert).toHaveBeenCalledWith(expect.stringContaining("探测 2 个：1 支持图片、0 纯文本、0 无结论、1 不可达")));
@@ -213,12 +214,13 @@ describe("ModelsPage 探测反馈", () => {
   it("探测全部:零候选时状态行提示，不弹窗不探测", async () => {
     const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
     coreMock.mockImplementation(async () => ({
+      // 全部有结论或 user 标注（glm-y 无缓存但 source=user）→ 零候选
       models: MODELS.models.map((m) => ({ ...m, probe_cached: m.probe_cached ?? "text_only", is_current: true })),
     }));
     render(<ModelsPage lang="zh" refresh={vi.fn()} />);
     await screen.findByText("qwen3-coder");
     fireEvent.click(screen.getByText("🔍 探测全部未测"));
-    await screen.findByText(/均已有实测结论/);
+    await screen.findByText(/均已有标注或实测结论/);
     expect(alert).not.toHaveBeenCalled();
     expect(coreMock.mock.calls.some((c) => c[0] === "probe")).toBe(false);
     alert.mockRestore();

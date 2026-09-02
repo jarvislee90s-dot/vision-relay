@@ -120,9 +120,17 @@ def observe(cfg: ProxyConfig, tool_states: list | None = None) -> dict:
         p = wiring._path(HOME, name)
         exists = os.path.exists(p)
         cur = wiring.read_base_url(p, wiring.HARNESS_CFG[name]) if exists else None
+        ownership = wiring.classify_base_url(cur, cfg.bind_port)
+        if name == "zcode" and exists:
+            # zcode 纯条目级：全局 base_url（=激活条目地址）是原值不代表没接管——
+            # 任一可接管条目指本代理即 ours（与下方僵尸判定同源信号）。zcode CLI
+            # 会把它托管的 builtin 条目改回原值（磁盘漂移，2026-09-02 实测），
+            # 只看激活地址会把正在走中继的会话误显示成"已旁路"。
+            if wiring._zcode_provider_stats(p, _expected_base(cfg))["wired"] > 0:
+                ownership = "ours"
         harness_rows[name] = {
             "base_url": cur,
-            "ownership": wiring.classify_base_url(cur, cfg.bind_port),
+            "ownership": ownership,
             "has_snapshot": name in snapshot.load(),
             "config_exists": exists,  # 区分"文件不存在"与"文件在但读不到 base_url"（后者仍走 reclaim）
             "config_path": p,  # GUI 详情抽屉「配置文件」入口（2026-08-23 决策③）

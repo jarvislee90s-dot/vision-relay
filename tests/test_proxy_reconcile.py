@@ -394,3 +394,59 @@ class TestObserveContractFields:
         row = obs["harnesses"]["claude"]
         assert row["config_path"].endswith(os.path.join(".claude", "settings.json"))
         assert row["config_path"].startswith(str(home))  # 隔离 home 生效（HOME 被 monkeypatch）
+
+
+class TestZcodeObserveOwnership:
+    """zcode 接管归属用条目级信号（2026-09-02）：任一可接管条目指本代理即 ours——
+    zcode CLI 会把它托管的 builtin 条目改回原值（磁盘漂移），只看激活条目地址会把
+    正在走中继的会话误显示成"已旁路"。"""
+
+    @staticmethod
+    def _write_zcode(home, providers: dict) -> None:
+        p = os.path.join(str(home), ".zcode", "v2", "config.json")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w", encoding="utf-8").write(json.dumps({"provider": providers}))
+
+    def _observe_zcode(self, env, tool_states=None):
+        cfg = ProxyConfig()
+        return reconcile.observe(cfg, tool_states=tool_states or [])["harnesses"]["zcode"]
+
+    def test_wired_entry_means_ours_even_if_active_entry_drifted_back(self, env):
+        # 激活条目被 zcode 改回原值（漂移），但另一可接管条目仍指本代理 → ours
+        home, _ = env
+        self._write_zcode(
+            home,
+            {
+                "builtin:plan": {
+                    "kind": "anthropic",
+                    "options": {"apiKey": "k-1", "baseURL": "https://open.bigmodel.cn/api/anthropic"},
+                    "enabled": True,
+                    "models": {},
+                },
+                "custom": {
+                    "kind": "openai",
+                    "options": {"apiKey": "k-2", "baseURL": "http://127.0.0.1:8787"},
+                    "enabled": False,
+                    "models": {},
+                },
+            },
+        )
+        row = self._observe_zcode(env)
+        assert row["ownership"] == "ours"
+
+    def test_no_wired_entry_keeps_disk_classification(self, env):
+        # 无任何条目指本代理：按磁盘实际归属（other）如实显示旁路
+        home, _ = env
+        self._write_zcode(
+            home,
+            {
+                "builtin:plan": {
+                    "kind": "anthropic",
+                    "options": {"apiKey": "k-1", "baseURL": "https://open.bigmodel.cn/api/anthropic"},
+                    "enabled": True,
+                    "models": {},
+                },
+            },
+        )
+        row = self._observe_zcode(env)
+        assert row["ownership"] == "other"

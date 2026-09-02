@@ -99,3 +99,26 @@
 - 存量污染数据（`*_MODEL_NAME` 时代写入的能力键、cc-switch 改名后的孤儿供应商组）
   不自动清理，必要时手工整理 proxy.json。
 - `_MODEL_NAME` 作为展示标签（配对渲染在模型行上）是后续增强，本期不做。
+
+## 追加（同日晚间实测反馈）
+
+### 6. zcode 显示"已旁路"但后端实际走中继
+
+- **现象**：路由开启后 zcode 卡显示 relay 已旁路；visionlog 与 proxy.log 证明运行中
+  会话请求确实经 `zcode-builtin-bigmodel-coding-plan` 中继（stripped=2、upstream 200）。
+- **根因**：zcode CLI 会把它托管的 builtin 条目在磁盘上改回原始地址（条目级漂移，
+  与 codex 漂移重启同类）；observe 的 harness 归属只看激活条目地址 → 归 "other" →
+  GUI 链路如实显示磁盘态"已旁路"。单一全局信号无法表达条目级接线。
+- **修复**：observe 的 zcode 行归属改条目级信号——任一可接管条目指本代理即 "ours"
+  （与对账僵尸判定同源 `_zcode_provider_stats`）。前端零改动即恢复"已接管"；
+  漂移条目由下一次 refresh/diagnose 的 `reconcile_zcode_providers` 重接管。
+- **测试**：`test_proxy_reconcile.py::TestZcodeObserveOwnership`（激活条目漂移但
+  有接线条目→ours；无接线条目→如实 other）。
+
+### 7. 批量探测候选收紧
+
+- 用户手动标注（source=user）或已有实测结论（probe_cached 非空）的行不再进入
+  「探测全部未测」——只测真正未测的，尊重用户裁决、不重复花钱。零候选提示改为
+  「均已有标注或实测结论」。
+- **测试**：`Models.test.tsx` 批量用例（user 标注无缓存行被排除）与零候选文案。
+

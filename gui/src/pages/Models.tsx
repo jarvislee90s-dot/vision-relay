@@ -69,13 +69,15 @@ export function ModelsPage(p: { lang: string; refresh: () => void }) {
     } catch (e) { console.error(e); window.alert(String(e)); } finally { setBusy(false); setSpinKey(""); }
   };
 
-  // 前端逐行驱动（2026-08-25）：候选=当前激活供应商的无缓存行快照；每行单探测，
+  // 前端逐行驱动（2026-08-25）：候选=当前激活供应商的「未测」行快照；每行单探测，
   // 进度与行内 spinner 实时可见，实测列逐行刷新；结束弹汇总。
+  // 2026-09-02：用户手动标注（source=user）或已有实测结论（probe_cached）的行
+  // 不再进入批量——批量只测真正未测的，尊重用户裁决、不重复花钱。
   // 2026-09-02：进行中可「终止探测」——置 cancelRef 跳过剩余行（当前行跑完）。
   const probeAll = async () => {
     if (busy || batchBusy) return;
-    const candidates = rows.filter((r) => r.is_current && r.probe_cached === null);
-    if (!candidates.length) { setStatus("当前供应商模型均已有实测结论，无待探测项"); return; }
+    const candidates = rows.filter((r) => r.is_current && r.probe_cached === null && r.source !== "user");
+    if (!candidates.length) { setStatus("当前供应商模型均已有标注或实测结论，无待探测项"); return; }
     cancelRef.current = false;
     setBusy(true); setBatchBusy(true);
     const n = { image: 0, text_only: 0, none: 0, unreachable: 0 };
