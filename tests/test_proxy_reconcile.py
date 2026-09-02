@@ -127,6 +127,57 @@ class TestMatrix:
         report = reconcile.reconcile(cfg, tool_states=[], expected_wired={"claude"})
         assert any(n["type"] == "missing_key" and n["harness"] == "claude" for n in report["needs_you"])
 
+    def test_stale_direct_relay_removed_under_two_hop_truth(self, env, monkeypatch):
+        """两跳接线真相（快照 second_hop=工具）下清理陈旧 direct-{harness}：旧 absorb
+        遗留无指纹钉死，选路②层按列表顺序截胡工具中继（2026-09-02 实测：claude 流量
+        被陈旧 direct-claude 引去 ark，401/10054、fail-open 502）。"""
+        home, cfgdir = env
+        _write_harness(home, "claude", "http://127.0.0.1:8787")  # 已接管态
+        from vision_relay.config import RelayConfig
+
+        cfg = ProxyConfig()
+        cfg.relays = [
+            RelayConfig(name="direct-claude", protocol="anthropic", base_url="https://old-ark.example", models=["*"]),
+            RelayConfig(
+                name="cc-anthropic",
+                protocol="anthropic",
+                base_url="http://127.0.0.1:15721",
+                via="cc-switch",
+                models=["*"],
+            ),
+        ]
+        snapshot.save(
+            "claude",
+            snapshot.Snapshot(
+                base_url="http://127.0.0.1:15721", key_ref="env.ANTHROPIC_AUTH_TOKEN", model="", second_hop="cc-switch"
+            ),
+        )
+        _set_running(monkeypatch, cfgdir, True)
+        report = reconcile.reconcile(cfg, tool_states=[], expected_wired={"claude"})
+        assert any(a["type"] == "relay_removed" and a["name"] == "direct-claude" for a in report["actions"])
+        assert [r.name for r in cfg.relays] == ["cc-anthropic"]
+
+    def test_direct_relay_kept_when_truth_is_direct(self, env, monkeypatch):
+        """直连真相（second_hop=None）：direct-{harness} 是接线原值的载体，保留。"""
+        home, cfgdir = env
+        _write_harness(home, "claude", "http://127.0.0.1:8787")
+        from vision_relay.config import RelayConfig
+
+        cfg = ProxyConfig()
+        cfg.relays = [
+            RelayConfig(name="direct-claude", protocol="anthropic", base_url="https://ark.example", models=["*"]),
+        ]
+        snapshot.save(
+            "claude",
+            snapshot.Snapshot(
+                base_url="https://ark.example", key_ref="env.ANTHROPIC_AUTH_TOKEN", model="", second_hop=None
+            ),
+        )
+        _set_running(monkeypatch, cfgdir, True)
+        report = reconcile.reconcile(cfg, tool_states=[], expected_wired={"claude"})
+        assert not any(a["type"] == "relay_removed" for a in report["actions"])
+        assert [r.name for r in cfg.relays] == ["direct-claude"]
+
     def test_absorb_codex_repatches_catalog_modalities(self, env, monkeypatch):
         """Codex++ 切供应商生成新目录（纯文本模态）后 absorb 重接管：目录须重新补 image，
         否则 Codex 按 catalog 拒绝 view_image/贴图，图片进不了请求、代理转写收不到图。"""

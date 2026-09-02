@@ -81,8 +81,8 @@
 2. **总览详情 relay 按工具过滤**：后端 relay 行新增 `harness` 归属字段
    （`harness_spec.relay_harness()` 按命名约定判定：direct-\<harness\> / zcode- /
    qwen- / cc-anthropic / cc-codex / codex-plus），抽屉只挂相关 harness 卡片；
-   `direct-*` 标记「直连透传」、不再给「停用转发」按钮（停用直连=断路），
-   「补填 key」只在 key 位置确实缺失时出现。
+   `direct-*` 标记「直连透传」，「补填 key」只在 key 位置确实缺失时出现。
+   direct 行保留「停用转发」（同日晚间修正，见 §8：停用是坏中继自救手段）。
 
 ## 验收记录
 
@@ -121,4 +121,24 @@
   「探测全部未测」——只测真正未测的，尊重用户裁决、不重复花钱。零候选提示改为
   「均已有标注或实测结论」。
 - **测试**：`Models.test.tsx` 批量用例（user 标注无缓存行被排除）与零候选文案。
+
+### 8. cc-switch 两层转接失效：陈旧 direct-* 中继截胡选路（同日晚间续报）
+
+- **现象**：cc-switch + codex-plus 同开，codex 两层正常；claude 报 502 fail-open
+  （`relay=direct-claude → ark`）与 401 重试；期间还观察到 settings.json 未指 8787。
+- **根因（两层叠加）**：
+  ① cc-switch 在本代理接线后把 `~/.claude/settings.json` 改回 15721（其本职行为，
+  已知抢线风险）——刷新/诊断的对账 reclaim 自动抢回（事件流水可证）；
+  ② 抢回后流量进代理，但选路②层（模型,协议）按 relays 列表顺序命中：8/26 吸收
+  ark 直连时遗留的 `direct-claude`（无 auth_hints 钉死）排在 `cc-anthropic` 之前
+  永远胜出——带着 cc-switch 的 token 直捅 ark，401/10054、fail-open 502。
+- **修复**：
+  - 对账（owner=ours 分支）在快照 second_hop 指向工具（两跳接线真相）时，清理
+    陈旧 `direct-{harness}` 遗留中继（absorb 创建/两跳清理，对称闭环）；server 每
+    请求 stat 热加载配置，清理落盘即对运行中服务生效。
+  - 恢复 direct 行「停用转发」按钮（修正 §优化② 的"停用直连=断路"误判：停用是
+    spec §7.5 的坏中继自救手段，压制后选路自动落到下一候选）。
+- **测试**：`test_proxy_reconcile.py` 两跳真相清理 / 直连真相保留两用例；
+  `Overview.test.tsx` direct 行停用按钮断言反转。
+
 

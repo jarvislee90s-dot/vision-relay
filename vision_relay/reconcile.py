@@ -297,6 +297,17 @@ def reconcile(
                         res = wiring.reconcile_qwen_providers(cfg)
                         if res:
                             actions.append({"type": "provider_absorb", "harness": name, "rewritten": res["rewritten"]})
+                    # 两跳接线真相下清理陈旧 direct-{harness}：它是旧一次 absorb 的
+                    # 遗留（如 claude 曾直连 ark），无指纹钉死，会在选路②层按列表顺序
+                    # 截胡 cc-anthropic 等工具中继（2026-09-02 实测：claude 流量被陈旧
+                    # direct-claude 引去 ark，401/10054、fail-open 502）。
+                    snap = snapshot.load().get(name)
+                    if snap is not None and snap.second_hop in tools.TOOL_DOSSIERS:
+                        stale = f"direct-{name}"
+                        if any(r.name == stale for r in cfg.relays):
+                            cfg.relays = [r for r in cfg.relays if r.name != stale]
+                            append_event("relay_removed", name, {"name": stale, "reason": "stale-under-two-hop"})
+                            actions.append({"type": "relay_removed", "name": stale})
                 elif owner in tools.TOOL_DOSSIERS:
                     if _reclaim(cfg, name, cur or ""):
                         actions.append({"type": "reclaim", "harness": name, "from": cur})

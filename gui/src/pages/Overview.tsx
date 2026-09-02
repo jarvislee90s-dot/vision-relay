@@ -93,14 +93,16 @@ export function Overview(p: { status: StatusData | null; refresh: () => void; la
                     <tr><td className="dim small">接管快照</td><td className="mono small">{snap ? `${snap.base_url} · ${snap.key_ref} · ${snap.model}` : "无"}</td></tr>
                     {s.relays.filter((r) => r.harness === h).map((r) => {
                       // relay 只挂所属 harness 卡片（2026-09-02 优化②）：无关 relay 不再出现
-                      // 在每个工具下；direct-* 是直连透传不是转发——无「停用转发」，只在
-                      // key 位置确实缺失时给补填入口。
+                      // 在每个工具下。direct-* 标「直连透传」区分于工具转发，但保留
+                      // 「停用转发」——停用是坏中继的自救手段（spec §7.5：压制后选路
+                      // 自动落到下一个候选，2026-09-02：陈旧 direct-claude 截胡 cc-anthropic
+                      // 时靠它可手动止血；对账侧已自动清理此类遗留）。
                       const direct = r.name.startsWith("direct-");
                       return (
                         <tr key={r.name}><td className="dim small">relay</td><td className="small">
                           {r.name} → {r.base_url} {direct ? <span className="tag gray">直连透传</span> : null}{r.suppressed ? <span className="tag gray">已停用</span> : null}
                           {direct && !r.has_key && !keyRefResolvable(s, h) ? <button className="btn" onClick={() => fillKey(r.name, p.refresh)}>🔑 补填 key</button> : null}
-                          {!direct ? <button className="btn" onClick={() => toggleRelay(r.name, r.suppressed, p.refresh)}>{r.suppressed ? "恢复" : "停用转发"}</button> : null}
+                          <button className="btn" onClick={() => toggleRelay(r.name, r.suppressed, p.refresh)}>{r.suppressed ? "恢复" : "停用转发"}</button>
                         </td></tr>
                       );
                     })}

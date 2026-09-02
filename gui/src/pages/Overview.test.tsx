@@ -158,8 +158,8 @@ describe("Overview (G2/G3/G4 UI)", () => {
     expect(screen.getByText(/direct-codex → https:\/\/up\.example/)).toBeTruthy();
     expect(screen.getByText(/补填 key/)).toBeTruthy();
     expect(screen.getByText("直连透传")).toBeTruthy();
-    // direct-* 是直连透传不是转发：抽屉内无「停用转发」按钮（cc-anthropic 已随 claude 抽屉关闭）
-    expect(screen.queryByText("停用转发")).toBeNull();
+    // direct-* 保留「停用转发」：停用是坏中继自救手段（spec §7.5，压制后选路落到下一候选）
+    expect(screen.getByText("停用转发")).toBeTruthy();
     prompt.mockRestore();
   });
 
