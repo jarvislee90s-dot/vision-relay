@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { core } from "../core";
 
 interface Triple { harness: string; provider: string; model: string; value: string | null; source: string | null; probe_cached: string | null; is_current: boolean }
@@ -9,17 +9,34 @@ export function ModelsPage(p: { lang: string; refresh: () => void }) {
   const [rows, setRows] = useState<Triple[]>([]);
   const [draft, setDraft] = useState<Draft>({});
   const [busy, setBusy] = useState(false); // 全局探测锁（重测/批量互斥，防连点）
+  const [batchBusy, setBatchBusy] = useState(false); // 批量探测进行中（按钮切「终止探测」）
   const [spinKey, setSpinKey] = useState(""); // 正在探测的行 key（行内 spinner）
   const [status, setStatus] = useState(""); // 轻提示/进度状态行
+  const cancelRef = useRef(false); // 批量探测终止标志（正在跑的行会跑完，剩余行跳过）
 
-  // 只刷新行数据、保留未保存的 draft（retest/probeAll 用；save 成功后才整体重置）
-  const refreshRows = async () => { setRows((await core<{ models: Triple[] }>("models-scan")).models); };
+  // 只刷新行数据、保留未保存的 draft（save 成功后才整体重置）；返回最新行
+  // 供探测后清 stale draft 用
+  const refreshRows = async (): Promise<Triple[]> => {
+    const fresh = (await core<{ models: Triple[] }>("models-scan")).models;
+    setRows(fresh);
+    return fresh;
+  };
   const load = async () => { await refreshRows(); setDraft({}); };
   useEffect(() => { load().catch((e) => { console.error(e); window.alert(String(e)); }); }, []);
 
   const key = (r: Triple) => r.harness + "|" + r.provider + "|" + r.model;
   const effective = (r: Triple) => (key(r) in draft ? draft[key(r)] : r.value);
   const dirty = rows.filter((r) => key(r) in draft && draft[key(r)] !== r.value);
+
+  // 探测成功后：来源非 user 的行，后端标注已被实测覆盖——清掉该行 draft，否则
+  // 未保存草稿会一直盖住新值，「探测后当前标注不更新」直到切页才可见
+  // （2026-09-02 回归）。user 来源行保留 draft（用户意图优先，探测只更新实测列）。
+  const dropStaleDraft = (r: Triple, fresh: Triple[]) => {
+    const fr = fresh.find((x) => key(x) === key(r));
+    if (fr && fr.source !== "user") {
+      setDraft((d) => { const nd = { ...d }; delete nd[key(r)]; return nd; });
+    }
+  };
 
   const save = async () => {
     try {
@@ -47,21 +64,27 @@ export function ModelsPage(p: { lang: string; refresh: () => void }) {
       } else {
         setStatus(outcome(r, d));
       }
-      await refreshRows();
+      const fresh = await refreshRows();
+      dropStaleDraft(r, fresh);
     } catch (e) { console.error(e); window.alert(String(e)); } finally { setBusy(false); setSpinKey(""); }
   };
 
   // 前端逐行驱动（2026-08-25）：候选=当前激活供应商的无缓存行快照；每行单探测，
   // 进度与行内 spinner 实时可见，实测列逐行刷新；结束弹汇总。
+  // 2026-09-02：进行中可「终止探测」——置 cancelRef 跳过剩余行（当前行跑完）。
   const probeAll = async () => {
-    if (busy) return;
+    if (busy || batchBusy) return;
     const candidates = rows.filter((r) => r.is_current && r.probe_cached === null);
     if (!candidates.length) { setStatus("当前供应商模型均已有实测结论，无待探测项"); return; }
-    setBusy(true);
+    cancelRef.current = false;
+    setBusy(true); setBatchBusy(true);
     const n = { image: 0, text_only: 0, none: 0, unreachable: 0 };
     let firstReason = "";
+    let done = 0;
+    let stopped = false;
     try {
       for (let i = 0; i < candidates.length; i++) {
+        if (cancelRef.current) { stopped = true; break; }
         const r = candidates[i];
         setStatus(`正在探测 ${i + 1}/${candidates.length}：${r.model}…`);
         setSpinKey(key(r));
@@ -72,12 +95,17 @@ export function ModelsPage(p: { lang: string; refresh: () => void }) {
           else if (d.result === "text_only") n.text_only++;
           else n.none++;
         } catch (e) { console.error(e); n.none++; }
-        await refreshRows();
+        done = i + 1;
+        try {
+          const fresh = await refreshRows();
+          dropStaleDraft(r, fresh);
+        } catch (e) { console.error(e); } // 单行刷新失败不中断整批（下一行探测后自然再刷）
       }
-      const summary = `探测 ${candidates.length} 个：${n.image} 支持图片、${n.text_only} 纯文本、${n.none} 无结论、${n.unreachable} 不可达${firstReason ? `\n首个不可达原因：${firstReason}` : ""}`;
+      const stoppedNote = stopped ? `（已手动终止，完成 ${done}/${candidates.length}）` : "";
+      const summary = `探测 ${candidates.length} 个：${n.image} 支持图片、${n.text_only} 纯文本、${n.none} 无结论、${n.unreachable} 不可达${stoppedNote}${firstReason ? `\n首个不可达原因：${firstReason}` : ""}`;
       setStatus(summary.replace("\n", " "));
       window.alert(summary);
-    } finally { setBusy(false); setSpinKey(""); }
+    } finally { setBusy(false); setBatchBusy(false); setSpinKey(""); }
   };
 
   const fetchList = async () => {
@@ -131,7 +159,7 @@ export function ModelsPage(p: { lang: string; refresh: () => void }) {
         ✅ 按 (harness · provider · 模型) 三元组标注，记录只有输入模态一个字段（纯文本 / 支持图片 / 未标注）。只在猜错时改；未标注模型运行时按设置开关（默认走识图）。
       </div>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <button className="btn" disabled={busy} onClick={probeAll}>{busy ? "探测中…" : "🔍 探测全部未测"}</button>
+        <button className="btn" disabled={busy && !batchBusy} onClick={() => (batchBusy ? (cancelRef.current = true) : probeAll())}>{batchBusy ? "⏹ 终止探测" : "🔍 探测全部未测"}</button>
         <button className="btn" onClick={fetchList}>⬇ 从上游拉取模型清单（可选）</button>
       </div>
       {status && <div className="dim small mono" style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>{status}</div>}
